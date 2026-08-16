@@ -1,0 +1,17 @@
+{
+  "name": "@cte2/extractor",
+  "version": "0.0.1",
+  "description": "Reads a Craft to Exile 2 install and produces a merged mmorpg registry snapshot",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "cte2-extract": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "extract": "tsc -p tsconfig.json && node dist/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

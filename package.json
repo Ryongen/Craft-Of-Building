@@ -1,0 +1,23 @@
+{
+  "name": "cte2-pob",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Path of Building for Craft to Exile 2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "extract": "npm run -w @cte2/extractor extract",
+    "build": "npm run -ws --if-present build",
+    "test": "npm run -ws --if-present test",
+    "typecheck": "npm run -ws --if-present typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.2"
+  }
+}
