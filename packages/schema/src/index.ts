@@ -193,6 +193,7 @@ export {
   rarityName,
   runeName,
   runewordName,
+  itemSetName,
   slotName,
   spellDesc,
   spellName,

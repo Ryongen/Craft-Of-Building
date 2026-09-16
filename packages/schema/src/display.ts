@@ -54,6 +54,8 @@ export const LANG_KEY = {
   aura: (id: string) => `mmorpg.aura.${id}`,
   exileEffect: (id: string) => `mmorpg.effect.${id}`,
   runeword: (id: string) => `mmorpg.runeword.${id}`,
+  /** `ItemSet.locNameLangFileGUID()` — `SlashRef.MODID + ".item_set." + id`. */
+  itemSet: (id: string) => `mmorpg.item_set.${id}`,
   /** `GemItem.GemType`, the colour half of a gem's name. */
   gemType: (id: string) => `mmorpg.gem_type.${id}`,
   /** `GemItem.GemRank`, the quality half — keyed by the rank's lowercased display name. */
@@ -362,6 +364,11 @@ export function exileEffectName(snapshot: Snapshot, id: string): string {
 
 export function runewordName(snapshot: Snapshot, id: string): string {
   return named(snapshot, LANG_KEY.runeword(id), id);
+}
+
+/** A gear set's display name — "Oath of Mahj" for `oath_of_mahj`. */
+export function itemSetName(snapshot: Snapshot, id: string): string {
+  return named(snapshot, LANG_KEY.itemSet(id), id);
 }
 
 export function statLayerName(snapshot: Snapshot, id: string): string {

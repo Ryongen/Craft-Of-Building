@@ -26,6 +26,7 @@ import {
 import { collectBaseStats } from "./collect/base-stats.js";
 import { collectAuras, collectExileEffects, collectFoodBuffs } from "./collect/effects.js";
 import { collectGear, collectJewels } from "./collect/gear.js";
+import { collectItemSets } from "./collect/item-sets.js";
 import { collectNewbieResists } from "./collect/newbie-resists.js";
 import { collectOmen } from "./collect/omen.js";
 import { collectPerks } from "./collect/perks.js";
@@ -344,6 +345,9 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
     // rather than folded into the base stats — so a breakdown can name it.
     ...collectStatPoints(env, build),
     ...gearContexts,
+    // Set bonuses follow the gear because they are a property of the whole combination
+    // rather than of any piece — `addItemSetStats(gears)` takes the finished list.
+    ...collectItemSets(env, build),
     // The omen reads the gear list to know what it is worth, so it follows it.
     ...collectOmen(env, build),
     // A Watcher's Eye reads the aura list to know which of its lines are live, so the set the

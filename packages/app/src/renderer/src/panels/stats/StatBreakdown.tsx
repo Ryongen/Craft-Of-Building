@@ -29,6 +29,7 @@ import {
   auraName,
   exileEffectName,
   gearTypeName,
+  itemSetName,
   perkName,
   runewordName,
   spellName,
@@ -58,7 +59,7 @@ import { StepRow } from "../../ui/StepRow.js";
  * from the chestplate.
  */
 const KINDS = [
-  { id: "gear", name: "Gear", types: ["GEAR", "ENCHANT_COMPAT", "VANILLA_STAT_COMPAT"] },
+  { id: "gear", name: "Gear", types: ["GEAR", "ENCHANT_COMPAT", "VANILLA_STAT_COMPAT", "ITEM_SET"] },
   { id: "jewels", name: "Jewels", types: ["JEWEL"] },
   { id: "talents", name: "Talents", types: ["TALENT"] },
   { id: "ascendancy", name: "Ascendancy", types: ["ASCENDANCY"] },
@@ -101,6 +102,10 @@ const CTX_BLURB: Record<string, string> = {
     "A vanilla Minecraft attribute another mod set, converted into a real stat by " +
     "`mmorpg_stat_compat` — food diversity, Mine and Meals, the KubeJS attributes.",
   ENCHANT_COMPAT: "A vanilla enchantment on equipped gear, converted the same way.",
+  ITEM_SET:
+    "A gear set bonus. It belongs to the combination rather than to any one piece, which is "  +
+    "why it is its own row: the stats arrive once the piece count reaches a tier, and every "  +
+    "tier at or below the count is live.",
   FOOD_BUFF: "A meal, seafood or elixir.",
   STAT_CTX_MODIFIER_BONUS:
     "Not a source of its own: the share of every other context that `aura_effect` and its two " +
@@ -447,6 +452,8 @@ export function sourceName(snapshot: Snapshot, contribution: ModContribution): s
       return "Level grant";
     case "STAT_POINTS":
       return "Allocated stat points";
+    case "ITEM_SET":
+      return itemSetName(snapshot, source);
     case "VANILLA_STAT_COMPAT":
       return "Vanilla attributes";
     case "STAT_CTX_MODIFIER_BONUS":

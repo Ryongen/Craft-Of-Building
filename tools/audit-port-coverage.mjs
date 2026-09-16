@@ -226,7 +226,10 @@ const ACCOUNTED = {
   ],
 
   // The five that are not out of scope, in the order they are worth doing.
-  "mmorpg_sets": ["gap", "10 gear sets over 31 uniques granting stats at N pieces — unimplemented"],
+  // Ported in `collect/item-sets.ts` against `StatCalculation.addItemSetStats`, which is in the
+  // 6.4.13 jar and not only in the fork. Membership, the duplicate dedupe, the cumulative
+  // tiers and the average-item-level scaling are each pinned in `collect/item-sets.test.ts`.
+  "mmorpg_sets": ["elsewhere", "collect/item-sets.ts — ITEM_SET contexts off the equipped uniques"],
   "mmorpg_entity": ["gap", "190 mob definitions; would make a target a real mob, not rarity maths"],
   "mmorpg_mob_affix": ["gap", "25 elite affixes — what makes a real Epic mob tougher than the preset"],
   "mmorpg_map_affix": ["gap", "77 map modifiers, most of which buff the mobs you are measuring against"],

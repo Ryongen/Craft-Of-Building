@@ -50,6 +50,9 @@ export const CTX_TYPES = [
   // What `CtxStats.addStatCtxModifierStats` returns: the share of other contexts that
   // `aura_effect` and its two siblings add on top. Never scanned for modifiers itself — the
   // game builds it from the contexts that already exist and appends it afterwards.
+  // `mmorpg_sets` — a Diablo-style gear set's tier bonuses. Its own `StatCtxType` in the game
+  // too, because the contribution belongs to the *combination* rather than to any one item.
+  "ITEM_SET",
   "STAT_CTX_MODIFIER_BONUS",
   "MISC",
 ] as const;

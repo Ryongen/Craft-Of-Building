@@ -63,6 +63,7 @@ export const CATEGORY = {
   gameBalance: "mmorpg_game_balance",
   gearRarity: "mmorpg_gear_rarity",
   gearSlot: "mmorpg_gear_slot",
+  itemSet: "mmorpg_sets",
   gem: "mmorpg_gems",
   mobRarity: "mmorpg_mob_rarity",
   omen: "mmorpg_omen",
