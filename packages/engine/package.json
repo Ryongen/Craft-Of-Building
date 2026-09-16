@@ -1,0 +1,21 @@
+{
+  "name": "@cte2/engine",
+  "version": "0.0.1",
+  "description": "Stat container: turns a build document plus a snapshot into the numbers the game would show",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "cte2-fixtures": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cte2/extractor": "0.0.1",
+    "@cte2/schema": "0.0.1"
+  }
+}

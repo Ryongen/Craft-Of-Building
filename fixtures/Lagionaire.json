@@ -1,0 +1,1258 @@
+{
+  "schemaVersion": 1,
+  "meta": {
+    "name": "Lagionaire",
+    "createdAt": "2026-09-15",
+    "mineAndSlashVersion": "6.4.13",
+    "packVersion": "unknown",
+    "notes": "Exported from the game by cte2pob-exporter 0.3.0."
+  },
+  "character": {
+    "level": 100,
+    "attributes": {
+      "minecraft:generic.max_health": 220,
+      "minecraft:generic.knockback_resistance": 0.6580000519752502,
+      "minecraft:generic.movement_speed": 0.1402280023728013,
+      "minecraft:generic.attack_damage": 10,
+      "minecraft:generic.attack_knockback": 0,
+      "minecraft:generic.attack_speed": 1.6818000865697869,
+      "minecraft:generic.armor": 20,
+      "minecraft:generic.armor_toughness": 0,
+      "minecraft:generic.luck": 0,
+      "combatroll:distance": 3,
+      "combatroll:recharge": 20,
+      "combatroll:count": 1,
+      "botania:pixie_spawn_chance": 0,
+      "attributeslib:armor_pierce": 0,
+      "attributeslib:armor_shred": 0,
+      "attributeslib:arrow_damage": 1,
+      "attributeslib:arrow_velocity": 1,
+      "attributeslib:cold_damage": 0,
+      "attributeslib:crit_chance": 0.05,
+      "attributeslib:crit_damage": 1.5,
+      "attributeslib:current_hp_damage": 0,
+      "attributeslib:dodge_chance": 0,
+      "attributeslib:draw_speed": 1.401500016450882,
+      "attributeslib:experience_gained": 1,
+      "attributeslib:fire_damage": 0,
+      "attributeslib:ghost_health": 0,
+      "attributeslib:healing_received": 1,
+      "attributeslib:life_steal": 0,
+      "attributeslib:mining_speed": 1,
+      "attributeslib:overheal": 0,
+      "attributeslib:prot_pierce": 0,
+      "attributeslib:prot_shred": 0,
+      "attributeslib:elytra_flight": 0,
+      "attributeslib:creative_flight": 0,
+      "enhancedai:xray_follow_range": 0,
+      "enhancedai:push_resistance": 0,
+      "enhancedai:spawn_reinforcements_chance": 0,
+      "caelus:fall_flying": 0.1,
+      "obscure_api:critical_hit": 0,
+      "obscure_api:critical_damage": 2,
+      "obscure_api:dodge": 0,
+      "obscure_api:parry": 0,
+      "obscure_api:magic_damage": 0,
+      "obscure_api:magic_resistance": 0,
+      "obscure_api:penetration": 0,
+      "obscure_api:regeneration": 0,
+      "obscure_api:healing_power": 1,
+      "obscure_api:accuracy": 0,
+      "obscure_api:resilience": 0,
+      "mine_and_meals:grain1_max_health": 0,
+      "mine_and_meals:grain2_max_health": 0,
+      "mine_and_meals:meat1_health_regen": 0,
+      "mine_and_meals:meat2_health_regen": 0,
+      "mine_and_meals:vegetable1_max_mana": 0,
+      "mine_and_meals:vegetable2_max_mana": 0,
+      "mine_and_meals:fruit1_mana_regen": 0,
+      "mine_and_meals:fruit2_mana_regen": 0,
+      "mine_and_meals:fish1_max_energy": 10,
+      "mine_and_meals:fish2_max_energy": 0,
+      "mine_and_meals:dairy1_energy_regen": 0,
+      "mine_and_meals:dairy2_energy_regen": 0,
+      "mine_and_meals:sugar1_treasure_quantity": 0,
+      "mine_and_meals:sugar2_treasure_quantity": 0,
+      "mine_and_meals:alcohol1_exp_bonus": 0,
+      "mine_and_meals:alcohol2_exp_bonus": 0,
+      "mine_and_meals:spice1_fire": 0,
+      "mine_and_meals:spice2_fire": 0,
+      "mine_and_meals:ice1_water": 0,
+      "mine_and_meals:ice2_water": 0,
+      "mine_and_meals:sparkling1_lightning": 0,
+      "mine_and_meals:sparkling2_lightning": 0,
+      "mine_and_meals:strange1_chaos": 0,
+      "mine_and_meals:strange2_chaos": 0,
+      "mine_and_meals:fried1_physical": 0,
+      "mine_and_meals:fried2_physical": 0,
+      "mine_and_meals:tea1_critical": 0,
+      "mine_and_meals:tea2_critical": 0,
+      "forge:swim_speed": 1,
+      "forge:nametag_distance": 64,
+      "forge:entity_gravity": 0.08,
+      "forge:block_reach": 4.5,
+      "forge:entity_reach": 3,
+      "forge:step_height_addition": 0.6,
+      "stardew_fishing:line_strength": 1,
+      "stardew_fishing:bar_size": 36,
+      "stardew_fishing:treasure_chance_bonus": 0,
+      "stardew_fishing:golden_chest_bonus": 0,
+      "stardew_fishing:exp_multiplier": 1,
+      "ftbultimine:max_blocks_modifier": 0,
+      "ftbultimine:cooldown_modifier": 0,
+      "ftbultimine:exhaustion_modifier": 0,
+      "ftbultimine:experience_modifier": 0,
+      "kubejs:move_speed": 0,
+      "kubejs:critical_hit": 0,
+      "kubejs:magic_find": 0,
+      "kubejs:plus_lvl_all_spells": 0,
+      "kubejs:weapon_damage": 0,
+      "kubejs:armor": 0,
+      "kubejs:magic_shield": 0,
+      "kubejs:dodge": 0,
+      "kubejs:all_attributes": 0,
+      "kubejs:increase_healing": 0,
+      "kubejs:health_per_perc_of_intelligence": 0,
+      "kubejs:total_damage_per_perc_of_health": 0
+    },
+    "statPoints": {
+      "dexterity": 26,
+      "intelligence": 8,
+      "strength": 66
+    },
+    "school": "sanguimancer",
+    "schools": {
+      "banishing_blade": 20,
+      "blasphemous_ritual": 12,
+      "fighter_stance": 4,
+      "p_aura_effect": 8,
+      "p_chaos_res_sang": 6,
+      "p_damage_received": 8,
+      "p_health_per_sec_sang": 8,
+      "p_health_regen": 8,
+      "p_health_sang": 8,
+      "p_negative_effect_sang": 8,
+      "protection": 12,
+      "quake": 20,
+      "sanguine_aura": 12,
+      "shadow_step": 1
+    },
+    "pointTotals": {
+      "TALENTS": 126,
+      "SPELLS": 110,
+      "PASSIVES": 54,
+      "ASCENDANCY": 9,
+      "ATLAS": 28,
+      "STATS": 100
+    },
+    "omensFilled": 3,
+    "ascendancy": "guardian_class"
+  },
+  "tree": {
+    "talents": [
+      [
+        40,
+        51
+      ],
+      [
+        40,
+        53
+      ],
+      [
+        41,
+        65
+      ],
+      [
+        42,
+        51
+      ],
+      [
+        42,
+        53
+      ],
+      [
+        42,
+        59
+      ],
+      [
+        44,
+        63
+      ],
+      [
+        46,
+        65
+      ],
+      [
+        48,
+        64
+      ],
+      [
+        48,
+        66
+      ],
+      [
+        49,
+        68
+      ],
+      [
+        51,
+        66
+      ],
+      [
+        53,
+        65
+      ],
+      [
+        55,
+        66
+      ],
+      [
+        57,
+        67
+      ],
+      [
+        58,
+        46
+      ],
+      [
+        60,
+        46
+      ],
+      [
+        61,
+        67
+      ],
+      [
+        62,
+        46
+      ],
+      [
+        63,
+        63
+      ],
+      [
+        64,
+        67
+      ],
+      [
+        65,
+        63
+      ],
+      [
+        65,
+        65
+      ],
+      [
+        67,
+        39
+      ],
+      [
+        67,
+        46
+      ],
+      [
+        67,
+        57
+      ],
+      [
+        67,
+        67
+      ],
+      [
+        67,
+        75
+      ],
+      [
+        67,
+        78
+      ],
+      [
+        67,
+        81
+      ],
+      [
+        67,
+        96
+      ],
+      [
+        67,
+        99
+      ],
+      [
+        67,
+        102
+      ],
+      [
+        67,
+        105
+      ],
+      [
+        67,
+        113
+      ],
+      [
+        69,
+        115
+      ],
+      [
+        70,
+        113
+      ],
+      [
+        71,
+        115
+      ],
+      [
+        71,
+        117
+      ],
+      [
+        72,
+        83
+      ],
+      [
+        72,
+        85
+      ],
+      [
+        72,
+        95
+      ],
+      [
+        72,
+        97
+      ],
+      [
+        74,
+        87
+      ],
+      [
+        74,
+        89
+      ],
+      [
+        74,
+        93
+      ],
+      [
+        75,
+        71
+      ],
+      [
+        76,
+        39
+      ],
+      [
+        76,
+        62
+      ],
+      [
+        76,
+        65
+      ],
+      [
+        76,
+        69
+      ],
+      [
+        76,
+        73
+      ],
+      [
+        76,
+        87
+      ],
+      [
+        76,
+        89
+      ],
+      [
+        76,
+        93
+      ],
+      [
+        77,
+        60
+      ],
+      [
+        77,
+        75
+      ],
+      [
+        78,
+        67
+      ],
+      [
+        78,
+        85
+      ],
+      [
+        78,
+        90
+      ],
+      [
+        78,
+        95
+      ],
+      [
+        79,
+        48
+      ],
+      [
+        79,
+        69
+      ],
+      [
+        80,
+        87
+      ],
+      [
+        80,
+        93
+      ],
+      [
+        80,
+        99
+      ],
+      [
+        80,
+        101
+      ],
+      [
+        81,
+        47
+      ],
+      [
+        81,
+        49
+      ],
+      [
+        81,
+        69
+      ],
+      [
+        82,
+        84
+      ],
+      [
+        82,
+        96
+      ],
+      [
+        82,
+        99
+      ],
+      [
+        82,
+        101
+      ],
+      [
+        83,
+        39
+      ],
+      [
+        83,
+        53
+      ],
+      [
+        85,
+        55
+      ],
+      [
+        85,
+        69
+      ],
+      [
+        85,
+        84
+      ],
+      [
+        86,
+        61
+      ],
+      [
+        86,
+        64
+      ],
+      [
+        87,
+        34
+      ],
+      [
+        87,
+        36
+      ],
+      [
+        88,
+        32
+      ],
+      [
+        88,
+        50
+      ],
+      [
+        88,
+        60
+      ],
+      [
+        88,
+        63
+      ],
+      [
+        89,
+        37
+      ],
+      [
+        89,
+        39
+      ],
+      [
+        89,
+        47
+      ],
+      [
+        90,
+        62
+      ],
+      [
+        90,
+        65
+      ],
+      [
+        91,
+        47
+      ],
+      [
+        92,
+        50
+      ],
+      [
+        92,
+        59
+      ],
+      [
+        94,
+        48
+      ],
+      [
+        94,
+        52
+      ],
+      [
+        95,
+        41
+      ],
+      [
+        96,
+        46
+      ],
+      [
+        97,
+        44
+      ],
+      [
+        99,
+        45
+      ],
+      [
+        100,
+        57
+      ],
+      [
+        101,
+        44
+      ],
+      [
+        101,
+        55
+      ],
+      [
+        103,
+        55
+      ],
+      [
+        104,
+        43
+      ],
+      [
+        104,
+        57
+      ],
+      [
+        106,
+        41
+      ],
+      [
+        106,
+        49
+      ],
+      [
+        108,
+        39
+      ],
+      [
+        109,
+        76
+      ],
+      [
+        110,
+        55
+      ],
+      [
+        111,
+        76
+      ],
+      [
+        111,
+        78
+      ],
+      [
+        112,
+        63
+      ],
+      [
+        112,
+        88
+      ],
+      [
+        113,
+        70
+      ],
+      [
+        113,
+        80
+      ],
+      [
+        114,
+        63
+      ],
+      [
+        114,
+        90
+      ],
+      [
+        115,
+        61
+      ],
+      [
+        115,
+        70
+      ],
+      [
+        115,
+        72
+      ],
+      [
+        117,
+        60
+      ],
+      [
+        117,
+        73
+      ],
+      [
+        119,
+        71
+      ]
+    ],
+    "atlas": [
+      [
+        41,
+        88
+      ],
+      [
+        41,
+        92
+      ],
+      [
+        42,
+        84
+      ],
+      [
+        44,
+        77
+      ],
+      [
+        44,
+        81
+      ],
+      [
+        45,
+        74
+      ],
+      [
+        48,
+        74
+      ],
+      [
+        50,
+        75
+      ],
+      [
+        52,
+        74
+      ],
+      [
+        53,
+        88
+      ],
+      [
+        54,
+        76
+      ],
+      [
+        54,
+        79
+      ],
+      [
+        55,
+        90
+      ],
+      [
+        56,
+        80
+      ],
+      [
+        59,
+        80
+      ],
+      [
+        59,
+        85
+      ],
+      [
+        59,
+        90
+      ],
+      [
+        62,
+        85
+      ],
+      [
+        62,
+        87
+      ],
+      [
+        64,
+        85
+      ],
+      [
+        64,
+        87
+      ],
+      [
+        67,
+        83
+      ],
+      [
+        67,
+        87
+      ],
+      [
+        71,
+        90
+      ],
+      [
+        72,
+        88
+      ],
+      [
+        73,
+        90
+      ],
+      [
+        74,
+        88
+      ]
+    ],
+    "ascendancy": [
+      [
+        82,
+        72
+      ],
+      [
+        82,
+        69
+      ],
+      [
+        82,
+        67
+      ],
+      [
+        84,
+        74
+      ],
+      [
+        86,
+        76
+      ],
+      [
+        84,
+        77
+      ],
+      [
+        82,
+        77
+      ],
+      [
+        80,
+        77
+      ],
+      [
+        78,
+        76
+      ]
+    ]
+  },
+  "gear": [
+    {
+      "base": "axe",
+      "rarity": "unique",
+      "itemLevel": 100,
+      "baseRolls": [
+        91,
+        91
+      ],
+      "implicits": [
+        {
+          "affixId": "broad_axe",
+          "rollPercent": 37
+        }
+      ],
+      "unique": "soul_taker",
+      "uniqueRolls": [
+        13,
+        39,
+        88,
+        32,
+        81,
+        62,
+        2,
+        40,
+        100,
+        50
+      ]
+    },
+    {
+      "base": "totem",
+      "rarity": "unique",
+      "itemLevel": 100,
+      "baseRolls": [
+        91,
+        91
+      ],
+      "unique": "rigwald",
+      "uniqueRolls": [
+        35,
+        65,
+        36,
+        61,
+        53,
+        37,
+        14,
+        52,
+        93,
+        17
+      ]
+    },
+    {
+      "base": "plate_boots",
+      "rarity": "unique",
+      "itemLevel": 92,
+      "baseRolls": [
+        80,
+        80
+      ],
+      "unique": "tearhaunch",
+      "uniqueRolls": [
+        65,
+        14,
+        98,
+        37,
+        12,
+        12,
+        70,
+        68,
+        95,
+        27
+      ],
+      "sockets": [
+        "emerald4"
+      ]
+    },
+    {
+      "base": "plate_pants",
+      "rarity": "runeword",
+      "itemLevel": 62,
+      "baseRolls": [
+        67,
+        67
+      ],
+      "runes": [
+        "oru",
+        "toq",
+        "fey",
+        "eno"
+      ],
+      "runeRolls": [
+        86,
+        6,
+        11,
+        27
+      ],
+      "runeword": "wealth",
+      "runewordRoll": 38
+    },
+    {
+      "base": "vest_chest",
+      "rarity": "unique",
+      "itemLevel": 100,
+      "baseRolls": [
+        80,
+        80
+      ],
+      "unique": "kobolds_influence",
+      "uniqueRolls": [
+        2,
+        12,
+        28,
+        54,
+        98,
+        38,
+        42,
+        76,
+        32,
+        21
+      ],
+      "sockets": [
+        "emerald4"
+      ]
+    },
+    {
+      "base": "chainmail_helmet",
+      "rarity": "unique",
+      "itemLevel": 100,
+      "baseRolls": [
+        88,
+        88
+      ],
+      "implicits": [
+        {
+          "affixId": "gladiator_helm",
+          "rollPercent": 40
+        }
+      ],
+      "unique": "honourhome",
+      "uniqueRolls": [
+        59,
+        25,
+        47,
+        67,
+        75,
+        9,
+        39,
+        51,
+        59,
+        2
+      ],
+      "sockets": [
+        "emerald4"
+      ]
+    },
+    {
+      "base": "necklace",
+      "rarity": "epic",
+      "itemLevel": 94,
+      "implicits": [
+        {
+          "affixId": "lapis_amulet",
+          "rollPercent": 79
+        }
+      ],
+      "prefixes": [
+        {
+          "affixId": "vampiric",
+          "tier": "epic",
+          "rollPercent": 56
+        },
+        {
+          "affixId": "promised",
+          "tier": "epic",
+          "rollPercent": 63
+        }
+      ],
+      "suffixes": [
+        {
+          "affixId": "water_ele_dmg_jewelry",
+          "tier": "epic",
+          "rollPercent": 61
+        },
+        {
+          "affixId": "of_the_wind",
+          "tier": "epic",
+          "rollPercent": 63
+        }
+      ]
+    },
+    {
+      "base": "ring",
+      "rarity": "epic",
+      "itemLevel": 75,
+      "implicits": [
+        {
+          "affixId": "shiny_ring",
+          "rollPercent": 25
+        }
+      ],
+      "prefixes": [
+        {
+          "affixId": "archeologists",
+          "tier": "uncommon",
+          "rollPercent": 26
+        },
+        {
+          "affixId": "immortal",
+          "tier": "rare",
+          "rollPercent": 42
+        }
+      ],
+      "suffixes": [
+        {
+          "affixId": "water_res",
+          "tier": "common",
+          "rollPercent": 0
+        },
+        {
+          "affixId": "of_spell_dmg",
+          "tier": "epic",
+          "rollPercent": 68
+        }
+      ]
+    },
+    {
+      "base": "ring",
+      "rarity": "runeword",
+      "itemLevel": 86,
+      "implicits": [
+        {
+          "affixId": "ruby_ring",
+          "rollPercent": 92
+        }
+      ],
+      "runes": [
+        "mos",
+        "nos",
+        "ita"
+      ],
+      "runeRolls": [
+        42,
+        99,
+        44
+      ],
+      "runeword": "choosen_of_azuna",
+      "runewordRoll": 29
+    }
+  ],
+  "omen": {
+    "id": "fangs",
+    "itemLevel": 73,
+    "rarity": "common",
+    "requires": {
+      "RUNED": 1,
+      "NORMAL": 1,
+      "UNIQUE": 1
+    },
+    "affixes": [
+      {
+        "affixId": "gear_corruptincreased_quantity",
+        "tier": "common",
+        "rollPercent": 15
+      }
+    ]
+  },
+  "skills": [
+    {
+      "spellId": "protection",
+      "level": 16,
+      "gemPercent": 108
+    },
+    {
+      "spellId": "shadow_step",
+      "level": 2,
+      "gemPercent": 8
+    },
+    {
+      "spellId": "quake",
+      "level": 21,
+      "gemPercent": 100,
+      "supports": [
+        {
+          "id": "melee_damage",
+          "rollPercent": 64,
+          "rarity": "epic"
+        },
+        {
+          "id": "brutality",
+          "rollPercent": 38,
+          "rarity": "rare"
+        },
+        {
+          "id": "physical_damage",
+          "rollPercent": 31,
+          "rarity": "uncommon"
+        },
+        {
+          "id": "crit_chance",
+          "rollPercent": 54,
+          "rarity": "epic"
+        }
+      ]
+    },
+    {
+      "spellId": "fighter_stance",
+      "level": 7,
+      "gemPercent": 100
+    },
+    {
+      "spellId": "banishing_blade",
+      "level": 23,
+      "gemPercent": 100,
+      "supports": [
+        {
+          "id": "endurance_on_hit",
+          "rollPercent": 34,
+          "rarity": "uncommon"
+        },
+        {
+          "id": "brutality",
+          "rollPercent": 31,
+          "rarity": "uncommon"
+        },
+        {
+          "id": "fortify",
+          "rollPercent": 35,
+          "rarity": "rare"
+        }
+      ]
+    },
+    {
+      "spellId": "sanguine_aura",
+      "level": 15,
+      "gemPercent": 100
+    },
+    {
+      "spellId": "blasphemous_ritual",
+      "level": 15,
+      "gemPercent": 100
+    }
+  ],
+  "auras": [
+    {
+      "id": "physical_damage",
+      "enabled": true,
+      "rollPercent": 47,
+      "rarity": "rare"
+    },
+    {
+      "id": "critical_hit",
+      "enabled": true,
+      "rollPercent": 65,
+      "rarity": "epic"
+    }
+  ],
+  "exileEffects": [
+    {
+      "id": "banishing_blade",
+      "stacks": 1,
+      "spellId": "banishing_blade",
+      "strMulti": 1.537
+    },
+    {
+      "id": "fortify",
+      "stacks": 1,
+      "spellId": "soul_wound",
+      "strMulti": 1.537
+    },
+    {
+      "id": "endurance_charge",
+      "stacks": 3,
+      "spellId": "soul_wound",
+      "strMulti": 1
+    },
+    {
+      "id": "defender_stance",
+      "stacks": 1,
+      "spellId": "fighter_stance",
+      "strMulti": 1
+    },
+    {
+      "id": "sanguine_aura_effect",
+      "stacks": 1,
+      "spellId": "sanguine_aura",
+      "strMulti": 1.537
+    },
+    {
+      "id": "brutality",
+      "stacks": 5,
+      "strMulti": 1.537
+    },
+    {
+      "id": "ritual_of_blood",
+      "stacks": 1,
+      "spellId": "blasphemous_ritual",
+      "strMulti": 1.537
+    },
+    {
+      "id": "protection",
+      "stacks": 1,
+      "spellId": "protection",
+      "strMulti": 1.537
+    },
+    {
+      "id": "blasphemous_ritual",
+      "stacks": 1,
+      "spellId": "blasphemous_ritual",
+      "strMulti": 1.537
+    },
+    {
+      "id": "sanguine_aura",
+      "stacks": 1,
+      "spellId": "sanguine_aura",
+      "strMulti": 1
+    },
+    {
+      "id": "hemorrhage",
+      "stacks": 10,
+      "spellId": "quake",
+      "strMulti": 1
+    }
+  ],
+  "config": {
+    "enemy": {
+      "level": 100,
+      "armor": 395.2,
+      "resists": {
+        "fire": 19,
+        "water": 19,
+        "lightning": 19,
+        "chaos": 19
+      },
+      "offence": {
+        "accuracy": 20.8,
+        "armorPenetration": 0,
+        "penetration": {
+          "physical": 0,
+          "fire": 0,
+          "water": 0,
+          "lightning": 0,
+          "chaos": 0
+        },
+        "critChance": 0
+      }
+    },
+    "targetPreset": "epic_mob",
+    "effects": {
+      "brutality": 5
+    }
+  }
+}

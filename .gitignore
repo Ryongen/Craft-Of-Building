@@ -2,6 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# electron-vite's build output (packages/app).
+out/
+
 # Extracted game data is derived from the user's own install and is never committed.
 # See docs/licensing.md - shipping Mine and Slash / CTE2 assets is deliberately avoided.
 /data/
@@ -12,13 +15,23 @@ snapshot-*.json
 # Ground-truth dumps may contain a player's character data.
 /fixtures/local/
 
+# Read-only checkout of the Mine and Slash source, for tools/port-code-only-stats.mjs.
+# That repo ships no LICENSE, so nothing from it is vendored here - the porter reads
+# constants out of it and the generated table is committed, not the source.
+/reference/
+
 # Java / Gradle (mod/)
 mod/build/
 mod/.gradle/
 mod/run/
+# Eclipse/IDE class output, not Gradle's.
+mod/bin/
 
 # Editors / OS
 .vscode/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Output of tools/skill-census.mjs — a triage snapshot, not a checked-in artefact.
+census.json

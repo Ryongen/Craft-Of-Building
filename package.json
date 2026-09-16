@@ -11,10 +11,16 @@
     "node": ">=20"
   },
   "scripts": {
-    "extract": "npm run -w @cte2/extractor extract",
-    "build": "npm run -ws --if-present build",
-    "test": "npm run -ws --if-present test",
-    "typecheck": "npm run -ws --if-present typecheck"
+    "extract": "npm run -w @cte2/extractor build && node packages/extractor/dist/cli.js",
+    "fixtures": "npm run build && node packages/engine/dist/cli.js",
+    "port-stats": "node tools/port-code-only-stats.mjs",
+    "audit": "npm run build && node tools/audit-port-coverage.mjs --src \"/g/Projects/Mine-And-Slash-Rework-1.20-Forge\" --snapshot data/snapshot.json",
+    "build": "npm run -w @cte2/extractor build && npm run -w @cte2/schema build && npm run -w @cte2/engine build",
+    "dev": "npm run build && npm run -w @cte2/app dev",
+    "build:app": "npm run build && npm run -w @cte2/app build",
+    "dist:app": "npm run build:app && npm run -w @cte2/app dist",
+    "test": "npm run build && npm run -ws --if-present test",
+    "typecheck": "npm run build && npm run -ws --if-present typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

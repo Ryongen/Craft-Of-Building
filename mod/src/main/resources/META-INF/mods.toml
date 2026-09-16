@@ -1,0 +1,50 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+issueTrackerURL="https://github.com/Ryongen/cte2-pob/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="CTE2 PoB Exporter"
+authors="cte2-pob"
+description='''
+Exports the character you are playing - level, allocations, gear, gems, auras - together with
+the stat sheet the game itself calculated for it, as one JSON file that the cte2-pob engine
+reads as a ground-truth fixture.
+
+Client side only. It reads data the server has already sent your client in order to draw your
+own tooltips and character screen, so it needs no permissions, no operator level and no server
+install, and it sends nothing anywhere.
+'''
+
+# Client only: this never touches the server, and a server without it must not stop you joining.
+displayTest="IGNORE_ALL_VERSION"
+
+[[dependencies.${mod_id}]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="mmorpg"
+    mandatory=true
+    versionRange="[6.4,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="curios"
+    mandatory=true
+    versionRange="[5.0,)"
+    ordering="AFTER"
+    side="CLIENT"

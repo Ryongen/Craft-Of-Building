@@ -1,0 +1,1479 @@
+/*
+ * A dark, dense, information-first theme.
+ *
+ * The reference point is Path of Building rather than a modern web app: this is a tool for
+ * reading a lot of numbers at once, so rows are tight, the type is small, and nothing animates
+ * except what the user is dragging.
+ */
+
+:root {
+  --bg: #12141a;
+  --bg-panel: #181b23;
+  --bg-raised: #1e222c;
+  --bg-input: #0e1015;
+  --border: #2a2f3d;
+  --border-strong: #3a4152;
+
+  --text: #d7dbe4;
+  --text-dim: #8b93a5;
+  --text-faint: #5e6779;
+
+  --accent: #5b9dd9;
+  --accent-dim: #2f5578;
+  --good: #6cc47a;
+  --warn: #d9a441;
+  --bad: #d96a6a;
+
+  --allocated: #d9b44a;
+
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  --row: 22px;
+
+  /*
+   * Spacing. Even numbers, 2 to 16, because that is what the app already reaches for: 8px is by
+   * far the commonest gap and margin, then 6, 10, 4 and 16. The odd values that exist (3, 5, 7, 9
+   * in tight paddings) are deliberately *not* steps — they are the list of things to settle, not
+   * a scale to preserve.
+   */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+
+  /*
+   * Type. These are the *target* scale, not an inventory of what is on screen today.
+   *
+   * What is on screen today is 9, 9.5, 10, 10.5, 11, 11.5, 12, 13, 14, 15, 16, 20 and 22 — and
+   * the crowd in the middle is the real finding: 10.5 is used 29 times, 11 is used 82 times and
+   * 11.5 is used 32 times. Those are not three sizes. They are one size, typed three ways on
+   * three different days, and at 13px body text you cannot tell them apart.
+   *
+   * So the scale collapses that band to `--text-sm`: 10.5, 11 and 11.5 are now one size, and 9 and
+   * 9.5 fold up into `--text-xs`. Every `font-size` in this file is a token; the half-pixels are
+   * gone. What moved, moved by half a pixel, so nothing reflowed.
+   *
+   * Spacing did **not** get the same treatment, deliberately. The odd paddings (3, 5, 7, 9) are
+   * doing real work at this density — 3px on a badge reads as tight on purpose — and snapping them
+   * to the even scale would have added 2px to element heights across the app. The even steps are
+   * there for new code; the existing odd values stay.
+   */
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-base: 13px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 22px;
+
+  /* Radius. 3px is the de-facto default — buttons, inputs, badges. 5px has one user. */
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-md: 4px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--text-base);
+  line-height: 1.4;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 3px var(--space-5);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #262b37;
+  border-color: var(--accent-dim);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #3a6a99;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+}
+
+input:focus,
+select:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+input[type="number"] {
+  width: 70px;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* -- layout ------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.topbar .title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+}
+
+.field > label {
+  white-space: nowrap;
+}
+
+/*
+ * Hiding the stat sheet has to collapse its column, not leave a 380px hole: the grid is what
+ * places the sheet, so the toggle lives here rather than on the panel.
+ */
+.body.no-sheet {
+  grid-template-columns: 1fr;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 0;
+}
+
+.main-pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sidebar {
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-4);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 7px var(--space-7);
+}
+
+.tabs button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.panel {
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-6);
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 3px var(--space-6);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  font-family: var(--mono);
+}
+
+/* -- dropdown menu ------------------------------------------------------- */
+
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 280px;
+  max-width: 520px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: var(--space-2) 7px;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.menu-item:hover {
+  background: var(--accent-dim);
+}
+
+.menu-empty {
+  padding: 7px var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* A status-bar item that opens the tab behind it. Not an <a>: there is nowhere to navigate
+   to, so it borrows the affordance without the semantics. */
+.link-ish {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.link-ish:hover {
+  text-decoration-style: solid;
+}
+
+/* -- generic pieces ------------------------------------------------------ */
+
+.section-title {
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin: var(--space-7) 0 5px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+}
+
+.section-title:first-child {
+  margin-top: 0;
+}
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/*
+ * Gap variants for `.row`.
+ *
+ * `.row` had exactly one gap and no way to ask for another, which is why `style={{ gap: 18 }}` and
+ * its neighbours exist in nine files. These are where those go.
+ */
+.row.gap-1 { gap: var(--space-1); }
+.row.gap-2 { gap: var(--space-2); }
+.row.gap-3 { gap: var(--space-3); }
+/* `.row`'s own default, named. It changes nothing; it is here so the scale has no hole in it and
+   `gap-4` does what someone writing it expects rather than silently doing nothing. */
+.row.gap-4 { gap: var(--space-4); }
+.row.gap-5 { gap: var(--space-5); }
+.row.gap-6 { gap: var(--space-6); }
+.row.gap-7 { gap: var(--space-7); }
+.row.gap-8 { gap: var(--space-8); }
+
+/*
+ * Type sizes.
+ *
+ * The commonest inline style in the app by a wide margin is a font-size beside `className="faint"`
+ * — 152 of them. These are the classes those collapse into. Named for the scale rather than for a
+ * role, because the roles are not real: the same 11px is a table caption here and a hint there.
+ */
+.text-xs { font-size: var(--text-xs); }
+.text-sm { font-size: var(--text-sm); }
+.text-md { font-size: var(--text-md); }
+.text-base { font-size: var(--text-base); }
+.text-lg { font-size: var(--text-lg); }
+.text-xl { font-size: var(--text-xl); }
+.text-2xl { font-size: var(--text-2xl); }
+
+/*
+ * One measure for explanatory prose.
+ *
+ * There were three caps doing this job — `maxWidth: 760`, `680` and `620` — on paragraphs that
+ * read identically. 760 is the commonest by far (nine of twelve), so it is the one that stays.
+ */
+.prose {
+  max-width: 760px;
+}
+
+/* Numeric table cells. `.num` already sets the mono face and tabular figures; this is alignment. */
+.right {
+  text-align: right;
+}
+
+/*
+ * `.right` on a table header.
+ *
+ * `table.contribs th` sets `text-align: left` and outweighs a bare class (one class plus two
+ * elements against one class), so `<th className="right">` did nothing and every header sat at the
+ * left of a column whose numbers were at the right. Specific enough to win, and no `!important`.
+ */
+table.contribs th.right {
+  text-align: right;
+}
+
+/*
+ * Vertical rhythm.
+ *
+ * `marginTop` and `marginBottom` are the second-commonest inline style after `fontSize` — 133 of
+ * them across the panels. The suffix is the **space step**, not the pixel count, so `.mt-4` is
+ * `--space-4`, which is 8px. That keeps the names correct if the scale is ever re-tuned.
+ *
+ * Only the even steps exist. The odd margins in the app (3px, 5px) stay inline on purpose, for the
+ * same reason the odd paddings stayed literal in the token block: they are deliberate tightness,
+ * not drift, and giving them classes would invite someone to round them.
+ */
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-5 { margin-top: var(--space-5); }
+.mt-6 { margin-top: var(--space-6); }
+.mt-7 { margin-top: var(--space-7); }
+
+.mb-0 { margin-bottom: 0; }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-5 { margin-bottom: var(--space-5); }
+.mb-6 { margin-bottom: var(--space-6); }
+.mb-7 { margin-bottom: var(--space-7); }
+
+/*
+ * `body` sets `user-select: none` because this is an app shell, not a document. Anything a player
+ * needs to copy — an error message, a stat description, a diagnostic — has to opt back in.
+ */
+.selectable {
+  user-select: text;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Pushes everything after it to the far end of a `.row`.
+ *
+ * The class was already in use in the topbar and the status bar with **no rule behind it** — the
+ * `flex: 1` was inline on every one of them, so the name meant nothing and removing the inline
+ * style would have silently collapsed the layout. Unlike `.grow` it sets no `min-width`, because
+ * a spacer holds no content to overflow.
+ */
+.spacer {
+  flex: 1;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 18px 0;
+  text-align: center;
+}
+
+/* A stated assumption or a known gap. Never hidden — the whole point is that it is visible. */
+.notice {
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--warn);
+  background: rgba(217, 164, 65, 0.07);
+  border-radius: var(--radius);
+  padding: 7px var(--space-5);
+  margin-bottom: var(--space-5);
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
+
+.notice.info {
+  border-left-color: var(--accent);
+  background: rgba(91, 157, 217, 0.07);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+/*
+ * A badge you can press. Used for the branches a failed gate switched off: naming the effect a
+ * spell wanted and making that name the button that turns it on is one step, not two.
+ */
+/* The row that answers the question the table was asked — the element that kills you. */
+tr.highlight > td {
+  background: rgba(91, 157, 217, 0.07);
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.badge.warn {
+  color: var(--warn);
+  border-color: #5a4a24;
+}
+
+.badge.bad {
+  color: var(--bad);
+  border-color: #5c3131;
+}
+
+.badge.good {
+  color: var(--good);
+  border-color: #2f5c38;
+}
+
+/* -- stat sheet ---------------------------------------------------------- */
+
+.sheet {
+  overflow: auto;
+  min-height: 0;
+  padding: var(--space-4) var(--space-5);
+}
+
+.sheet-controls {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding-bottom: var(--space-4);
+  position: sticky;
+  top: -8px;
+  background: var(--bg-panel);
+  z-index: 1;
+  padding-top: var(--space-4);
+  margin-top: -8px;
+}
+
+.sheet-controls input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  height: var(--row);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.stat-row:hover {
+  background: var(--bg-raised);
+}
+
+.stat-row.selected {
+  background: var(--accent-dim);
+}
+
+.stat-row .icon {
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.stat-row .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-row .value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* The value carries the good/bad sense; `minus_is_good` decides which way round that is. */
+.stat-row .value.good {
+  color: var(--good);
+}
+
+.stat-row .value.bad {
+  color: var(--bad);
+}
+
+/* What the value converts to in play, on the same line and subordinate to it. */
+.stat-row .usable {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+/* Sections are the whole point of the taxonomy, so they need to read as sections rather than
+   as one long list with occasional bold rows. */
+.sheet-section + .sheet-section {
+  margin-top: var(--space-5);
+}
+
+.sheet-section .section-title {
+  position: sticky;
+  top: 26px;
+  background: var(--bg-panel);
+  z-index: 1;
+}
+
+/* -- breakdown ----------------------------------------------------------- */
+
+/* The pane the splitter resizes. The drill-down itself scrolls inside it. */
+.breakdown-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.breakdown {
+  background: var(--bg-raised);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-5);
+}
+
+.splitter {
+  height: 5px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: ns-resize;
+}
+
+.splitter:hover {
+  background: var(--accent);
+}
+
+/* Held on <body> for the duration of a drag: the cursor stays a resize cursor wherever the
+   pointer goes, and a fast drag does not select the text it crosses. */
+body.resizing {
+  cursor: ns-resize;
+  user-select: none;
+}
+
+/* -- nested disclosure rows (shared by the damage trace and the stat drill-down) --------- */
+
+.steps {
+  font-size: var(--text-sm);
+}
+
+.step-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.step-row.interactive {
+  cursor: pointer;
+}
+
+.step-row.interactive:hover {
+  background: var(--bg-panel);
+}
+
+.step-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.step-value.faint {
+  color: var(--text-dim);
+}
+
+.step-value.warn {
+  color: var(--warn);
+}
+
+.step-value.good {
+  color: var(--good);
+}
+
+.step-value.bad {
+  color: var(--bad);
+}
+
+/* An "assumed" chip that is also the switch that turns the assumption off. */
+.chip-toggle {
+  cursor: pointer;
+}
+
+.chip-toggle:hover {
+  color: var(--bad);
+}
+
+/* A stat you can navigate to — a transfer's other end. */
+.link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.formula {
+  font-family: var(--mono);
+  font-size: var(--text-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  margin-bottom: var(--space-4);
+  line-height: 1.7;
+  user-select: text;
+  overflow-x: auto;
+}
+
+table.contribs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.contribs th {
+  text-align: left;
+  color: var(--text-faint);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-1) 5px;
+}
+
+table.contribs td {
+  padding: var(--space-1) 5px;
+  border-bottom: 1px solid rgba(42, 47, 61, 0.5);
+}
+
+table.contribs td.n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* -- tree ---------------------------------------------------------------- */
+
+.tree-wrap {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tree-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.tree-wrap canvas.dragging {
+  cursor: grabbing;
+}
+
+.tree-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.tree-overlay > * {
+  pointer-events: auto;
+}
+
+.tree-hud {
+  background: rgba(24, 27, 35, 0.94);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+}
+
+.tree-tooltip {
+  position: absolute;
+  z-index: 10;
+  max-width: 320px;
+  background: rgba(14, 16, 21, 0.97);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 7px 9px;
+  pointer-events: none;
+  font-size: var(--text-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.tree-tooltip .tt-name {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.tree-tooltip .tt-line {
+  color: var(--good);
+  font-size: var(--text-sm);
+}
+
+/* -- diagnostics --------------------------------------------------------- */
+
+.diag {
+  display: flex;
+  gap: 7px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid rgba(42, 47, 61, 0.6);
+  font-size: var(--text-md);
+  align-items: baseline;
+  user-select: text;
+}
+
+.diag .code {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.diag.error .dot {
+  color: var(--bad);
+}
+
+.diag.warning .dot {
+  color: var(--warn);
+}
+
+.diag .dot {
+  flex-shrink: 0;
+}
+
+/* -- setup / first run --------------------------------------------------- */
+
+.setup {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 40px;
+}
+
+.setup-inner {
+  max-width: 640px;
+}
+
+.setup h1 {
+  font-size: var(--text-2xl);
+  margin: 0 0 var(--space-3);
+  font-weight: 600;
+}
+
+.setup p {
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px var(--space-7);
+  font-family: var(--mono);
+  font-size: var(--text-md);
+}
+
+.summary-grid dt {
+  color: var(--text-faint);
+}
+
+.summary-grid dd {
+  margin: 0;
+  /* Install paths are long and the grid must not push the panel wider than the window. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- list pickers -------------------------------------------------------- */
+
+.picker {
+  position: relative;
+}
+
+/*
+ * The search box fills its picker. Both call sites set `width: 100%` inline and size the *wrapper*
+ * instead, which is the right split — the caller decides how wide the control is, the control
+ * decides that its input fills it.
+ */
+.picker > input {
+  width: 100%;
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+}
+
+.picker-option {
+  padding: 3px var(--space-4);
+  cursor: pointer;
+  display: flex;
+  gap: var(--space-4);
+  align-items: baseline;
+}
+
+.picker-option:hover,
+.picker-option.active {
+  background: var(--accent-dim);
+}
+
+.picker-option .id {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  margin-left: auto;
+}
+
+/* -- damage -------------------------------------------------------------- */
+
+.dmg-columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+.dmg-total {
+  font-family: var(--mono);
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.ele-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  font-size: var(--text-md);
+}
+
+/*
+ * One row of the damage breakdown. Laid out like the mod's own damage log: a label on the
+ * left, the multiplier or addend hard right, so a column of them reads as arithmetic.
+ */
+.trace-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-6);
+  font-size: var(--text-md);
+  padding: var(--space-1) 0;
+}
+
+.trace-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/*
+ * Unit steppers beside a roll slider.
+ *
+ * A roll is a whole percent and a tier band is often only 17 of them wide, so landing on a
+ * specific one by dragging is the one interaction in this editor that was genuinely fiddly.
+ */
+button.nudge {
+  padding: 0;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: var(--text-md);
+  color: var(--text-dim);
+}
+
+/*
+ * The same stepper carrying a word rather than a glyph — `min`, `avg`, `max`.
+ *
+ * `button.nudge` is 18px square with a `min-width` to match, which is exactly right for `−` and
+ * `+` and clips a three-letter word. The height and the dimmed colour are what make it read as
+ * part of the slider rather than as another control, so those stay.
+ */
+button.nudge.word {
+  width: auto;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: var(--text-xs);
+}
+
+/* An affix's own stat lines, with the value editable in place. */
+.stat-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--good);
+  padding-left: var(--space-3);
+  min-height: 20px;
+}
+
+.stat-line .label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The paperdoll: one row per slot the mod actually gives a character. */
+.slot-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-2);
+  background: var(--bg-panel);
+}
+
+.slot-row.empty {
+  border-style: dashed;
+  opacity: 0.65;
+}
+
+/*
+ * A row holding an open picker must not dim it, and must outrank the rows below it.
+ *
+ * `opacity` below 1 creates a stacking context, so the dropdown's own `z-index: 20` was scoped
+ * *inside* this row and every later `.slot-row` painted over it — the list rendered, at 65%
+ * opacity, behind the next four slots. Nothing noticed while the "add" control was a button;
+ * it appeared the moment one became a picker.
+ */
+.slot-row.empty:has(.picker-list) {
+  opacity: 1;
+  position: relative;
+  z-index: 30;
+}
+
+/*
+ * A card whose content does not currently do anything — an unsocketed jewel.
+ *
+ * Carries the same `:has(.picker-list)` escape as `.slot-row.empty` above, and for the same
+ * reason: the card holds an "Add affix" picker, and a dropdown inside a stacking context cannot
+ * paint over the cards that follow it whatever its `z-index` says.
+ */
+.card.dimmed {
+  opacity: 0.55;
+}
+
+.card.dimmed:has(.picker-list) {
+  opacity: 1;
+  position: relative;
+  z-index: 30;
+}
+
+.slot-row .slot-name {
+  width: 74px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.slot-row.suppressed {
+  border-color: var(--bad);
+}
+
+/* The import dialog's paste box. */
+textarea.paste {
+  width: 100%;
+  min-height: 190px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  resize: vertical;
+}
+
+textarea.paste:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* A modal over the whole app, for import. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 13, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  width: min(760px, 92vw);
+  max-height: 88vh;
+  overflow: auto;
+  padding: var(--space-7) var(--space-8);
+}
+
+/* Stat point allocation. */
+.alloc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 5px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 5px;
+  background: var(--bg-raised);
+}
+
+.alloc-row .alloc-name {
+  width: 104px;
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.alloc-row .alloc-count {
+  font-family: var(--mono);
+  width: 42px;
+  text-align: right;
+  color: var(--text);
+}
+
+
+/* The class screen — SpellSchoolScreen. Ten columns by seven rows, y counting up from the
+   bottom, which the markup reverses rather than the CSS. */
+.school-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.school-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px var(--space-4) 3px var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.school-tab.mine {
+  border-color: var(--border-strong);
+  font-weight: 600;
+}
+
+.school-tab.active {
+  background: var(--bg-raised);
+  border-color: var(--accent, var(--border-strong));
+}
+
+.school-tab-icon {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
+.school-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  overflow-x: auto;
+}
+
+.school-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.school-row-req {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  width: 46px;
+  flex: 0 0 auto;
+  text-align: right;
+  padding-right: var(--space-3);
+  color: var(--text-faint, #888);
+}
+
+.school-row-req.locked {
+  opacity: 0.45;
+}
+
+.school-cell {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+}
+
+.school-cell.empty {
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.school-cell.spell {
+  border-radius: var(--radius);
+}
+
+/* Passives are visually distinct in game too — the screen has a "todo add a differently shaped
+   button for passive stats" note, and this is that distinction. */
+.school-cell.passive {
+  border-radius: 50%;
+}
+
+.school-cell.taken {
+  border-color: var(--accent, #6a9);
+  box-shadow: inset 0 0 0 1px var(--accent, #6a9);
+}
+
+.school-cell.blocked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.school-cell-icon {
+  width: 28px;
+  height: 28px;
+  image-rendering: pixelated;
+}
+
+.school-cell-level {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+/* -- what-if: the ranked gem list and the tree tooltip's delta block ------ */
+
+/*
+ * One pair of colours for every "this went up / this went down" in the app, because the
+ * question is always the same one and the answer should never need re-reading. Not `--good` and
+ * `--bad` directly: those are the diagnostic severities, and a DPS loss is not an error.
+ */
+.up {
+  color: var(--good);
+}
+
+.down {
+  color: var(--bad);
+}
+
+.gem-rank-list {
+  max-height: 420px;
+  /* Wider than the field it drops from: every gem's name ends in "Support Gem", so the part
+     that distinguishes them is at the start and truncation is expensive. */
+  width: 520px;
+}
+
+.gem-rank-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+  padding: 3px var(--space-4);
+  font-size: var(--text-sm);
+}
+
+/*
+ * A fixed grid rather than flex: the numbers have to line up down the column or the list cannot
+ * be scanned, and a percentage is exactly what people scan this list for.
+ */
+.gem-rank-row {
+  display: grid;
+  grid-template-columns: 1fr 62px 86px 46px;
+  gap: var(--space-4);
+  align-items: baseline;
+}
+
+.gem-rank-name {
+  min-width: 0;
+}
+
+.gem-rank-pct,
+.gem-rank-abs,
+.gem-rank-cost {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/*
+ * The comparison tab.
+ *
+ * Capped rather than filled, which is the opposite of what a table usually wants here. A
+ * comparison is read *across* — baseline, current, change, on one row — and at full width the
+ * label is at one edge of a 1700px window and the percentage at the other, so reading a single
+ * row means two saccades and losing your place in a forty-row list. The cap is the same idea as
+ * `.prose`'s measure, applied to numbers.
+ */
+.compare-body {
+  max-width: 880px;
+}
+
+/*
+ * The stat list is capped tighter than the tables above it.
+ *
+ * `.delta-table`'s label column is `1fr`, so it absorbs every pixel of slack and pushes the number
+ * to the far edge — fine in a 420px tooltip, and 800px of whitespace between "Mana on Hit" and
+ * "+63.23" at this width. Scoped rather than changed at the source: the tooltip's proportions are
+ * right for the tooltip.
+ */
+.compare-body .delta-table {
+  max-width: 560px;
+}
+
+/* -- the delta block, shared by the tree tooltip and anywhere else -------- */
+
+.delta-table {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 1px var(--space-4);
+  align-items: baseline;
+  font-size: var(--text-sm);
+}
+
+.delta-table .delta-label {
+  color: var(--text-dim);
+}
+
+.delta-table .delta-change,
+.delta-table .delta-pct {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.delta-table .delta-pct {
+  font-size: var(--text-sm);
+  opacity: 0.85;
+}
+
+.delta-section {
+  margin-top: var(--space-3);
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+
+.delta-section-title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-1);
+}
+
+/* The tooltip grows a lot once it is pricing a node, so let it. */
+.tree-tooltip.with-delta {
+  max-width: 420px;
+}
+
+/*
+ * A priced tooltip carries two comparison blocks and a stat list, which on a short window is
+ * taller than the screen. The cap keeps it inside the viewport; the click's own figures are
+ * rendered first so what overflows is always the least important part of it.
+ */
+.tree-tooltip {
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+
+/* A gem already in another socket of the same skill: shown, priced, and not clickable. */
+.gem-rank-row.linked {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gem-rank-row.linked:hover {
+  background: none;
+}

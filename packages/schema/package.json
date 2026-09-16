@@ -1,0 +1,31 @@
+{
+  "name": "@cte2/schema",
+  "version": "0.0.1",
+  "description": "The build document contract: character/item model, legality rules and ground-truth fixtures",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./display": {
+      "types": "./dist/display.d.ts",
+      "default": "./dist/display.js"
+    },
+    "./test-support": {
+      "types": "./dist/test-support.d.ts",
+      "default": "./dist/test-support.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cte2/extractor": "0.0.1"
+  }
+}

@@ -1,0 +1,81 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev.legacyforge' version '2.0.107'
+}
+
+version = project.mod_version
+group = 'com.cte2pob'
+
+base {
+    archivesName = "cte2pob-exporter-${minecraft_version}"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+legacyForge {
+    version = "${minecraft_version}-${forge_version}"
+
+    parchment {
+        minecraftVersion = parchment_minecraft
+        mappingsVersion = parchment_version
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+
+    runs {
+        client {
+            client()
+        }
+    }
+}
+
+// The three jars this reads data structures out of. They are the pack's own production jars:
+// compileOnly, never bundled, and never checked in - this project ships source only and the
+// mod ids it depends on are already installed wherever it runs.
+//
+// Their vanilla method names are SRG; ours are official and get reobfuscated on build. That
+// only matters where a Mine and Slash class inherits a vanilla method, so every such call goes
+// through the vanilla type instead. See PlayerExport.readInventory.
+def packMods = file(project.cte2_mods)
+def packJar = { String name ->
+    def f = new File(packMods, name)
+    if (!f.exists()) {
+        throw new GradleException(
+            "Missing ${f}.\n" +
+            "Point -Pcte2_mods at a Craft to Exile 2 instance's mods folder, or set cte2_mods in gradle.properties."
+        )
+    }
+    return files(f)
+}
+
+dependencies {
+    compileOnly packJar(project.mns_jar)
+    compileOnly packJar(project.exile_jar)
+    compileOnly packJar(project.curios_jar)
+}
+
+tasks.named('jar') {
+    manifest {
+        attributes([
+            'Specification-Title'   : 'CTE2 PoB Exporter',
+            'Specification-Vendor'  : 'cte2-pob',
+            'Specification-Version' : '1',
+            'Implementation-Title'  : 'CTE2 PoB Exporter',
+            'Implementation-Version': project.version,
+        ])
+    }
+}
+
+processResources {
+    def props = [mod_version: project.mod_version, mod_id: project.mod_id]
+    inputs.properties props
+    filesMatching('META-INF/mods.toml') {
+        expand props
+    }
+}

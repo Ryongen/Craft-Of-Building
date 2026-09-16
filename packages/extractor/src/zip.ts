@@ -9,7 +9,8 @@
  * end-of-central-directory records. Anything else fails loud.
  */
 
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 
 const SIG_EOCD = 0x06054b50;
@@ -232,4 +233,90 @@ function findZip64Extra(extra: Buffer): Buffer | null {
     p += 4 + len;
   }
   return null;
+}
+
+/**
+ * The read-only surface `extract`, `extractAssets` and `resolveItemIcons` need from an
+ * archive. `ZipArchive` implements it; so does `DirArchive`, which is why they are
+ * interchangeable at every call site.
+ */
+export type ResourceArchive = {
+  readonly path: string;
+  close(): void;
+  names(): string[];
+  has(name: string): boolean;
+  find(prefix: string, suffix?: string): string[];
+  read(name: string): Buffer;
+  readText(name: string): string;
+};
+
+/**
+ * A resource pack that was unpacked to a folder instead of left as a zip.
+ *
+ * OpenLoader accepts both — `config/openloader/resources/` may hold `resources.zip` or a
+ * `resources/` directory with the same `pack.mcmeta`/`assets` inside — and Craft to Exile 2
+ * switched to the unpacked form. Treating only zips as resource packs silently dropped the
+ * pack's entire lang and texture layer, which is not a visible failure: extraction still
+ * succeeded and every display name quietly fell back to the jar's.
+ *
+ * Names are exposed with `/` separators and no leading slash, exactly as zip entries are,
+ * so callers cannot tell the two apart.
+ */
+export class DirArchive implements ResourceArchive {
+  readonly path: string;
+  private readonly entries: Map<string, string>;
+
+  private constructor(path: string, entries: Map<string, string>) {
+    this.path = path;
+    this.entries = entries;
+  }
+
+  static open(path: string): DirArchive {
+    const entries = new Map<string, string>();
+    const walk = (dir: string, prefix: string): void => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, item.name);
+        if (item.isDirectory()) walk(full, `${prefix}${item.name}/`);
+        else if (item.isFile()) entries.set(prefix + item.name, full);
+      }
+    };
+    walk(path, "");
+    return new DirArchive(path, entries);
+  }
+
+  /** Nothing to release — there is no open file descriptor. */
+  close(): void {}
+
+  names(): string[] {
+    return [...this.entries.keys()];
+  }
+
+  has(name: string): boolean {
+    return this.entries.has(name);
+  }
+
+  find(prefix: string, suffix = ""): string[] {
+    const out: string[] = [];
+    for (const name of this.entries.keys()) {
+      if (!name.startsWith(prefix)) continue;
+      if (suffix && !name.endsWith(suffix)) continue;
+      out.push(name);
+    }
+    return out;
+  }
+
+  read(name: string): Buffer {
+    const file = this.entries.get(name);
+    if (!file) throw new Error(`${this.path}: no such file: ${name}`);
+    return readFileSync(file);
+  }
+
+  readText(name: string): string {
+    return this.read(name).toString("utf8").replace(/^\ufeff/, "");
+  }
+}
+
+/** Opens `path` as a zip or as an unpacked pack directory, whichever it is. */
+export function openArchive(path: string): ResourceArchive {
+  return statSync(path).isDirectory() ? DirArchive.open(path) : ZipArchive.open(path);
 }

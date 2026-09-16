@@ -1,0 +1,23 @@
+{
+  "name": "level-1-blank",
+  "notes": "The floor: a fresh character with no gear, no allocations and no auras. Everything on the stat sheet here comes from mmorpg_base_stats/original_mode_player plus level scaling, so it pins base stats and the scaling curves before anything else can confuse them. AWAITING CAPTURE - the observed block is deliberately empty; see fixtures/README.md.",
+  "build": {
+    "schemaVersion": 1,
+    "meta": {
+      "name": "Level 1 blank",
+      "mineAndSlashVersion": "1.20.1-6.4.7",
+      "packVersion": "2.0.2"
+    },
+    "character": {
+      "level": 1
+    }
+  },
+  "observed": {
+    "source": "stat_gui",
+    "capturedAt": "",
+    "mineAndSlashVersion": "1.20.1-6.4.7",
+    "packVersion": "2.0.2",
+    "notes": "Not captured yet. Make a fresh character, open the stat GUI, and transcribe the stats listed in fixtures/README.md. Do not fill these in from calculation - the whole value of this file is that the numbers came from the game.",
+    "stats": []
+  }
+}

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Path of Building — Craft to Exile 2</title>
+    <!--
+      No remote anything: the renderer is fully bundled, and cte2-asset: is the only non-self
+      source it may pull from. `unsafe-inline` covers the styles Vite injects during dev.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: cte2-asset:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
