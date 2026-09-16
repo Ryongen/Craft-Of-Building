@@ -1190,6 +1190,38 @@ function validateJewel(jewel: Jewel, snapshot: Snapshot, path: string, add: Add)
  * own is something the game cannot produce — the same check gear affixes get against their
  * tier. Without a rarity stated there is no band, and only the plain 0-100 applies.
  */
+/** The top of every band any rarity in this pack rolls a gem at. */
+const GEM_PERCENT_BAND_MAX = 100;
+
+/**
+ * Why a gem percent above the bands is a warning and not an error.
+ *
+ * Nothing the game does today can produce one. `SkillGemBlueprint` draws from
+ * `rar.stat_percents.random()`, `RerollSkillGemStatsItemMod` redraws from the same band, and
+ * `UpgradeSkillGemRarityItemMod` goes through `uniformRescaleInt`, whose last act is
+ * `Math.min(…, to.max)` — all three confirmed in `Mine_and_Slash-1.20.1-6.4.13.jar`, not just in
+ * the fork. The pack's quest reward tables hand out gems with a literal `perc` and the highest is
+ * 40. No rarity in the pack has a band above 100.
+ *
+ * But `SkillGemData.perc` is a bare public `int` with no clamp anywhere in the class —
+ * `getStatPercent()` is `return perc` and nothing re-reads the band on load — so a value written
+ * by an older build of the pack or the mod survives every world load and the game goes on using
+ * it. A capture that records one is a *measurement*, and this project's rule is that a
+ * measurement wins. `protection` at 108 on the 2026-09-15 capture is exactly that.
+ *
+ * So: a number the format cannot represent is still an error, and one the game is demonstrably
+ * holding is a warning that says where it came from.
+ */
+function abovePercentBand(roll: number): string {
+  return (
+    `${roll} is above the ${GEM_PERCENT_BAND_MAX} every rarity band tops out at. Nothing in ` +
+    `6.4.13 writes one — the blueprint, the reroll and the rarity upgrade all stay inside the ` +
+    `band — but \`SkillGemData.perc\` is never re-clamped on load, so an item rolled before a ` +
+    `band changed keeps its number and the game keeps using it. The gem's stats interpolate ` +
+    `past the top of their range at this roll.`
+  );
+}
+
 function validateGemRoll(
   gem: { id: string; rarity?: string; rollPercent?: number },
   snapshot: Snapshot,
@@ -1197,14 +1229,17 @@ function validateGemRoll(
   add: Add,
 ): void {
   const roll = gem.rollPercent;
-  if (roll !== undefined && (!Number.isFinite(roll) || roll < 0 || roll > 100)) {
+  if (roll !== undefined && (!Number.isFinite(roll) || roll < 0)) {
     add(
       "error",
       "gem-percent-out-of-range",
       `${path}.rollPercent`,
-      `\`SkillGemData.getStatPercent()\` is 0-100, got ${roll}.`,
+      `\`SkillGemData.getStatPercent()\` is a non-negative percent, got ${roll}.`,
     );
     return;
+  }
+  if (roll !== undefined && roll > GEM_PERCENT_BAND_MAX) {
+    add("warning", "gem-percent-above-band", `${path}.rollPercent`, abovePercentBand(roll));
   }
 
   if (gem.rarity === undefined) return;
@@ -1224,14 +1259,19 @@ function validateGemRoll(
   }
 
   const band = rarity.statPercents;
-  if (roll !== undefined && (roll < band.min || roll > band.max)) {
-    add(
-      "error",
-      "gem-roll-outside-rarity-band",
-      `${path}.rollPercent`,
-      `A "${rarity.id}" gem rolls in ${band.min}..${band.max}, got ${roll}.`,
-    );
-  }
+  if (roll === undefined || (roll >= band.min && roll <= band.max)) return;
+
+  // Above the band is the stale-item case above, and the pack has real ones; below it is what a
+  // typo looks like, and nothing in the game produces it. Same rule, different direction.
+  add(
+    roll > band.max ? "warning" : "error",
+    "gem-roll-outside-rarity-band",
+    `${path}.rollPercent`,
+    `A "${rarity.id}" gem rolls in ${band.min}..${band.max}, got ${roll}.` +
+      (roll > band.max
+        ? ` Above the band is legal-but-stale: \`SkillGemData.perc\` is never re-clamped on load.`
+        : ""),
+  );
 }
 
 /**
@@ -1363,13 +1403,15 @@ function validateReferences(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     }
 
     if (skill.gemPercent !== undefined) {
-      if (!Number.isFinite(skill.gemPercent) || skill.gemPercent < 0 || skill.gemPercent > 100) {
+      if (!Number.isFinite(skill.gemPercent) || skill.gemPercent < 0) {
         add(
           "error",
           "gem-percent-out-of-range",
           `skills[${i}].gemPercent`,
-          `Must be 0-100, got ${skill.gemPercent}.`,
+          `A gem's roll is a non-negative percent, got ${skill.gemPercent}.`,
         );
+      } else if (skill.gemPercent > GEM_PERCENT_BAND_MAX) {
+        add("warning", "gem-percent-above-band", `skills[${i}].gemPercent`, abovePercentBand(skill.gemPercent));
       }
     }
 

@@ -973,22 +973,27 @@ function gemSnapshot() {
   });
 }
 
-test("a gem's roll must sit inside its rarity's band", () => {
+test("a gem's roll must sit inside its rarity's band, and the two directions differ", () => {
   // `data.perc = rar.stat_percents.random()` and `UpgradeSkillGemRarityItemMod` rescales it into
-  // the new band on an upgrade, so the six bands do not overlap and a roll outside its own is
-  // an item the game cannot produce. Same rule an affix gets against its tier.
+  // the new band on an upgrade, so the six bands do not overlap.
   const legal = build({
     skills: [{ spellId: "fury", supports: [{ id: "crit_support", rarity: "mythic", rollPercent: 95 }] }],
     auras: [{ id: "armor_aura", rarity: "rare", rollPercent: 40 }],
   });
   assert.deepEqual(codes(validateBuild(legal, gemSnapshot()), "error"), []);
 
-  const illegal = build({
+  // *Below* the band is what a typo looks like and nothing in the game writes one: an error.
+  const under = build({ auras: [{ id: "armor_aura", rarity: "mythic", rollPercent: 12 }] });
+  assert.deepEqual(codes(validateBuild(under, gemSnapshot()), "error"), ["gem-roll-outside-rarity-band"]);
+
+  // *Above* it is the stale-item case and the pack has real ones — `SkillGemData.perc` is a bare
+  // int with no clamp anywhere in the class, so a gem rolled before a band changed keeps its
+  // number and the game keeps using it. A warning, because a capture of one is a measurement.
+  const over = build({
     skills: [{ spellId: "fury", supports: [{ id: "crit_support", rarity: "common", rollPercent: 95 }] }],
-    auras: [{ id: "armor_aura", rarity: "mythic", rollPercent: 12 }],
   });
-  const found = codes(validateBuild(illegal, gemSnapshot()), "error");
-  assert.deepEqual(found, ["gem-roll-outside-rarity-band", "gem-roll-outside-rarity-band"]);
+  assert.deepEqual(codes(validateBuild(over, gemSnapshot()), "error"), []);
+  assert.ok(codes(validateBuild(over, gemSnapshot()), "warning").includes("gem-roll-outside-rarity-band"));
 });
 
 test("one Skill may not hold the same support gem, or two of one one_of_a_kind group", () => {
@@ -1027,10 +1032,16 @@ test("a gem rarity must exist and must not be a unique-item rarity", () => {
   assert.ok(codes(validateBuild(unique, gemSnapshot()), "error").includes("unique-rarity-as-gem-rarity"));
 });
 
-test("a gem with no rarity is held only to the plain 0-100", () => {
+test("a gem with no rarity: negative is an error, above the bands is a warning", () => {
   const legal = build({ auras: [{ id: "armor_aura", rollPercent: 40 }] });
   assert.deepEqual(codes(validateBuild(legal, gemSnapshot()), "error"), []);
 
-  const illegal = build({ auras: [{ id: "armor_aura", rollPercent: 140 }] });
-  assert.ok(codes(validateBuild(illegal, gemSnapshot()), "error").includes("gem-percent-out-of-range"));
+  // Not a percent at all.
+  const negative = build({ auras: [{ id: "armor_aura", rollPercent: -1 }] });
+  assert.ok(codes(validateBuild(negative, gemSnapshot()), "error").includes("gem-percent-out-of-range"));
+
+  // The `protection` case from the 2026-09-15 capture: the exporter read it off the live gem.
+  const stale = build({ auras: [{ id: "armor_aura", rollPercent: 108 }] });
+  assert.deepEqual(codes(validateBuild(stale, gemSnapshot()), "error"), []);
+  assert.ok(codes(validateBuild(stale, gemSnapshot()), "warning").includes("gem-percent-above-band"));
 });
