@@ -209,6 +209,9 @@ export type {
   UnratedLeech,
 } from "./damage/resources.js";
 
+export { mobAffix, mobAffixDiagnostics, mobAffixIds, mobAffixMods } from "./damage/mob-affixes.js";
+export type { MobAffixMod, MobAffixView } from "./damage/mob-affixes.js";
+
 export { defence } from "./damage/defence.js";
 export type { Defence, DefenceOptions, ElementDefence, Pools } from "./damage/defence.js";
 

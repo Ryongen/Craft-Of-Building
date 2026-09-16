@@ -428,6 +428,23 @@ export type EnemySetup = {
   damageReduction?: number;
   /** What this mob's own hit does to you — the other half of a target preset. */
   offence?: MobOffence;
+  /**
+   * `mmorpg_mob_affix` ids the target carries — what makes a real Epic tougher than the preset.
+   *
+   * Stated as ids rather than as the numbers they come to, which is the whole point: the fields
+   * above are someone's guess at a mob's armour, and an affix is the game's own answer. The
+   * Training Dummy mod settled on the same shape — its presets "pin no numbers at all" and take
+   * affixes as toggles — so a figure here and a figure measured against a dummy are asking the
+   * same question.
+   *
+   * Each resolves at `ToExactStat(100, level)` against {@link EnemySetup.level}: fixed, not
+   * rolled, and at the mob's level rather than the character's. They stack with the fields above
+   * rather than replacing them, in one accumulator, because that is what the container does.
+   *
+   * A mob rolls at most one prefix and one suffix; more than that is reported rather than
+   * refused, since asking "what would three cost" is a fair planner question.
+   */
+  affixes?: string[];
 };
 
 /**

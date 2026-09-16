@@ -1438,7 +1438,7 @@ function validateReferences(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     );
   }
 
-  validateEnemy(doc, add);
+  validateEnemy(doc, snapshot, add);
 
   const seenAuras = new Set<string>();
   for (const [i, aura] of (doc.auras ?? []).entries()) {
@@ -1528,7 +1528,7 @@ function validateReferences(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
  * *expressible* — a resist keyed on an element that does not exist would silently never be
  * read, which is exactly the class of quiet failure this package exists to prevent.
  */
-function validateEnemy(doc: BuildDoc, add: Add): void {
+function validateEnemy(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   const placement = doc.config?.target;
   if (placement) {
     for (const field of ["distance", "radius", "height"] as const) {
@@ -1610,6 +1610,33 @@ function validateEnemy(doc: BuildDoc, add: Add): void {
     if (value !== undefined && !Number.isFinite(value)) {
       add("error", "bad-enemy-stat", `config.enemy.${field}`, `Must be a finite number, got ${JSON.stringify(value)}.`);
     }
+  }
+
+  // Mob affixes. An id the snapshot does not have is an error rather than a warning: naming the
+  // affix instead of typing its armour is the whole point, and a name nothing resolves is a
+  // document describing a mob this pack cannot make. A duplicate is harmless — the engine counts
+  // it once, as `MobAffixesData` would — but it is still not a mob the game rolls.
+  const affixes = enemy.affixes ?? [];
+  const seen = new Set<string>();
+  for (const [i, id] of affixes.entries()) {
+    if (!has(snapshot, CATEGORY.mobAffix, id)) {
+      add(
+        "error",
+        "unknown-mob-affix",
+        `config.enemy.affixes[${i}]`,
+        `No ${CATEGORY.mobAffix} entry "${id}".`,
+      );
+      continue;
+    }
+    if (seen.has(id)) {
+      add(
+        "warning",
+        "duplicate-mob-affix",
+        `config.enemy.affixes[${i}]`,
+        `"${id}" is listed twice. It counts once, the way a mob can only carry it once.`,
+      );
+    }
+    seen.add(id);
   }
 }
 

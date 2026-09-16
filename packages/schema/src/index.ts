@@ -194,6 +194,7 @@ export {
   runeName,
   runewordName,
   itemSetName,
+  mobAffixName,
   slotName,
   spellDesc,
   spellName,

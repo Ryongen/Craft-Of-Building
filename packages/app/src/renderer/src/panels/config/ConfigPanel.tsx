@@ -22,6 +22,7 @@ import {
   isAuraEnabled,
   isFoodBuffEnabled,
   modifierLine,
+  mobAffixName,
   serverConfigNumber,
   statBuffName,
   targetPreset,
@@ -34,6 +35,8 @@ import {
   IN_COMBAT_REGEN_MULTI_KEY,
   inCombatRegenMultiOf,
   balance,
+  mobAffix,
+  mobAffixIds,
   parseRolledMod,
   rollToExact,
   statIndex,
@@ -147,6 +150,16 @@ function EnemySection(): ReactNode {
 
   const patch = (next: Patch<EnemySetup>): void => setEnemy(applyPatch(enemy, next));
 
+  const affixes = useMemo(
+    () => mobAffixIds(world.snapshot).flatMap((id) => mobAffix(world.snapshot, id) ?? []),
+    [world.snapshot],
+  );
+  const toggleAffix = (id: string): void => {
+    const held = enemy.affixes ?? [];
+    const next = held.includes(id) ? held.filter((x) => x !== id) : [...held, id];
+    patch({ affixes: next.length > 0 ? next : undefined });
+  };
+
   const setResist = (guid: string, value: number): void => {
     const resists = { ...(enemy.resists ?? {}) };
     if (value === 0) delete resists[guid];
@@ -237,6 +250,36 @@ function EnemySection(): ReactNode {
             <label>Dodge %</label>
             <NumberField value={enemy.dodge ?? 0} min={0} onChange={(dodge) => patch({ dodge })} />
           </div>
+        </div>
+
+        {/* Mob affixes. Stated as ids rather than as the numbers they come to, which is the
+            whole point of them: every field above is somebody's guess at a mob, and an affix is
+            the game's own answer. `MobAffix.getStatAndContext` resolves each at
+            `ToExactStat(100, level)` against the level above, and they stack with the fields
+            rather than replacing them. This is the shape the Training Dummy mod settled on —
+            presets that pin no numbers, with affixes as toggles on top. */}
+        <div className="section-title">
+          Affixes{" "}
+          <span className="faint text-sm" style={{ fontWeight: "normal" }}>
+            what makes a real mob tougher than the preset
+          </span>
+        </div>
+        <div className="row wrap gap-5">
+          {affixes.map((affix) => {
+            const on = (enemy.affixes ?? []).includes(affix.id);
+            return (
+              <label key={affix.id} className="row gap-3" style={{ alignItems: "center" }}>
+                <input type="checkbox" checked={on} onChange={() => toggleAffix(affix.id)} />
+                <span className={on ? "" : "faint"}>{mobAffixName(world.snapshot, affix.id)}</span>
+                <span className="badge mono text-sm">{affix.type}</span>
+              </label>
+            );
+          })}
+        </div>
+        <div className="faint text-sm mt-3">
+          A mob rolls at most one prefix and one suffix; more than that is reported rather than
+          refused, because asking what three would cost is a fair question. Each resolves at the
+          enemy level above, not yours.
         </div>
 
         <div className="section-title">Resists</div>

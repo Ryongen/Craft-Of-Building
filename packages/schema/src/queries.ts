@@ -65,6 +65,7 @@ export const CATEGORY = {
   gearSlot: "mmorpg_gear_slot",
   itemSet: "mmorpg_sets",
   gem: "mmorpg_gems",
+  mobAffix: "mmorpg_mob_affix",
   mobRarity: "mmorpg_mob_rarity",
   omen: "mmorpg_omen",
   perk: "mmorpg_perk",

@@ -231,7 +231,11 @@ const ACCOUNTED = {
   // tiers and the average-item-level scaling are each pinned in `collect/item-sets.test.ts`.
   "mmorpg_sets": ["elsewhere", "collect/item-sets.ts — ITEM_SET contexts off the equipped uniques"],
   "mmorpg_entity": ["gap", "190 mob definitions; would make a target a real mob, not rarity maths"],
-  "mmorpg_mob_affix": ["gap", "25 elite affixes — what makes a real Epic mob tougher than the preset"],
+  // Ported in `damage/mob-affixes.ts` against `MobAffix.getStatAndContext`: fixed at 100%,
+  // scaled to the mob's level, folded into the enemy sheet in the same accumulator as your
+  // debuffs. Named on the build as `config.enemy.affixes`, the shape the Training Dummy mod
+  // uses — ids rather than numbers, so a planner figure and a dummy figure ask one question.
+  "mmorpg_mob_affix": ["elsewhere", "damage/mob-affixes.ts — `config.enemy.affixes` on the target"],
   "mmorpg_map_affix": ["gap", "77 map modifiers, most of which buff the mobs you are measuring against"],
   "mmorpg_prophecy_modifier": ["gap", "64 more map-side modifiers"],
   "mmorpg_weapon_type": ["gap", "13 weapon types; pairs with `castingWeapon`"],

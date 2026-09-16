@@ -35,7 +35,8 @@ import { applyAilments, type Ailment, type AilmentResult } from "./ailments.js";
 import { Recorder, type EventTrace, type LayerStep, type MoreStep } from "./breakdown.js";
 import { evaluateIfs } from "./conditions.js";
 import { applyStatEffect } from "./effects.js";
-import { multiplyExact, parseRolledMods, rollToExact } from "../modifier.js";
+import { multiplyExact, parseRolledMods, rollToExact, type ModType } from "../modifier.js";
+import { mobAffixDiagnostics, mobAffixMods } from "./mob-affixes.js";
 import { activeOn, type EffectState } from "./effect-state.js";
 import { inCodeEffects, MAX_CONVERSION_DEPTH } from "./code-only-effects.js";
 import { sheetValue, type DamageCtx, type ProcHit, type RestoreRecord, type Sheet } from "./ctx.js";
@@ -214,8 +215,9 @@ export function simulateHit(
   // not applied to it: `shred` and `elemental_weakness` are things you put on the mob, and
   // carrying them across would have your own recoil shredding you.
   const selfHit = options.selfHit === true;
-  const targetSheet = selfHit ? characterSheet : enemySheet(build.config?.enemy);
-  if (!selfHit) applyDebuffs(targetSheet, effects, snapshot, index, bal, build.character.level, report);
+  const targetSheet = selfHit
+    ? characterSheet
+    : targetSheetFor(build, effects, snapshot, index, bal, report);
 
   const act = damageAct(spell, options);
   if (!act) {
@@ -964,28 +966,57 @@ function enemySheet(enemy: EnemySetup | undefined): Sheet {
  * the `_on_you` half is the mob's, and in this pack it is `MobRarity.stats`'s single
  * `inc_effect_of_negative_buff_on_you`, which a declared enemy does not carry.
  */
-function applyDebuffs(
-  sheet: Sheet,
+/**
+ * The enemy's sheet with everything aimed at it folded in — its affixes and your debuffs.
+ *
+ * Both in one accumulator on purpose; see {@link applyTargetMods}.
+ */
+function targetSheetFor(
+  build: BuildDoc,
+  effects: EffectState,
+  snapshot: Snapshot,
+  index: StatIndex,
+  bal: ReturnType<typeof balance>,
+  report: (severity: Severity, code: string, path: string, message: string) => void,
+): Sheet {
+  const sheet = enemySheet(build.config?.enemy);
+  const affixIds = build.config?.enemy?.affixes ?? [];
+  // `Load.Unit(en).getLevel()` — the mob's own level, which falls back to the character's when
+  // the document does not say, the same way every other enemy field does.
+  const mobLevel =
+    build.config?.enemy?.level ?? build.config?.enemyLevel ?? build.character.level;
+
+  // Through `targetStats` like a debuff's: `of_elemental_resistance` writes `elemental_resist`,
+  // which no mitigation effect reads — the aggregate has to be handed to the elements it covers
+  // or the affix moves nothing at all.
+  const affixes = mobAffixMods(snapshot, index, bal, mobLevel, affixIds, report).flatMap((m) =>
+    targetStats(m.statId).map((statId) => ({
+      statId,
+      type: m.type,
+      value: m.value,
+      source: m.source,
+      path: "config.enemy.affixes",
+    })),
+  );
+  for (const d of mobAffixDiagnostics(snapshot, affixIds)) report(d.severity, d.code, d.path, d.message);
+
+  applyTargetMods(
+    sheet,
+    [...affixes, ...debuffMods(effects, snapshot, index, bal, build.character.level)],
+    index,
+    report,
+  );
+  return sheet;
+}
+
+function debuffMods(
   effects: EffectState,
   snapshot: Snapshot,
   index: StatIndex,
   bal: ReturnType<typeof balance>,
   level: number,
-  report: (severity: Severity, code: string, path: string, message: string) => void,
-): void {
-  // Which debuff wrote to a stat, so a debuff that turns out to change nothing can be named.
-  const wroteTo = new Map<string, string>();
-  // Gathered before anything is resolved, because two debuffs can touch the same stat and the
-  // container sums their Flat and Percent before applying either.
-  const pending = new Map<string, { flat: number; percent: number; multi: number }>();
-  const bucket = (statId: string): { flat: number; percent: number; multi: number } => {
-    let found = pending.get(statId);
-    if (!found) {
-      found = { flat: 0, percent: 0, multi: 1 };
-      pending.set(statId, found);
-    }
-    return found;
-  };
+): TargetMod[] {
+  const out: TargetMod[] = [];
 
   for (const option of activeOn(effects, "target")) {
     const data = entry(snapshot, CATEGORY.exileEffect, option.id)?.data;
@@ -1006,16 +1037,49 @@ function applyDebuffs(
       const scaled = option.strMulti === 1 ? stacked : multiplyExact(stacked, option.strMulti);
 
       for (const statId of targetStats(scaled.statId)) {
-        const into = bucket(statId);
-        wroteTo.set(statId, option.id);
-        if (scaled.type === "FLAT") into.flat += scaled.value;
-        else if (scaled.type === "PERCENT") into.percent += scaled.value;
-        else into.multi *= 1 + scaled.value / 100;
+        out.push({ statId, type: scaled.type, value: scaled.value, source: option.id, path: "config.effects" });
       }
     }
   }
+  return out;
+}
 
-  for (const [statId, mods] of pending) {
+/** One resolved modifier bound for the enemy's sheet, with what produced it. */
+type TargetMod = { statId: string; type: ModType; value: number; source: string; path: string };
+
+/**
+ * Everything aimed at the enemy, folded into its sheet in one pass.
+ *
+ * One pass rather than one per source, because the container does not apply contexts in turn:
+ * `InCalcStatData.calcValue` is `(base + Flat) × (1 + Percent/100) × Multi` over the *sum* of
+ * every context that touched the stat. A mob affix granting `MORE 20 accuracy` and a debuff
+ * granting `PERCENT -8 armor` have to meet in the same accumulator or the arithmetic is a
+ * different one.
+ */
+function applyTargetMods(
+  sheet: Sheet,
+  mods: readonly TargetMod[],
+  index: StatIndex,
+  report: (severity: Severity, code: string, path: string, message: string) => void,
+): void {
+  // Which source wrote to a stat, so one that turns out to change nothing can be named.
+  const wroteTo = new Map<string, { source: string; path: string }>();
+  const pending = new Map<string, { flat: number; percent: number; multi: number }>();
+
+  for (const mod of mods) {
+    let into = pending.get(mod.statId);
+    if (!into) {
+      into = { flat: 0, percent: 0, multi: 1 };
+      pending.set(mod.statId, into);
+    }
+    wroteTo.set(mod.statId, { source: mod.source, path: mod.path });
+    if (mod.type === "FLAT") into.flat += mod.value;
+    else if (mod.type === "PERCENT") into.percent += mod.value;
+    else into.multi *= 1 + mod.value / 100;
+  }
+
+  for (const [statId, mods2] of pending) {
+    const mods = mods2;
     const shape = index.shapeOf(statId);
     const current = sheet.get(statId);
     // The declared enemy stat stands in for `Stat.base`: an undeclared defence is 0, which is
@@ -1034,8 +1098,8 @@ function applyDebuffs(
       report(
         "warning",
         "debuff-more-on-zero-base",
-        "config.effects",
-        `\`${wroteTo.get(statId) ?? "a debuff"}\` modifies \`${statId}\` by MORE, and the target's ` +
+        wroteTo.get(statId)?.path ?? "config.effects",
+        `\`${wroteTo.get(statId)?.source ?? "a debuff"}\` modifies \`${statId}\` by MORE, and the target's ` +
           `\`${statId}\` is 0. \`InCalcStatData\` folds MORE into a multiplier over ` +
           `\`(base + flat) × (1 + percent/100)\`, so it multiplies zero: the debuff changes ` +
           `nothing, in the engine and in the game alike. Give the enemy a non-zero \`${statId}\` ` +
@@ -1164,8 +1228,7 @@ export function simulateBasicAttack(
   const characterRun = options.sheets?.character ?? calculate(build, snapshot, sheetOptions);
   const characterSheet = characterRun.stats;
   const effects = options.effects ?? characterRun.effects;
-  const targetSheet = enemySheet(build.config?.enemy);
-  applyDebuffs(targetSheet, effects, snapshot, index, bal, build.character.level, report);
+  const targetSheet = targetSheetFor(build, effects, snapshot, index, bal, report);
 
   // `(int)` on the stat value, toward zero, exactly as the Java casts it.
   const baseValue = Math.trunc(sheetValue(characterSheet, "weapon_damage"));
