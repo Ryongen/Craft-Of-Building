@@ -242,7 +242,7 @@ function findOpenLoaderPacks(gameDir: string): OpenLoaderPack[] {
     const root = isDir(join(packDir, "data")) ? join(packDir, "data") : packDir;
     const namespaces: PackNamespace[] = [];
     for (const namespace of readdirSync(root).sort()) {
-      // Skip tooling/editor directories that live alongside the data (e.g. `.claude`).
+      // Skip tooling/editor directories that live alongside the data.
       if (namespace.startsWith(".")) continue;
       const dir = join(root, namespace);
       if (isDir(dir)) namespaces.push({ namespace, dir });

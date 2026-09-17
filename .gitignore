@@ -35,3 +35,16 @@ desktop.ini
 
 # Output of tools/skill-census.mjs — a triage snapshot, not a checked-in artefact.
 census.json
+
+# Editor and local tooling config belongs to whoever is running it, not to the repo.
+# Per-machine patterns go in .git/info/exclude.
+.github/modernize/
+
+# Anything personal to one machine.
+.env
+.env.*
+!.env.example
+
+# Markdown notes & documents (only root README.md is tracked)
+*.md
+!/README.md

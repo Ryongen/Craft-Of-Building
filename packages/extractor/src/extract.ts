@@ -522,7 +522,7 @@ function readPackRegistries(
   const tally = new NamespaceTally(packId, ns.namespace, ns.dir);
 
   for (const category of readdirSync(ns.dir)) {
-    // Skip tooling/editor directories that live alongside the data (e.g. `.claude`).
+    // Skip tooling/editor directories that live alongside the data.
     if (category.startsWith(".")) continue;
     const categoryDir = join(ns.dir, category);
     if (!isDir(categoryDir)) continue;
