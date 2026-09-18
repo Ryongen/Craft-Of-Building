@@ -1,0 +1,85 @@
+# Build the planner as a static site and publish it to GitHub Pages.
+#
+# Two checkouts, because the code and the pack data live on different branches. `main` holds the
+# app; `site-data` is an orphan branch holding one directory per Mine and Slash version, with
+# `latest.json` naming the one to build from. See `tools/publish-site-data.mjs`.
+#
+# The data checkout is `--depth 1 --single-branch` (which is what `fetch-depth: 1` gives), so the
+# snapshot's history costs nothing here however long it grows.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  # Publishing new pack data should redeploy the site without touching the app.
+  workflow_dispatch:
+  repository_dispatch:
+    types: [site-data-published]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never two deploys at once, and never cancel one halfway: an interrupted deploy leaves the live
+# site on whichever files happened to have uploaded.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the app
+        uses: actions/checkout@v4
+
+      - name: Check out the pack data
+        uses: actions/checkout@v4
+        with:
+          ref: site-data
+          path: .site-data
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The workspace packages the renderer imports. `build:site` bundles the renderer but not
+      # `@cte2/schema` and `@cte2/engine`, which it resolves through the workspace symlinks.
+      - name: Build the workspace packages
+        run: npm run build
+
+      - name: Pick the pack version to publish
+        id: pack
+        run: |
+          pack=$(node -p "require('./.site-data/latest.json').pack")
+          dir=".site-data/packs/$pack"
+          if [ ! -f "$dir/snapshot.json" ]; then
+            echo "latest.json names '$pack', but $dir/snapshot.json does not exist" >&2
+            exit 1
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "Building the site from $dir"
+
+      - name: Build the site
+        run: node tools/build-site.mjs --data "${{ steps.pack.outputs.dir }}"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/app/out/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -47,6 +47,34 @@ export function DataPanel(): ReactNode {
     if (chosen !== null) await extractFrom(chosen);
   };
 
+  /**
+   * The web's stand-in for re-extracting: take a `snapshot.json` the desktop app produced.
+   *
+   * A reload rather than a re-read, because `SnapshotProvider` takes the snapshot as a prop and
+   * every derived index in the app is built from it once. Swapping registries underneath a
+   * mounted tree is not something the store was built to survive, and this happens once in a
+   * session at most.
+   */
+  const loadSnapshot = async (): Promise<void> => {
+    if (window.cte2.loadSnapshotFile === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.cte2.loadSnapshotFile();
+      if (result.ok) window.location.reload();
+      else if (!result.cancelled) setError(result.error ?? "That snapshot could not be read.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const forget = async (): Promise<void> => {
+    await window.cte2.forgetSnapshot();
+    window.location.reload();
+  };
+
+  const capabilities = window.cte2.capabilities;
+
   if (status === null) {
     return (
       <div className="panel">
@@ -81,7 +109,11 @@ export function DataPanel(): ReactNode {
           Extracted data
         </div>
         <dl className="summary-grid">
-          <Row label="Modpack folder" value={status.installPath ?? "not recorded"} mono />
+          {/* Only meaningful where there is one to record. On the web the snapshot arrived
+              over HTTP and no folder was ever involved. */}
+          {capabilities.extract && (
+            <Row label="Modpack folder" value={status.installPath ?? "not recorded"} mono />
+          )}
           <Row label="Mine and Slash" value={status.mineAndSlashVersion ?? "unknown"} />
           <Row
             label="OpenLoader packs"
@@ -95,29 +127,55 @@ export function DataPanel(): ReactNode {
           <Row label="Gear sprites" value={status.itemIcons.toLocaleString()} />
         </dl>
 
-        <div className="row mt-6">
-          <button
-            className="primary"
-            disabled={busy || status.installPath === null}
-            onClick={() => status.installPath !== null && void extractFrom(status.installPath)}
-          >
-            {busy ? "Extracting…" : "Re-extract now"}
-          </button>
-          <button disabled={busy} onClick={() => void chooseAndExtract()}>
-            Change modpack folder…
-          </button>
-        </div>
+        {capabilities.extract ? (
+          <>
+            <div className="row mt-6">
+              <button
+                className="primary"
+                disabled={busy || status.installPath === null}
+                onClick={() => status.installPath !== null && void extractFrom(status.installPath)}
+              >
+                {busy ? "Extracting…" : "Re-extract now"}
+              </button>
+              <button disabled={busy} onClick={() => void chooseAndExtract()}>
+                Change modpack folder…
+              </button>
+            </div>
 
-        <div className="faint text-sm mt-4">
-          Your modpack folder is only ever <strong>read from</strong>, and nothing extracted is
-          redistributed. Re-extracting reads every jar in <code>mods/</code> to resolve gear
-          sprites, so it takes a few seconds longer than the registry pass alone.
-        </div>
+            <div className="faint text-sm mt-4">
+              Your modpack folder is only ever <strong>read from</strong>, and nothing extracted
+              is redistributed. Re-extracting reads every jar in <code>mods/</code> to resolve
+              gear sprites, so it takes a few seconds longer than the registry pass alone.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="row mt-6">
+              <button className="primary" disabled={busy} onClick={() => void loadSnapshot()}>
+                {busy ? "Reading…" : "Load a snapshot file…"}
+              </button>
+              {status.userSupplied && (
+                <button disabled={busy} onClick={() => void forget()}>
+                  Back to the site&apos;s snapshot
+                </button>
+              )}
+            </div>
+
+            <div className="faint text-sm mt-4">
+              This site cannot read your modpack folder — a web page has no access to it. It
+              ships the snapshot above, extracted from one pack version. If yours differs, run
+              the desktop app once to extract your own <code>snapshot.json</code> and load it
+              here; it is kept in this browser and nothing is uploaded. Icons stay the site&apos;s,
+              because a snapshot file carries none.
+            </div>
+          </>
+        )}
       </div>
 
       {error !== null && (
         <div className="notice bad">
-          <strong>Extraction failed.</strong> {error}
+          <strong>{capabilities.extract ? "Extraction failed." : "That snapshot could not be loaded."}</strong>{" "}
+          {error}
         </div>
       )}
 

@@ -19,6 +19,9 @@
     "dev": "npm run build && npm run -w @cte2/app dev",
     "build:app": "npm run build && npm run -w @cte2/app build",
     "dist:app": "npm run build:app && npm run -w @cte2/app dist",
+    "build:site": "npm run build && node tools/build-site.mjs",
+    "preview:site": "npm run build:site && npx --yes serve packages/app/out/web",
+    "publish:site-data": "node tools/publish-site-data.mjs",
     "test": "npm run build && npm run -ws --if-present test",
     "typecheck": "npm run build && npm run -ws --if-present typecheck"
   },

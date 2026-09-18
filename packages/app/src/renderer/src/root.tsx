@@ -24,7 +24,21 @@ export function Root(): ReactNode {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
 
   const load = useCallback(async () => {
-    const payload = await window.cte2.getSnapshot();
+    let payload: Awaited<ReturnType<typeof window.cte2.getSnapshot>>;
+    try {
+      // In Electron this reads a local file and cannot really fail. On the web it is three
+      // network requests, and a site deployed without its `data/` would otherwise reject here
+      // and leave the app on "Loading snapshot…" for ever with the reason only in the console.
+      payload = await window.cte2.getSnapshot();
+    } catch (err) {
+      setPhase({
+        kind: "setup",
+        error: `The snapshot could not be loaded: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+      return;
+    }
     if (payload === null) {
       setPhase({ kind: "setup" });
       return;
@@ -101,28 +115,54 @@ function Centered({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
+/**
+ * First run, or a run that could not find data.
+ *
+ * The two hosts arrive here for opposite reasons. The desktop app has nothing until you point it
+ * at an install, and that is the normal first launch. The site ships its own snapshot, so
+ * reaching this screen there means the deployment is broken — which is worth saying plainly
+ * rather than offering a folder picker the browser does not have.
+ */
 function Setup({ error, onChoose }: { error?: string | undefined; onChoose: () => void }): ReactNode {
+  const canExtract = window.cte2.capabilities.extract;
   return (
     <div className="setup">
       <div className="setup-inner">
         <h1>Path of Building — Craft to Exile 2</h1>
-        <p>
-          Point this at your Craft to Exile 2 instance and it will read the pack&apos;s registries
-          into a snapshot. Your modpack folder is only ever <strong>read from</strong>, and
-          nothing extracted is redistributed — the data stays on this machine.
-        </p>
-        <p className="faint">
-          Either the Prism instance folder or the <code>minecraft</code> game directory inside it
-          will do.
-        </p>
+        {canExtract ? (
+          <>
+            <p>
+              Point this at your Craft to Exile 2 instance and it will read the pack&apos;s
+              registries into a snapshot. Your modpack folder is only ever{" "}
+              <strong>read from</strong>, and nothing extracted is redistributed — the data stays
+              on this machine.
+            </p>
+            <p className="faint">
+              Either the Prism instance folder or the <code>minecraft</code> game directory inside
+              it will do.
+            </p>
+          </>
+        ) : (
+          <p>
+            This site ships its own copy of the pack data, and it could not be loaded. That is a
+            problem with the deployment rather than with anything you did — reloading is worth a
+            try, and the reason is below.
+          </p>
+        )}
         {error !== undefined && (
           <div className="notice mt-7">
             {error}
           </div>
         )}
-        <button className="primary mt-7" onClick={onChoose}>
-          Choose install folder…
-        </button>
+        {canExtract ? (
+          <button className="primary mt-7" onClick={onChoose}>
+            Choose install folder…
+          </button>
+        ) : (
+          <button className="primary mt-7" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        )}
       </div>
     </div>
   );

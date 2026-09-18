@@ -66,7 +66,9 @@ export function RecentBuilds({
               <button
                 key={entry.path}
                 className="menu-item"
-                title={entry.path}
+                // `path` is a filesystem path on the desktop and an opaque handle id on the web,
+                // so what is shown comes from `detail` where the host supplied one.
+                title={entry.detail ?? entry.path}
                 onClick={() => {
                   setOpen(false);
                   void onOpen(entry.path);
@@ -74,7 +76,7 @@ export function RecentBuilds({
               >
                 <span className="ellipsis">{entry.name}</span>
                 <span className="faint ellipsis text-xs">
-                  {entry.path}
+                  {entry.detail ?? entry.path}
                 </span>
               </button>
             ))

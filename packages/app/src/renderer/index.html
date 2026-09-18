@@ -2,10 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Path of Building — Craft to Exile 2</title>
+    <meta
+      name="description"
+      content="A build planner for the Craft to Exile 2 modpack: plan a character's tree, gear, skills and damage against the pack's own registries."
+    />
+    <!-- Relative so it resolves both under file:// in Electron and under /<repo>/ on Pages. -->
+    <link rel="icon" href="./icon.png" />
     <!--
       No remote anything: the renderer is fully bundled, and cte2-asset: is the only non-self
       source it may pull from. `unsafe-inline` covers the styles Vite injects during dev.
+
+      The web build serves its textures from the same origin as the page, so `'self'` already
+      covers them; `cte2-asset:` is left in because an unmatched scheme-source is simply ignored
+      by a browser, and one CSP for both builds is one fewer thing to keep in step.
     -->
     <meta
       http-equiv="Content-Security-Policy"
