@@ -23,6 +23,7 @@ import {
   BUILD_DOC_VERSION,
   FOOD_BUFF_SLOTS,
   TREE_KEYS,
+  isSupportEnabled,
   supportLinks,
   type AffixRoll,
   type BuildDoc,
@@ -58,6 +59,7 @@ import {
   maxBonusSpellLevels,
   maxLevel,
   maxOfOneAffixType,
+  maxQuality,
   perk,
   perksOfKind,
   pointsAvailable,
@@ -140,6 +142,14 @@ export function validateBuild(
 
   for (const [i, item] of (doc.gear ?? []).entries()) {
     validateItem(item, snapshot, `gear[${i}]`, add);
+  }
+  // The bench is held to the same rules about what an *item* may be — a roll outside its tier's
+  // band is impossible whether or not you are wearing it, and an item you cannot craft is not
+  // one worth comparing against. What it is deliberately **not** held to is anything about the
+  // loadout: `validateEquipment` counts slots, and a pool of nine swords is the point of having
+  // a pool rather than nine errors.
+  for (const [i, item] of (doc.itemPool ?? []).entries()) {
+    validateItem(item, snapshot, `itemPool[${i}]`, add);
   }
   validateEquipment(doc, snapshot, add);
   validateOmen(doc, snapshot, add);
@@ -482,6 +492,8 @@ function validateItem(item: Item, snapshot: Snapshot, path: string, add: Add): v
     );
   }
 
+  validateQuality(item, snapshot, path, add);
+
   if (base && rarity) {
     validateBaseRolls(item, base.baseStats.length, rarity, path, add);
   }
@@ -489,6 +501,41 @@ function validateItem(item: Item, snapshot: Snapshot, path: string, add: Add): v
   validateUnique(item, snapshot, rarity, path, add);
   validateAffixSections(item, snapshot, base?.tags ?? [], rarity, path, add);
   validateSocketsAndRunes(item, snapshot, rarity, path, add);
+}
+
+/**
+ * `CustomItemData.KEYS.QUALITY` is a `DataKey.IntKey` and is added to the base stat roll raw,
+ * so a fraction or a negative is not a weak item but a malformed one.
+ *
+ * The ceiling is the other half, and it is a **warning** rather than an error on purpose.
+ * Everything else here is grounded in a single field — an affix band, a rarity's affix count —
+ * whereas `maxQuality` is a chain: currency to requirement to modification, across three
+ * registries this project otherwise treats as out of scope. It is also only an upper bound (see
+ * the query). A derived rule that confident is worth saying out loud and not worth refusing an
+ * import over.
+ */
+function validateQuality(item: Item, snapshot: Snapshot, path: string, add: Add): void {
+  if (item.quality === undefined) return;
+
+  if (!Number.isInteger(item.quality) || item.quality < 0) {
+    add(
+      "error",
+      "bad-quality",
+      `${path}.quality`,
+      `Quality is an int added straight to the base stat roll, so it must be a non-negative whole number, got ${item.quality}.`,
+    );
+    return;
+  }
+
+  const ceiling = maxQuality(snapshot);
+  if (ceiling !== undefined && item.quality > ceiling) {
+    add(
+      "warning",
+      "quality-above-pack-ceiling",
+      `${path}.quality`,
+      `No chain of this pack's currencies reaches past ${ceiling} quality, got ${item.quality}.`,
+    );
+  }
 }
 
 function validateBaseRolls(
@@ -1294,12 +1341,17 @@ function validateGemRoll(
  * bare the moment it is loaded, and every figure computed from it is wrong by all five gems.
  *
  * Per Skill, because `SocketedGem` is per Skill: the same gem in two different Skills is fine.
+ *
+ * A link switched off in the planner is skipped, for the same reason the collector skips it: it
+ * is an empty socket. Counting one would refuse the commonest thing this switch exists for —
+ * holding the gem you are comparing against beside the one you are trying.
  */
 function validateSupportExclusivity(skill: SkillSetup, snapshot: Snapshot, i: number, add: Add): void {
   const seenIds = new Map<string, number>();
   const seenGroups = new Map<string, { id: string; at: number }>();
 
   for (const [j, support] of supportLinks(skill).entries()) {
+    if (!isSupportEnabled(support)) continue;
     const path = `skills[${i}].supports[${j}]`;
     const first = seenIds.get(support.id);
     if (first !== undefined) {

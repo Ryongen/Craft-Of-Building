@@ -32,15 +32,7 @@
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import {
-  balance,
-  checkRequirements,
-  parseRolledMod,
-  parseSourceMod,
-  rollToExact,
-  sourceToExact,
-  statIndex,
-} from "@cte2/engine";
+import { checkRequirements } from "@cte2/engine";
 import {
   affix,
   affixCount,
@@ -52,6 +44,8 @@ import {
   gem,
   gemName,
   isTwoHanded,
+  enchantCompats,
+  enchantName,
   maxOfOneAffixType,
   modifierLine,
   rune,
@@ -69,6 +63,7 @@ import {
   uniqueRarityId,
   type AffixRoll,
   type AffixType,
+  type EnchantCompatView,
   type Item,
   type RunewordView,
   type SocketFamily,
@@ -83,99 +78,15 @@ import {
   BAND_ENDS,
   NumberField,
   RollSlider,
-  ValueField,
   bandEnd,
   smart,
   type BandEnd,
 } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
+import { modDetail, modKeywords } from "../../ui/mods.js";
+import { StatLines } from "../../ui/StatLines.js";
 
-/**
- * The value one modifier resolves to at a roll percent, through the engine rather than beside
- * it.
- *
- * `rollToExact` is what `collectGear` calls, so a number rendered with this cannot disagree
- * with the character sheet. It needs the stat's shape (for its scaling class) and the balance
- * curves, both of which memoise on the snapshot, so building them per call is cheap.
- *
- * **Two modifier shapes reach here**, and reading only the first is how a socketed gem came to
- * render "Heal Strength 0" beside an item whose own preview said +9:
- *
- *   - `{ min, max }` — an affix, a base stat, a rune, a runeword. It interpolates at the roll.
- *   - `{ v1, scale_to_lvl }` — a **gem**, and every other fixed modifier. `Gem.getFor(fam)`
- *     returns `OptScaleExactStat`s and `toExactStat(lvl)` takes no percent at all, which is
- *     exactly why the gem row says "fixed — a gem does not roll".
- *
- * `sourceToExact` is what `socketStats` calls for the second, so the two cannot disagree either.
- */
-function resolveValue(
-  snapshot: Snapshot,
-  mod: Record<string, unknown>,
-  rollPercent: number,
-  itemLevel: number,
-): number | undefined {
-  const index = statIndex(snapshot);
-  const rolled = parseRolledMod(mod);
-  if (rolled !== undefined) {
-    return rollToExact(rolled, rollPercent, itemLevel, index.shapeOf(rolled.statId), balance(snapshot)).value;
-  }
-  const fixed = parseSourceMod(mod);
-  if (fixed === undefined) return undefined;
-  return sourceToExact(fixed, itemLevel, index.shapeOf(fixed.statId), balance(snapshot)).value;
-}
-
-/**
- * One editable stat line: the name, the level-scaled value, and the modifier's own wording.
- *
- * Typing in the box solves back to a roll percent — see `ValueField`. A fixed-value modifier
- * (`v1` rather than `min`/`max`) has no roll to solve for, so it renders as text.
- */
-function StatLines({
-  mods,
-  rollPercent,
-  band,
-  itemLevel,
-  onRoll,
-}: {
-  mods: readonly Record<string, unknown>[];
-  rollPercent: number;
-  band: { min: number; max: number };
-  itemLevel: number;
-  onRoll: ((rollPercent: number) => void) | undefined;
-}): ReactNode {
-  const { snapshot } = useWorld();
-
-  return (
-    <>
-      {mods.map((mod, index) => {
-        const rolled = parseRolledMod(mod);
-        const valueAt = (percent: number): number =>
-          resolveValue(snapshot, mod, percent, itemLevel) ?? 0;
-        const statId = typeof mod["stat"] === "string" ? mod["stat"] : undefined;
-
-        return (
-          <div key={index} className="stat-line">
-            <span className="label" title={modifierLine(snapshot, mod, rollPercent)}>
-              {statId === undefined ? modifierLine(snapshot, mod, rollPercent) : statName(snapshot, statId)}
-            </span>
-            {rolled === undefined || onRoll === undefined ? (
-              <span className="num">{smart(valueAt(rollPercent))}</span>
-            ) : (
-              <ValueField
-                rollPercent={rollPercent}
-                min={band.min}
-                max={band.max}
-                valueAt={valueAt}
-                onChange={onRoll}
-              />
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
 
 /**
  * What the character needs before this piece goes on, with what they have beside it.
@@ -269,6 +180,19 @@ const ROLLED_AFFIX_GROUPS: AffixGroup[] = [
   { key: "suffixes", type: "suffix", label: "Suffixes" },
 ];
 
+/**
+ * What quality does, in the one place a player can ask.
+ *
+ * It is worth spelling out because the number is *not* a multiplier and does not touch affixes:
+ * `BaseStatsData.GetAllStats` does `int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack))`
+ * and nothing else reads it, so 20 quality is 20 percentage points on the base stat roll and
+ * exactly zero on everything else the item carries.
+ */
+const QUALITY_TITLE =
+  "CustomItemData.KEYS.QUALITY — added to the base stat roll percent, and only that: " +
+  "`int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack))` in BaseStatsData.GetAllStats. " +
+  "Affixes, implicits, runes and sockets are untouched.";
+
 export function ItemEditor({
   item,
   slotId,
@@ -296,14 +220,22 @@ export function ItemEditor({
 
   const uniqueOptions = useMemo<PickerOption[]>(
     () =>
-      uniques.map((u) => ({
-        id: u.id,
-        label: uniqueName(snapshot, u.id),
-        // The base is a consequence of the choice rather than a filter on it, so name it in
-        // the hint — picking one is going to change the item's base out from under you.
-        hint: `${u.baseGear === undefined ? "?" : gearTypeName(snapshot, u.baseGear)} · lvl ${u.minDropLvl}`,
-        keywords: `${u.id} ${u.baseGear ?? ""}`,
-      })),
+      uniques.map((u) => {
+        // What the unique actually grants, for the hover. A player knows Honourhome by name and
+        // by what it does; the base it happens to sit on is a consequence of picking it, not
+        // the thing being picked, which is why that stays a dim hint and the id stays off the
+        // row entirely.
+        const detail = modDetail(snapshot, u.uniqueStats);
+        return {
+          id: u.id,
+          label: uniqueName(snapshot, u.id),
+          // The base is a consequence of the choice rather than a filter on it, so name it in
+          // the hint — picking one is going to change the item's base out from under you.
+          hint: `${u.baseGear === undefined ? "?" : gearTypeName(snapshot, u.baseGear)} · lvl ${u.minDropLvl}`,
+          keywords: `${u.id} ${u.baseGear ?? ""}`,
+          ...(detail === undefined ? {} : { detail }),
+        };
+      }),
     [uniques, snapshot],
   );
 
@@ -372,8 +304,15 @@ export function ItemEditor({
           onChange={(id) =>
             id !== undefined &&
             // Changing the base invalidates every roll: base stats, affix pools and tags all
-            // move. Clearing is honest; silently keeping impossible affixes is not.
-            onChange({ base: id, rarity: item.rarity, itemLevel: item.itemLevel })
+            // move. Clearing is honest; silently keeping impossible affixes is not. Quality
+            // rides along because it is not a roll and no pool bounds it — it is a number the
+            // currency put on the stack, legal on any base.
+            onChange({
+              base: id,
+              rarity: item.rarity,
+              itemLevel: item.itemLevel,
+              ...(item.quality === undefined ? {} : { quality: item.quality }),
+            })
           }
           width={200}
         />
@@ -399,6 +338,41 @@ export function ItemEditor({
             onChange={(itemLevel) => patch({ itemLevel })}
           />
         </div>
+
+        {/*
+          Quality is stored beside the item rather than on it (`CustomItemData.KEYS.QUALITY`,
+          the short key `ql`), which is why it is up here with ilvl and not in a roll list. It
+          is offered on every base, including the four that have no base stats for it to act on
+          — the game lets you sharpen a ring too, and hiding the control is what made it look
+          like the editor had no quality at all.
+        */}
+        <div className="field">
+          <label title={QUALITY_TITLE}>quality</label>
+          <NumberField
+            value={item.quality ?? 0}
+            min={0}
+            max={world.maxQuality}
+            width={58}
+            onChange={(quality) => patch({ quality: quality === 0 ? undefined : quality })}
+          />
+          <span className="faint text-xs">%</span>
+        </div>
+
+        {/*
+          Four bases in the pack have no `base_stats` at all — `ring`, `necklace`, `head` and
+          `elytra` — and quality is the only item property whose entire effect is on that list.
+          The currency applies happily and the tooltip prints "Quality: 12%", so an inert number
+          is a thing a real item can carry; it just buys nothing, and silence here would read as
+          the planner having missed it.
+        */}
+        {(item.quality ?? 0) > 0 && base !== undefined && base.baseStats.length === 0 && (
+          <span
+            className="badge warn"
+            title={`\`${item.base}\` declares no base stats, and quality is added to the base stat roll and nowhere else.`}
+          >
+            no base stats — quality does nothing here
+          </span>
+        )}
 
         <div className="grow" />
         <button onClick={onRemove}>Remove</button>
@@ -457,6 +431,9 @@ export function ItemEditor({
               // already legal, and raise it to the floor where it is not.
               itemLevel: Math.max(item.itemLevel, view.minDropLvl),
               unique: id,
+              // Quality survives for the same reason it survives a base change: no rule ties it
+              // to the base or the rarity, and a unique has base stats for it to act on.
+              ...(item.quality === undefined ? {} : { quality: item.quality }),
             });
           }}
           width={260}
@@ -556,9 +533,150 @@ export function ItemEditor({
         />
       )}
 
+      <Enchantments item={item} patch={patch} />
+
       <Sockets item={item} patch={patch} />
     </div>
   );
+}
+
+/**
+ * Vanilla enchantments, and the Mine and Slash stats the pack converts them into.
+ *
+ * This is `mmorpg_stat_compat`'s enchantment half, which the engine has implemented in full —
+ * `getEnchantCompatResult`, both clamps — and which nothing in the app could reach, because
+ * `Item.enchantments` had no control anywhere. The schema carried it, the companion mod
+ * exported it, and a build entered by hand could not say that the chestplate has Protection IV.
+ * 27 of the pack's 72 compat entries are enchantments, so that was not a small corner.
+ *
+ * ## What the numbers beside each row mean
+ *
+ * `conversion` per level, then **two** clamps, and they are different limits:
+ *
+ *  - `per_item_min/max` bounds what *this piece* may contribute. Protection is 2 per level
+ *    capped at 12, so a single piece stops paying after Protection VI.
+ *  - `minimum_cap/maximum_cap` bounds the **total over every equipped piece**, and that one is
+ *    not this editor's to show: it depends on the rest of the character, so the row prints what
+ *    this item is worth and the stat sheet holds the sum. Protection IV on four pieces and
+ *    Protection XVI on one are genuinely different numbers, which is exactly why the clamps are
+ *    not collapsed into one.
+ *
+ * Levels are not bounded by vanilla's maximum. An enchantment above its natural cap is an
+ * ordinary thing to own in a modded pack, `getEnchantmentLevel` returns whatever is on the
+ * stack, and the per-item clamp is what actually stops it mattering — so the field refuses
+ * only what the game refuses, which is a level below 1.
+ */
+function Enchantments({
+  item,
+  patch,
+}: {
+  item: Item;
+  patch: (next: Patch<Item>) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const compats = useMemo(() => enchantCompats(snapshot), [snapshot]);
+  const byEnchant = useMemo(
+    () => new Map(compats.map((c) => [c.enchantId, c])),
+    [compats],
+  );
+
+  const on = Object.entries(item.enchantments ?? {});
+
+  const set = (enchantId: string, level: number | undefined): void => {
+    const next: Record<string, number> = { ...(item.enchantments ?? {}) };
+    if (level === undefined) delete next[enchantId];
+    else next[enchantId] = level;
+    // An empty map is written as no map at all, the way every other list on an item is —
+    // `"enchantments": {}` is not what a hand-authored document looks like.
+    patch({ enchantments: Object.keys(next).length === 0 ? undefined : next });
+  };
+
+  const options = useMemo<PickerOption[]>(
+    () =>
+      compats.map((c) => ({
+        id: c.enchantId,
+        label: enchantName(c.enchantId),
+        hint: statName(snapshot, c.statId),
+        keywords: `${c.enchantId} ${c.statId} ${statName(snapshot, c.statId)}`,
+        detail: enchantEffect(snapshot, c),
+      })),
+    [compats, snapshot],
+  );
+
+  return (
+    <>
+      <div className="section-title">
+        Enchantments <span className="faint">({on.length})</span>
+      </div>
+
+      {on.map(([enchantId, level]) => {
+        const compat = byEnchant.get(enchantId);
+        return (
+          <div className="row mb-3" key={enchantId}>
+            <span style={{ width: 190 }} className="ellipsis" title={enchantId}>
+              {enchantName(enchantId)}
+            </span>
+            <NumberField
+              value={level}
+              min={1}
+              width={58}
+              onChange={(next) => set(enchantId, next)}
+            />
+            {compat === undefined ? (
+              <span
+                className="badge warn"
+                title={
+                  "No `mmorpg_stat_compat` entry in this snapshot names this enchantment, so it " +
+                  "converts into no stat at all. That is a legal thing to have on an item — most " +
+                  "enchantments in the game convert into nothing — it simply changes no figure here."
+                }
+              >
+                converts to nothing
+              </span>
+            ) : (
+              <span className="faint text-sm">{enchantEffect(snapshot, compat, level)}</span>
+            )}
+            <div className="grow" />
+            <button onClick={() => set(enchantId, undefined)}>✕</button>
+          </div>
+        );
+      })}
+
+      <AddPicker
+        label="Add enchantment"
+        placeholder="Which enchantment?"
+        options={options.filter((o) => item.enchantments?.[o.id] === undefined)}
+        width={280}
+        onAdd={(enchantId) => set(enchantId, 1)}
+      />
+    </>
+  );
+}
+
+/**
+ * What one enchantment on *this piece* is worth, at a level or per level.
+ *
+ * The per-item clamp is applied and the total clamp deliberately is not: the second one is a
+ * property of the whole equipped set, so quoting it beside one item would promise a number the
+ * character may not get. `Math.trunc` rather than rounding, because the Java truncates —
+ * `(int) (enchlvl * conversion)` — and a conversion of 0.5 at level 3 is 1, not 2.
+ */
+function enchantEffect(
+  snapshot: Snapshot,
+  compat: EnchantCompatView,
+  level?: number,
+): string {
+  const name = statName(snapshot, compat.statId);
+  const suffix = compat.modType === "PERCENT" ? "% increased" : compat.modType === "MORE" ? "% more" : "";
+  if (level === undefined) {
+    return `${compat.conversion > 0 ? "+" : ""}${smart(compat.conversion)}${suffix} ${name} per level` +
+      ` (this piece caps at ${smart(compat.perItem.max)})`;
+  }
+  const raw = Math.trunc(level * compat.conversion);
+  const clamped = Math.min(Math.max(raw, compat.perItem.min), compat.perItem.max);
+  return `${clamped > 0 ? "+" : ""}${smart(clamped)}${suffix} ${name}${
+    clamped !== raw ? ` (capped from ${smart(raw)} by this piece's limit)` : ""
+  }`;
 }
 
 /**
@@ -675,6 +793,21 @@ function BaseRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) => 
   const band = rarity?.baseStatPercents ?? { min: 0, max: 100 };
   const rolls = item.baseRolls ?? base.baseStats.map(() => band.min);
 
+  /**
+   * Quality is added to the roll before the band is resolved, and it is the *only* thing on the
+   * item that behaves this way:
+   *
+   *     int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack));
+   *
+   * — BaseStatsData.GetAllStats. So the slider keeps showing the stored roll inside the rarity's
+   * band, which is what the document holds and what `baseRolls` means, while the value beside it
+   * is resolved at `roll + quality`, which is what the character sheet uses. Showing the value at
+   * the stored roll alone would print a number that appears nowhere in the game, and rolling
+   * quality into `baseRolls` would lose the distinction the schema keeps them separate for.
+   */
+  const quality = item.quality ?? 0;
+  const effective = { min: band.min + quality, max: band.max + quality };
+
   const setRoll = (index: number, value: number): void => {
     const next = [...rolls];
     while (next.length < base.baseStats.length) next.push(band.min);
@@ -686,6 +819,12 @@ function BaseRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) => 
     <>
       <div className="section-title">
         Base stats <span className="faint">(band {band.min}–{band.max}%)</span>
+        {quality > 0 && (
+          <span className="faint" title={QUALITY_TITLE}>
+            {" "}
+            +{quality}% quality → {effective.min}–{effective.max}%
+          </span>
+        )}
       </div>
       {base.baseStats.map((mod, index) => {
         const roll = rolls[index] ?? band.min;
@@ -702,10 +841,13 @@ function BaseRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) => 
             </div>
             <StatLines
               mods={[mod]}
-              rollPercent={roll}
-              band={band}
+              rollPercent={roll + quality}
+              band={effective}
               itemLevel={item.itemLevel}
-              onRoll={(value) => setRoll(index, value)}
+              // `ValueField` solves the typed value back to a percent in the band it was given,
+              // which is the quality-inclusive one — so the stored roll is that answer less the
+              // quality the player did not roll for.
+              onRoll={(value) => setRoll(index, value - quality)}
             />
           </div>
         );
@@ -790,13 +932,25 @@ function AffixList({
   const { snapshot } = world;
   const pool = world.affixPool(baseId, type);
 
+  /**
+   * The pool, named by what it does rather than by what it is called in the data.
+   *
+   * `affixLabel` is the player-facing name — "of the Yeti" — and on its own it says nothing
+   * about which of four cold suffixes this is. The hover carries the modifier lines at a top
+   * roll, and the search corpus carries every stat id and stat name, so typing "resist" or
+   * "bleed" narrows the list the way typing a name does.
+   */
   const options = useMemo<PickerOption[]>(
     () =>
-      pool.map((a) => ({
-        id: a.id,
-        label: affixLabel(snapshot, a.id),
-        keywords: a.stats.map((s) => String(s["stat"] ?? "")).join(" "),
-      })),
+      pool.map((a) => {
+        const detail = modDetail(snapshot, a.stats);
+        return {
+          id: a.id,
+          label: affixLabel(snapshot, a.id),
+          keywords: modKeywords(snapshot, a.stats),
+          ...(detail === undefined ? {} : { detail }),
+        };
+      }),
     [pool, snapshot],
   );
 
@@ -913,6 +1067,37 @@ function AffixRow({
   const view = affix(snapshot, roll.affixId);
   const band = bandFor(world, roll.tier);
 
+  /**
+   * Every roll this affix could have on this item, across all the tiers its rarity allows.
+   *
+   * The *slider* stays bounded by the tier it is set to, because dragging is how you move a
+   * roll within a tier and a slider that silently re-tiered under the cursor would be a trap.
+   * Typing a **value** is the opposite question — "my item says +47 Armor" — and the tier is
+   * part of the answer rather than a constraint on it. So the box reaches the whole ladder and
+   * `tierFor` works out which rung the number landed on.
+   *
+   * The six bands tile 0-100 without overlapping (common 0-17 through mythic 86-100), so a roll
+   * percent names exactly one tier and there is nothing to disambiguate.
+   */
+  const reachable = useMemo(() => {
+    if (!tiered || tiers.length === 0) return band;
+    const bands = tiers.map((tier) => bandFor(world, tier));
+    return {
+      min: Math.min(...bands.map((b) => b.min)),
+      max: Math.max(...bands.map((b) => b.max)),
+    };
+  }, [tiered, tiers, world, band]);
+
+  /** The allowed tier whose band holds this roll, or the current one when none does. */
+  const tierFor = (rollPercent: number): string | undefined => {
+    if (!tiered) return roll.tier;
+    const found = tiers.find((tier) => {
+      const b = bandFor(world, tier);
+      return rollPercent >= b.min && rollPercent <= b.max;
+    });
+    return found ?? roll.tier;
+  };
+
   return (
     <div className="mb-3">
       <div className="row">
@@ -958,9 +1143,15 @@ function AffixRow({
         <StatLines
           mods={view.stats}
           rollPercent={roll.rollPercent}
-          band={band}
+          band={reachable}
           itemLevel={itemLevel}
-          onRoll={(rollPercent) => onChange({ ...roll, rollPercent })}
+          // Typing a value re-tiers as well as re-rolls, so reading a number off an item in
+          // game and typing it in lands on the affix the game actually produced rather than
+          // on the nearest thing the tier you happened to have selected could manage.
+          onRoll={(rollPercent) => {
+            const tier = tierFor(rollPercent);
+            onChange({ ...roll, rollPercent, ...(tier === undefined ? {} : { tier }) });
+          }}
         />
       )}
     </div>

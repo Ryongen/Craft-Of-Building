@@ -419,6 +419,35 @@ export function inCodeEffects(): InCodeEffect[] {
     run: dodgeEffect,
   });
 
+  // --- spell dodge, DAMAGE_LAYERS (20), Target ----------------------------------------
+  //
+  //     float totalDodge = Mth.clamp(data.getValue() - effect.data.getNumber(ACCURACY).number, 0, MAX);
+  //     float chance = spellDodge.getUsableValue(effect.targetData.getUnit(), (int) totalDodge,
+  //             effect.sourceData.getLevel()) * 100;
+  //     ...
+  //     return effect.canAvoidHit() && !effect.data.isHitAvoided()
+  //             && !effect.data.getBoolean(AVOIDANCE_ROLLED)
+  //             && (effect.getAttackType().isHit() || effect.getAttackType() == bonus_dmg)
+  //             && effect.isSpell() && effect.getSpell().config.tags.contains(SpellTags.magic);
+  //
+  // — SpellDodgeEffect, verified in 6.4.13. The exact complement of dodge above, and the pair
+  // partitions every hit: dodge takes physical non-`magic` hits, this takes `magic` spells of
+  // **any** element, and `AVOIDANCE_ROLLED` stops both from rolling on the same hit.
+  //
+  // It was previously unported, and the audit tracked it as a gap — but nothing could reach it
+  // either way, because `EnemySetup` had no field to put it on a target. Now that a preset fills
+  // one from `mmorpg_base_stats/mob`, every mob in the pack carries 15 per level of it, and a
+  // magic build measured against a target with none was measuring against a mob that does not
+  // exist. The curve is its own: `valueNeededAtLevelOne` is 200 where dodge's is 100, so a point
+  // of spell dodge is worth half a point of dodge.
+  out.push({
+    statId: "spell_dodge",
+    priority: PRIORITY.DAMAGE_LAYERS,
+    side: "Target",
+    runsOnZero: false,
+    run: spellDodgeEffect,
+  });
+
   // --- block, DAMAGE_LAYERS (20), Target ----------------------------------------------
   //
   //     float chance = data.getValue();
@@ -615,7 +644,10 @@ function armorEffect(ctx: DamageCtx, value: number): void {
  * not only in the fork.
  */
 function canAvoidHit(ctx: DamageCtx): boolean {
-  return !ctx.sourceIsTarget;
+  // `noAvoidance` is a caller describing a worst case rather than a property of the hit — see
+  // `DamageCtx.noAvoidance`. It rides the same branch because the game's own rule and the
+  // maximum-hit question want exactly the same thing: mitigation, no rolls.
+  return !ctx.sourceIsTarget && ctx.noAvoidance !== true;
 }
 
 function dodgeEffect(ctx: DamageCtx, value: number): void {
@@ -633,6 +665,38 @@ function dodgeEffect(ctx: DamageCtx, value: number): void {
   if (points <= 0) return;
 
   const shape = ctx.index.shapeOf("dodge");
+  const base = usable.valueNeededAtLevelOne * ctx.balance.multiFor(shape.scaling, ctx.sourceLevel);
+  const fraction = points + base === 0 ? 0 : points / (points + base);
+  const chance = clamp(fraction, 0, usable.maxMulti);
+  if (chance <= 0) return;
+
+  ctx.event.getLayer(LAYER.DAMAGE_BLOCK, EVENT.NUMBER, "Target")?.reduce(100 * chance);
+  if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_DODGED, true);
+}
+
+/**
+ * `SpellDodgeEffect` — dodge's mirror, for `magic` spells.
+ *
+ * Averaged onto the same `damage_block` layer for the same reason: a roll that lands zeroes the
+ * hit, and a figure over many hits is not one hit. The two cannot both fire on one event in the
+ * game because the first to run sets `AVOIDANCE_ROLLED`, and they cannot here either — their
+ * gates are disjoint, since dodge refuses a `magic` spell and this one requires it.
+ */
+function spellDodgeEffect(ctx: DamageCtx, value: number): void {
+  if (!canAvoidHit(ctx)) return;
+  const attackType = ctx.event.data.getString(EVENT.ATTACK_TYPE, "hit");
+  if (attackType !== "hit" && attackType !== "bonus_dmg") return;
+  // `effect.isSpell() && tags.contains(SpellTags.magic)` — no element condition at all, unlike
+  // dodge: a magic spell is evaded by this whatever it is made of.
+  if (!ctx.spellTags.has("magic")) return;
+
+  const usable = USABLE_STATS["spell_dodge"];
+  if (!usable || usable.kind !== "curve") return;
+
+  const points = Math.trunc(Math.max(0, value - ctx.event.data.getNumber(EVENT.ACCURACY)));
+  if (points <= 0) return;
+
+  const shape = ctx.index.shapeOf("spell_dodge");
   const base = usable.valueNeededAtLevelOne * ctx.balance.multiFor(shape.scaling, ctx.sourceLevel);
   const fraction = points + base === 0 ? 0 : points / (points + base);
   const chance = clamp(fraction, 0, usable.maxMulti);

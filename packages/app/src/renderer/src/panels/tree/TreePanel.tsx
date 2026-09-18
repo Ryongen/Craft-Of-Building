@@ -32,6 +32,7 @@ import { useWorld } from "../../state/snapshot.js";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 
+import { StatPoints } from "../character/StatPoints.js";
 import { perkData, TreeCanvas, type HoverInfo } from "./TreeCanvas.js";
 
 const TREES: { key: TreeKey; label: string }[] = [
@@ -156,16 +157,32 @@ export function TreePanel(): ReactNode {
       />
 
       <div className="tree-overlay">
-        <div className="tree-hud row gap-5">
-          {TREES.map((option) => (
-            <button
-              key={option.key}
-              className={tree === option.key ? "primary" : ""}
-              onClick={() => setTree(option.key)}
-            >
-              {option.label}
-            </button>
-          ))}
+        {/*
+          The tree buttons, and the level-up points under them.
+
+          `.tree-overlay` is a flex row, so a second block added to it lands *beside* the
+          buttons; the column here is what puts it underneath. Stat points had a tab to
+          themselves, which was three rows and a paragraph two clicks from the only other place
+          points are spent — and nobody spends stat points in a session where they are not also
+          spending tree points.
+        */}
+        <div className="tree-hud-column">
+          <div className="tree-hud row gap-5">
+            {TREES.map((option) => (
+              <button
+                key={option.key}
+                className={tree === option.key ? "primary" : ""}
+                onClick={() => setTree(option.key)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="tree-hud">
+            <div className="section-title mt-0">Stat points</div>
+            <StatPoints compact />
+          </div>
         </div>
 
         <div className="tree-hud row gap-5">

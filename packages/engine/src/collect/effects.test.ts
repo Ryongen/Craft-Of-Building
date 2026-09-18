@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { BuildDoc } from "@cte2/schema";
 
 import { calculate } from "../calculate.js";
+import { AURA_CAPACITY_BASE, auraCapacity } from "./effects.js";
 import { baseStats, closeTo, damageStat, engineSnapshot, exact, statEntry } from "../test-support.js";
 
 /**
@@ -319,4 +320,77 @@ test("a build with no aura_effect is untouched by the pass", () => {
   );
   closeTo(result.stats.get("armor")?.value, 50);
   closeTo(result.stats.get("all_water_damage")?.dmgMulti, 1.2);
+});
+
+/**
+ * Two Augments and a cost reduction, for the capacity arithmetic.
+ *
+ * `guardian` deliberately declares no `<id>_aura_cost` stat, which is the `SPECIFIC_AURA_COST
+ * .has(info)` false arm — four of the pack's 28 Augments are in it.
+ */
+function capacitySnapshot(costStat: number) {
+  return engineSnapshot({
+    mmorpg_stat: {
+      armor: statEntry("armor"),
+      armor_aura_cost: statEntry("armor_aura_cost"),
+    },
+    mmorpg_aura: {
+      armor: { id: "armor", reservation: 0.4, stats: [{ type: "FLAT", stat: "armor", min: 1, max: 1 }] },
+      guardian: { id: "guardian", reservation: 0.4, stats: [] },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats(
+        "original_mode_player",
+        costStat === 0 ? [] : [exact("armor_aura_cost", "FLAT", costStat)],
+      ),
+    },
+  });
+}
+
+test("Augment capacity is the spirit_cost stat, falling back to the code-only base of 100", () => {
+  const snap = capacitySnapshot(0);
+  const run = calculate(build({ auras: [{ id: "armor", rollPercent: 100 }] }), snap);
+  // Nothing on this character grants `spirit_cost`, so `getTotalSpirit`'s `if (num < 1)` arm
+  // returns `AuraCapacity.base`.
+  const result = auraCapacity({ snapshot: snap }, [{ id: "armor" }], run.stats);
+  assert.equal(result.capacity, AURA_CAPACITY_BASE);
+  assert.equal(result.reserved, 40);
+  assert.equal(result.remaining, 60);
+});
+
+test("an Augment cost stat scales that Augment's reservation and nothing else's", () => {
+  // -25% Armor Augment Cost: 40 x 0.75 = 30 for `armor`, and `guardian` declares no cost stat
+  // at all, so it stays at its full 40.
+  const snap = capacitySnapshot(-25);
+  const run = calculate(build({ auras: [{ id: "armor", rollPercent: 100 }] }), snap);
+  const result = auraCapacity({ snapshot: snap }, [{ id: "armor" }, { id: "guardian" }], run.stats);
+  assert.deepEqual(
+    result.entries.map((e) => [e.auraId, e.multiplier, e.cost]),
+    [
+      ["armor", 0.75, 30],
+      ["guardian", 1, 40],
+    ],
+  );
+  assert.equal(result.reserved, 70);
+});
+
+test("the reserved total truncates after every Augment, as the Java's int += does", () => {
+  // 40 x 0.99 = 39.6 each. `res += cost` on an `int` is `res = (int) (res + cost)`, so the
+  // first lands at 39 and the second at 78 — not 79, and not the 79.2 a float sum would give.
+  const snap = capacitySnapshot(-1);
+  const run = calculate(build(), snap);
+  const result = auraCapacity({ snapshot: snap }, [{ id: "armor" }, { id: "armor" }], run.stats);
+  assert.equal(result.reserved, 78);
+});
+
+test("a disabled Augment reserves nothing, exactly as an unequipped one does", () => {
+  const snap = capacitySnapshot(0);
+  const run = calculate(build(), snap);
+  const result = auraCapacity(
+    { snapshot: snap },
+    [{ id: "armor" }, { id: "guardian", enabled: false }],
+    run.stats,
+  );
+  assert.equal(result.reserved, 40);
+  assert.equal(result.entries.length, 1);
 });

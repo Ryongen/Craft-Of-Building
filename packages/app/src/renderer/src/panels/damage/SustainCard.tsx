@@ -4,6 +4,33 @@ import { type ReactNode } from "react";
 import { num, smart } from "../../ui/fields.js";
 
 /**
+ * The verdict, in one line, for the folding panel's head.
+ *
+ * Exported rather than rendered inside the card because the whole point of a card that folds is
+ * that its answer is readable while it is folded — and for most builds most of the time "every
+ * pool keeps up" *is* the answer and the two tables below are the working. It is computed here
+ * rather than in the panel so the sentence and the rows it summarises cannot drift.
+ */
+export function sustainVerdict(dps: DpsResult): { text: string; bad: boolean; blood: boolean } {
+  const { cost } = dps;
+  const tooSmall = cost.budget.find((row) => !row.holdsACast);
+  const worst = cost.budget.reduce<(typeof cost.budget)[number] | undefined>(
+    (found, row) => (found === undefined || row.netPerSecond < found.netPerSecond ? row : found),
+    undefined,
+  );
+
+  return {
+    text: cost.sustainable
+      ? "every pool keeps up"
+      : tooSmall !== undefined
+        ? `${tooSmall.resource.replace(/_/g, " ")} cannot hold one cast`
+        : `${worst?.resource.replace(/_/g, " ")} runs dry in ${num(worst?.secondsToEmpty ?? 0, 1)}s`,
+    bad: !cost.sustainable,
+    blood: cost.manaSpentAs === "blood" || cost.energySpentAs === "blood",
+  };
+}
+
+/**
  * Whether the pools keep up, and what happens when they do not.
  *
  * Three incomes and one spend, and the game meters two of the three. Regeneration is a restore
@@ -15,43 +42,17 @@ import { num, smart } from "../../ui/fields.js";
  * `in_combat` is a ten-second cooldown re-stamped by every hit you land or take, so the column
  * used here is the in-combat one. Anything gated on `is_in_combat_is_false` — `out_of_combat_regen`
  * — is worth nothing during a rotation, however good it looks on the Defence tab.
+ *
+ * The verdict this used to print on its own heading is `sustainVerdict` above, because the card
+ * now folds and its head is where the answer goes.
  */
 export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
   const { cost } = dps;
   const rows = cost.budget;
   if (rows.length === 0 && cost.leech.unrated.length === 0) return null;
 
-  // A pool whose ceiling is below one cast is the more serious finding of the two and has no
-  // drain rate to rank by, so it wins the badge outright; otherwise the fastest drain does.
-  const tooSmall = rows.find((row) => !row.holdsACast);
-  const worst = rows.reduce<(typeof rows)[number] | undefined>(
-    (found, row) => (found === undefined || row.netPerSecond < found.netPerSecond ? row : found),
-    undefined,
-  );
-
   return (
     <div className="card">
-      <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          Sustain
-        </span>
-        <span className={cost.sustainable ? "badge" : "badge warn"}>
-          {cost.sustainable
-            ? "every pool keeps up"
-            : tooSmall !== undefined
-              ? `${tooSmall.resource.replace(/_/g, " ")} cannot hold one cast`
-              : `${worst?.resource.replace(/_/g, " ")} runs dry in ${num(worst?.secondsToEmpty ?? 0, 1)}s`}
-        </span>
-        {(cost.manaSpentAs === "blood" || cost.energySpentAs === "blood") && (
-          <span
-            className="badge warn"
-            title="`blood_user`: every mana and energy cost is paid from blood"
-          >
-            blood magic
-          </span>
-        )}
-      </div>
-
       {rows.length > 0 && (
         <table className="grid">
           <thead>
@@ -110,8 +111,6 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
     </div>
   );
 }
-
-/** The leech cap, which is usually the binding constraint and never says so on its own. */
 
 /** The leech cap, which is usually the binding constraint and never says so on its own. */
 function LeechDetail({ leech }: { leech: DpsResult["cost"]["leech"] }): ReactNode {

@@ -32,9 +32,6 @@ export function TargetCard({
   return (
     <div className="card">
       <div className="row wrap gap-7">
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          Target position
-        </span>
         <label className="faint text-sm">
           Distance
         </label>

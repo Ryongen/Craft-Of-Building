@@ -9,7 +9,7 @@
 import type { Snapshot } from "@cte2/extractor";
 import { CATEGORY, DEFAULT_BALANCE_ID, entry } from "@cte2/schema";
 
-import type { StatScaling } from "./stat-shape.js";
+import type { StatScaling } from "@cte2/schema";
 
 /** `LevelScalingConfig`. */
 export type LevelScaling = {

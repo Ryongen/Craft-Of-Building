@@ -20,6 +20,7 @@ import {
   gearItemIds,
   locateInstall,
   LocateError,
+  SNAPSHOT_VERSION,
   type AssetIndex,
   type Snapshot,
 } from "@cte2/extractor";
@@ -44,49 +45,171 @@ function userDataSnapshot(): { snapshotPath: string; assetsDir: string } {
  */
 function repoData(): { snapshotPath: string; assetsDir: string } | null {
   if (app.isPackaged) return null;
-  const root = resolve(app.getAppPath(), "..", "..");
-  const snapshotPath = join(root, "data", "snapshot.json");
-  return existsSync(snapshotPath) ? { snapshotPath, assetsDir: join(root, "data", "assets") } : null;
+  let current = app.getAppPath();
+  for (let i = 0; i < 5; i++) {
+    const snapshotPath = join(current, "data", "snapshot.json");
+    if (existsSync(snapshotPath)) {
+      return { snapshotPath, assetsDir: join(current, "data", "assets") };
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+/** Core registries required for a complete v2 snapshot. */
+export const REQUIRED_V2_REGISTRIES = [
+  "library_of_exile_currency",
+  "library_of_exile_item_modification",
+  "library_of_exile_item_requirement",
+  "mmorpg_affixes",
+  "mmorpg_base_gear_types",
+  "mmorpg_gear_rarity",
+  "mmorpg_spells",
+  "mmorpg_stat",
+] as const;
+
+type CandidatePath = { snapshotPath: string; assetsDir: string | null };
+
+type CandidateInspection = {
+  candidate: CandidatePath;
+  json: string;
+  snapshot: Snapshot;
+  version: number;
+  isUpToDate: boolean;
+  missingRegistries: string[];
+};
+
+let activeAssetsDir: string | null = null;
+
+function inspectCandidate(candidate: CandidatePath | null): CandidateInspection | null {
+  if (!candidate || !existsSync(candidate.snapshotPath)) return null;
+  let json: string;
+  try {
+    json = readFileSync(candidate.snapshotPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  let snapshot: Snapshot;
+  try {
+    snapshot = JSON.parse(json) as Snapshot;
+  } catch {
+    return null;
+  }
+  if (!snapshot || typeof snapshot !== "object" || !snapshot.registries) return null;
+
+  const version = typeof snapshot.snapshotVersion === "number" ? snapshot.snapshotVersion : 1;
+  const missingRegistries = REQUIRED_V2_REGISTRIES.filter((r) => !snapshot.registries[r]);
+  const isUpToDate = version >= SNAPSHOT_VERSION && missingRegistries.length === 0;
+
+  return { candidate, json, snapshot, version, isUpToDate, missingRegistries };
+}
+
+function normalizeSnapshot(snapshot: Snapshot): { snapshot: Snapshot; json: string } {
+  const registries = { ...snapshot.registries };
+  for (const r of REQUIRED_V2_REGISTRIES) {
+    if (!registries[r]) {
+      registries[r] = {};
+    }
+  }
+  const externalConfig = snapshot.externalConfig ?? { foodDiversity: null, serverConfig: null };
+  const normalized: Snapshot = {
+    ...snapshot,
+    registries,
+    externalConfig,
+  };
+  return { snapshot: normalized, json: JSON.stringify(normalized) };
+}
+
+function toPayload(inspected: CandidateInspection): SnapshotPayload {
+  const assetsDir = inspected.candidate.assetsDir ?? null;
+  activeAssetsDir = assetsDir;
+  const index = assetsDir ? readAssetIndex(assetsDir) : { assets: {}, items: {} };
+  return {
+    json: inspected.json,
+    path: inspected.candidate.snapshotPath,
+    assetsDir,
+    assets: index.assets,
+    itemIcons: index.items,
+  };
 }
 
 /**
  * Reads the snapshot text and the asset index.
  *
- * Returns null when there is nothing to load — the renderer shows the first-run screen. A
- * configured-but-missing snapshot is treated the same way and the setting is cleared, because
- * the file having been deleted is a likelier explanation than a transient read failure.
+ * Checks candidates for schema currency and completeness:
+ *   1. Prioritizes up-to-date snapshots matching `SNAPSHOT_VERSION`. In dev checkout,
+ *      prefers `data/snapshot.json` if up to date.
+ *   2. If all snapshots are on an outdated schema, auto-migrates via `runExtract` if a
+ *      valid install is found.
+ *   3. If re-extraction cannot run, falls back to a normalized snapshot ensuring missing
+ *      registries are empty rather than undefined, allowing the app to run with warnings.
  */
 export function loadSnapshot(): SnapshotPayload | null {
   const settings = readSettings();
+  const repo = repoData();
+  const user = userDataSnapshot();
 
-  const candidates = [
-    settings.snapshotPath
-      ? { snapshotPath: settings.snapshotPath, assetsDir: settings.assetsDir }
-      : null,
-    repoData(),
-    userDataSnapshot(),
-  ];
+  const configured = settings.snapshotPath
+    ? { snapshotPath: settings.snapshotPath, assetsDir: settings.assetsDir }
+    : null;
 
-  for (const candidate of candidates) {
-    if (!candidate || !existsSync(candidate.snapshotPath)) continue;
-    let json: string;
-    try {
-      json = readFileSync(candidate.snapshotPath, "utf8");
-    } catch {
-      continue;
+  // In development, prefer repoData() if it is present and up-to-date,
+  // matching the design promise in the module header.
+  const candidates: CandidatePath[] = [];
+  if (repo) candidates.push(repo);
+  if (configured && (!repo || configured.snapshotPath !== repo.snapshotPath)) {
+    candidates.push(configured);
+  }
+  if (!configured || configured.snapshotPath !== user.snapshotPath) {
+    candidates.push(user);
+  }
+
+  const inspectedList: CandidateInspection[] = [];
+  for (const c of candidates) {
+    const inspected = inspectCandidate(c);
+    if (inspected) inspectedList.push(inspected);
+  }
+
+  // 1. If any candidate is up-to-date, use the first up-to-date candidate
+  const upToDate = inspectedList.find((i) => i.isUpToDate);
+  if (upToDate) {
+    return toPayload(upToDate);
+  }
+
+  // 2. If candidates exist but all are outdated, attempt auto-migration via re-extraction
+  // if an install path is available and valid.
+  if (inspectedList.length > 0) {
+    const installPath = settings.installPath ?? inspectedList[0]!.snapshot.meta?.gameDir ?? null;
+    if (installPath && existsSync(installPath)) {
+      try {
+        const extractResult = runExtract(installPath);
+        if (extractResult.ok) {
+          const fresh = inspectCandidate(userDataSnapshot());
+          if (fresh && fresh.isUpToDate) {
+            return toPayload(fresh);
+          }
+        }
+      } catch {
+        // Auto-extract failed, fall through to fallback below.
+      }
     }
-    const assetsDir = candidate.assetsDir ?? null;
-    const index = assetsDir ? readAssetIndex(assetsDir) : { assets: {}, items: {} };
-    return {
+
+    // 3. Fallback: normalize the best available candidate so the app does not crash on missing registries.
+    const fallbackCandidate = inspectedList[0]!;
+    const { json, snapshot } = normalizeSnapshot(fallbackCandidate.snapshot);
+    const normalizedInspection: CandidateInspection = {
+      ...fallbackCandidate,
       json,
-      path: candidate.snapshotPath,
-      assetsDir,
-      assets: index.assets,
-      itemIcons: index.items,
+      snapshot,
     };
+    return toPayload(normalizedInspection);
   }
 
   if (settings.snapshotPath) updateSettings({ snapshotPath: null, assetsDir: null });
+  activeAssetsDir = null;
   return null;
 }
 
@@ -199,6 +322,9 @@ export function dataStatus(): DataStatus {
     stale: false,
     staleReason: payload === null ? "Nothing has been extracted yet." : null,
     fromRepo: payload !== null && payload.path === repoData()?.snapshotPath,
+    // No such thing here: a desktop snapshot is always one this app extracted, or the
+    // repository's. `fromRepo` is the distinction that matters on this host.
+    userSupplied: false,
   };
   if (payload === null) return base;
 
@@ -218,6 +344,21 @@ export function dataStatus(): DataStatus {
     entries: Object.values(snapshot.registries ?? {}).reduce((n, r) => n + Object.keys(r).length, 0),
     langKeys: Object.keys(snapshot.lang ?? {}).length,
   };
+
+  const version = typeof snapshot.snapshotVersion === "number" ? snapshot.snapshotVersion : 1;
+  const missing = REQUIRED_V2_REGISTRIES.filter(
+    (r) => !snapshot.registries?.[r] || Object.keys(snapshot.registries[r]!).length === 0,
+  );
+  if (version < SNAPSHOT_VERSION || missing.length > 0) {
+    return {
+      ...status,
+      installPath: settings.installPath ?? meta?.gameDir ?? null,
+      stale: true,
+      staleReason: `This snapshot uses an older schema format (v${version}, expected v${SNAPSHOT_VERSION})${
+        missing.length > 0 ? ` and is missing registries: ${missing.join(", ")}` : ""
+      }. Please re-extract.`,
+    };
+  }
 
   const installPath = settings.installPath ?? meta?.gameDir ?? null;
   if (installPath === null) {
@@ -253,15 +394,17 @@ export function dataStatus(): DataStatus {
 
 /** Clears the stored snapshot so the next launch goes back to the first-run screen. */
 export function forgetSnapshot(): void {
+  activeAssetsDir = null;
   updateSettings({ snapshotPath: null, assetsDir: null, installPath: null });
 }
 
 /** The directory the asset protocol serves out of, or null when nothing was extracted. */
 export function currentAssetsDir(): string | null {
-  const settings = readSettings();
-  if (settings.assetsDir && existsSync(settings.assetsDir)) return settings.assetsDir;
+  if (activeAssetsDir && existsSync(activeAssetsDir)) return activeAssetsDir;
   const repo = repoData();
   if (repo && existsSync(repo.assetsDir)) return repo.assetsDir;
+  const settings = readSettings();
+  if (settings.assetsDir && existsSync(settings.assetsDir)) return settings.assetsDir;
   const user = userDataSnapshot();
   return existsSync(user.assetsDir) ? user.assetsDir : null;
 }

@@ -22,7 +22,6 @@ import { liveRecentBuilds } from "./settings.js";
 /** The tabs, mirrored from the renderer's own list so View can select them. */
 const TABS: { id: string; label: string }[] = [
   { id: "tree", label: "Tree" },
-  { id: "stats", label: "Stats" },
   { id: "classes", label: "Classes" },
   { id: "skills", label: "Skills" },
   { id: "gear", label: "Items" },
@@ -30,6 +29,7 @@ const TABS: { id: string; label: string }[] = [
   { id: "defence", label: "Defence" },
   { id: "compare", label: "Compare" },
   { id: "config", label: "Config" },
+  { id: "stats", label: "Stats" },
   { id: "capture", label: "Capture" },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "data", label: "Data" },

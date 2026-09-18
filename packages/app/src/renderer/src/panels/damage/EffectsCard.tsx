@@ -43,9 +43,6 @@ export function EffectsCard({ dps }: { dps: DpsResult }): ReactNode {
   return (
     <div className="card">
       <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          Effects assumed up
-        </span>
         <span className="faint text-sm">
           only what this build can apply — a skill, a stat or an aura that grants it
         </span>

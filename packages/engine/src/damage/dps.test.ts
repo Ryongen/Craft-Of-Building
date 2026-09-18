@@ -1321,3 +1321,116 @@ test("a MORE debuff on a stat the target has none of changes nothing, and says s
   closeTo(on.dps, off.dps);
   assert.ok(on.diagnostics.some((d) => d.code === "debuff-more-on-zero-base"));
 });
+test("a Shatter is its own hit and its own rate, and the two are the same solve", () => {
+  // Freeze deals nothing when it lands: `onAilmentCausingDamage` adds to `dmgMap`, and a later
+  // hit rolling `freeze_proc_chance` releases the whole entry through `shatterAccumulated`. The
+  // pool was already inside `ailmentDps` and had nothing to say how big the spike was, so a cold
+  // build could not tell a 40k Shatter from a trickle of bleed. These are the two figures, and
+  // what this pins is that they are one arithmetic rather than two: the DPS is the pool times
+  // how often it is tipped, so a screen showing both cannot show a rate the spike disagrees with.
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: {
+      shard: spellEntry("shard", "Cold", "hit100", {
+        config: { tags: { tags: [] }, use_support_gems_from: "", style: "int", cooldown_ticks: 20 },
+      }),
+    },
+    mmorpg_stat: {
+      freeze_chance: statEntry("freeze_chance"),
+      freeze_proc_chance: statEntry("freeze_proc_chance"),
+      freeze_duration: statEntry("freeze_duration"),
+    },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("freeze_chance", "FLAT", 40),
+        exact("freeze_proc_chance", "FLAT", 25),
+      ]),
+    },
+  });
+  const doc = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "shard", main: true }],
+  } as BuildDoc;
+
+  const result = simulateDps(doc, snapshot);
+  assert.ok(result);
+
+  const freeze = result.hit.average.ailments.find((a) => a.ailment === "freeze");
+  assert.ok(freeze !== undefined, "a cold hit with freeze chance inflicts freeze");
+
+  const rate = result.rate.castsPerCycle / result.rate.cycleSeconds;
+
+  // The bucket, solved for its level: what you put in per second over what leaves per second.
+  // `poolDecayPerSecond` is 0.1 for both strength ailments before `freeze_duration` slows it.
+  const expected =
+    (freeze.accumulated * freeze.chance * rate) / (freeze.procChance * rate + freeze.poolDecayPerSecond);
+  closeTo(result.ailmentHit, expected, "the pool a Shatter finds");
+  assert.ok(result.ailmentHit > 0);
+
+  // And the rate is that pool, tipped `procChance` times per cast. Deriving one from the other
+  // is the whole point: the spike and the DPS beside it are never two separate estimates.
+  closeTo(
+    result.ailmentProcDps,
+    result.ailmentHit * freeze.procChance * rate,
+    "Shatter DPS is the pool times how often it is released",
+  );
+
+  // Freeze never ticks, so the whole of the ailment clock here is the pool. A build with a bleed
+  // as well would have the difference, which is what the sidebar's two rows are.
+  closeTo(freeze.damagePerSecond, 0, "freeze pools instead of ticking");
+  closeTo(result.ailmentDps, result.ailmentProcDps, "no DoT here, so the clock is all Shatter");
+});
+
+test("the Shatter pool converges on one shatter's worth of hits as the decay stops mattering", () => {
+  // The shape worth knowing, and the one a player reasons with: at a fast enough rotation almost
+  // nothing leaks, so the pool is "how many hits you land per Shatter" times what each puts in —
+  // `accumulated x chance / procChance`. Below that the 10%-a-second decay is the whole
+  // difference, which is why a slow rotation has a *smaller* spike and not merely a rarer one.
+  const snapshot = (cooldownTicks: number) =>
+    engineSnapshot({
+      mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+      mmorpg_spells: {
+        shard: spellEntry("shard", "Cold", "hit100", {
+          config: {
+            tags: { tags: [] },
+            use_support_gems_from: "",
+            style: "int",
+            cooldown_ticks: cooldownTicks,
+          },
+        }),
+      },
+      mmorpg_stat: {
+        freeze_chance: statEntry("freeze_chance"),
+        freeze_proc_chance: statEntry("freeze_proc_chance"),
+        freeze_duration: statEntry("freeze_duration"),
+      },
+      mmorpg_stat_effect: EFFECTS,
+      mmorpg_stat_condition: CONDITIONS,
+      mmorpg_base_stats: {
+        original_mode_player: baseStats("original_mode_player", [
+          exact("freeze_chance", "FLAT", 40),
+          exact("freeze_proc_chance", "FLAT", 25),
+        ]),
+      },
+    });
+
+  const doc = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "shard", main: true }],
+  } as BuildDoc;
+
+  const fast = simulateDps(doc, snapshot(1));
+  const slow = simulateDps(doc, snapshot(200));
+  assert.ok(fast && slow);
+
+  const freeze = fast.hit.average.ailments.find((a) => a.ailment === "freeze")!;
+  const ceiling = (freeze.accumulated * freeze.chance) / freeze.procChance;
+
+  assert.ok(fast.ailmentHit < ceiling, "the decay always takes something");
+  assert.ok(fast.ailmentHit > ceiling * 0.95, "but almost nothing at a fast cast rate");
+  assert.ok(slow.ailmentHit < fast.ailmentHit * 0.5, "a ten-second cast leaks most of the pool");
+});

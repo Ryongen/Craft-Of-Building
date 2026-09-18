@@ -67,10 +67,29 @@ if (portableDir !== undefined) app.setPath("userData", join(portableDir, "cte2-p
 
 let mainWindow: BrowserWindow | null = null;
 
+/**
+ * The window icon, for the runs where the executable does not already carry one.
+ *
+ * A packaged Windows build gets its icon from the .exe that electron-builder stamped
+ * (`win.icon` in electron-builder.yml), and that is what the taskbar and Alt-Tab read — so
+ * this is really about `npm run dev`, where the executable is Electron's own and the window
+ * would otherwise wear Electron's logo.
+ *
+ * `__dirname` is `out/main`, so this reaches `packages/app/build/icon.png`. It is deliberately
+ * the PNG rather than the .ico: `nativeImage` reads both, and the PNG is the one that is
+ * guaranteed to be a single square bitmap rather than an icon directory. Missing is not an
+ * error — a packaged build has no `build/` beside it and does not need one.
+ */
+function windowIcon(): string | undefined {
+  const path = join(__dirname, "../../build/icon.png");
+  return existsSync(path) ? path : undefined;
+}
+
 function createWindow(): void {
   // Where the last session left it. A position no current display can show is dropped rather
   // than restored — see `liveWindowBounds` — so unplugging a monitor cannot hide the window.
   const placement = liveWindowBounds();
+  const icon = windowIcon();
 
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -78,6 +97,7 @@ function createWindow(): void {
     minWidth: 1100,
     minHeight: 700,
     ...(placement.bounds ?? {}),
+    ...(icon === undefined ? {} : { icon }),
     show: false,
     backgroundColor: "#12141a",
     title: "Path of Building — Craft to Exile 2",

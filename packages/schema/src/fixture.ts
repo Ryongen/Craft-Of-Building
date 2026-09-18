@@ -74,6 +74,17 @@ export type ObservedStat = {
 export type ObservedDamage = {
   /** `mmorpg_spells` id this was cast from. */
   spellId: string;
+  /**
+   * Where this reading came from, when it is not where the rest of the observation came from.
+   *
+   * The common case for a capture made today: the companion mod writes the stat sheet as a
+   * `mod_dump`, which is float-exact, but it cannot read the damage log — those numbers are
+   * still a human transcribing a hover, and the log `(int)`-casts and formats to two decimals.
+   * Holding them to the dump's bound would fail a correct engine over the log's own rounding.
+   *
+   * Defaults to {@link Observation.source}. Only the damage fields consult it.
+   */
+  source?: ObservationSource;
   /** The spell tooltip's damage figure, before any target is involved. */
   baseValue?: number;
   /** A single non-critical hit's damage. */
@@ -82,6 +93,21 @@ export type ObservedDamage = {
   crit?: number;
   /** One second of a damage-over-time ailment, keyed by ailment id. */
   ailmentPerSecond?: Record<string, number>;
+  /**
+   * The ailment's own damage-log blocks, one entry per ailment the hit inflicted.
+   *
+   * Separate from {@link log} because an ailment is **not** part of the hit. `AilmentChance
+   * .activate` builds a whole second `DamageEvent` and the log prints it as its own hover, with
+   * its own `Total Combined Damage` — so folding it into the hit's element list would be
+   * claiming the game printed something it did not.
+   *
+   * This is the field that pins the two halves of an ailment against each other. A freeze
+   * capture is three hovers: the hit, the `Damage Over Time / Ailment: Freeze` block it applied,
+   * and the `Ailment Proc: Shatter` block that released the pool. Recording all three is what
+   * makes `damageEffectivenessMulti` observable — the proc's base over the ailment's final is
+   * the 0.85 in the ailment table, read off the screen rather than off the decompiler.
+   */
+  ailments?: ObservedAilmentEvent[];
   /** What the hit landed on, for the record — the fixture's `config.enemy` should match. */
   targetNotes?: string;
   /**
@@ -179,6 +205,42 @@ export type ObservedDamageEvent = {
   moreMultis: ObservedMore[];
   /** The log's `Final Damage` line. `.intValue()`, so again `[n, n+1)`. */
   finalDamage: number;
+};
+
+/**
+ * The two blocks one ailment prints: the event that applied it, and the proc that released it.
+ *
+ * **Both are their own `DamageEvent`, and they carry different amounts of pipeline.** The
+ * applying event is the full sweep — `AilmentChance.activate` runs `Activate()` on it, so it has
+ * an `additive_damage` row, the target's mitigation and every MORE, exactly like a hit. The proc
+ * is the opposite: `EntityAilmentData` fires the accumulated pool with `calcSourceEffects =
+ * calcTargetEffects = false`, so its block prints an empty `Damage Info:` and `Final Damage`
+ * equal to `Base Damage`. A proc block that shows layers is either a capture error or a real
+ * finding, and the difference matters enough to record the empty list rather than omit it.
+ *
+ * **A proc capture has to be one application's worth.** The pool is a running sum — every hit
+ * that freezes adds to it and it decays 10% a second — so a shatter caught after two freezes
+ * carries both and cannot be compared against the engine's per-application figure. Capture it by
+ * landing one hit and shattering before the next, which is what makes `proc.baseDamage /
+ * applied.finalDamage` read as the ailment's `damageEffectivenessMulti` and nothing else.
+ */
+export type ObservedAilmentEvent = {
+  /** `burn`, `poison`, `bleed`, `freeze` or `electrify`. */
+  ailment: string;
+  /**
+   * The block the log printed when the ailment was applied — its `Ailment:` hover.
+   *
+   * This is the ailment's second `DamageEvent`, *before* `onAilmentCausingDamage` applies
+   * `damageEffectivenessMulti`, `<ailment>_strength` and `<ailment>_resistance`. Its
+   * `finalDamage` is therefore the engine's `eventDamage`, not what the ailment ends up dealing.
+   */
+  applied?: ObservedDamageEvent;
+  /**
+   * The `Ailment Proc:` block — Shatter for freeze, Shock for electrify.
+   *
+   * Only the two strength ailments have one; the three DoTs tick instead and never print it.
+   */
+  proc?: ObservedDamageEvent;
 };
 
 /**
@@ -384,10 +446,11 @@ export const MOD_DUMP: Tolerance = {
  * off the stat registry rather than computed, so `EXACT` is already right and loosening them
  * would only hide a wrong cap in the ported table.
  *
- * The damage fields are left out too. Nothing writes `observed.damage` from a dump today, and
- * if something ever does it will not be by reading the damage log's int-rounded text — so the
- * bound for that capture should be argued from wherever those numbers came from, not inherited
- * from here.
+ * The damage fields are left out too, and a reading that needs a different bound says so itself
+ * rather than inheriting one here: `ObservedDamage.source` overrides the observation's. That is
+ * the ordinary case now — the companion mod writes the stat sheet as a float-exact dump but
+ * cannot read the damage log, so a fixture routinely carries `mod_dump` stats beside
+ * `damage_log` numbers that are still a human transcribing an int-rounded hover.
  */
 const SOURCE_OVERRIDES: Record<ObservationSource, Partial<Record<ComparedField, Tolerance>>> = {
   stat_gui: {},
@@ -480,6 +543,8 @@ export type ComputedDamage = {
    */
   log?: ObservedDamageEvent[];
   totalCombined?: number;
+  /** The same projection for each ailment the hit inflicted. See {@link ObservedAilmentEvent}. */
+  ailments?: ObservedAilmentEvent[];
 };
 
 export type DamageCalculator = (
@@ -713,7 +778,7 @@ function compareDamage(
   snapshot: Snapshot,
   calculator: DamageCalculator | null,
   tolerance: Tolerance | undefined,
-  source: ObservationSource,
+  observationSource: ObservationSource,
   out: StatComparison[],
 ): void {
   for (const observed of fixture.observed.damage ?? []) {
@@ -721,6 +786,8 @@ function compareDamage(
       ? calculator(measured(fixture.build), snapshot, observed.spellId, observed)
       : undefined;
     const ran = calculator !== null;
+    // A reading's own provenance wins over the observation's. See `ObservedDamage.source`.
+    const source = observed.source ?? observationSource;
 
     for (const [field, expected, got] of [
       ["baseValue", observed.baseValue, computed?.baseValue],
@@ -747,6 +814,7 @@ function compareDamage(
     }
 
     compareLog(observed, computed, ran, tolerance, source, out);
+    compareAilmentEvents(observed, computed, ran, tolerance, source, out);
   }
 }
 
@@ -789,41 +857,87 @@ function compareLog(
     // and then the bonus ones in map order, and a capture that transcribed them in another
     // order should still line up.
     const mine = computed?.log?.find((e) => e.element === event.element);
-    const where = `${observed.spellId}/${event.element}`;
+    compareEvent(`${observed.spellId}/${event.element}`, event, mine, ran, tolerance, source, out);
+  }
+}
 
-    out.push(compareTruncated(where, "baseDamage", event.baseDamage, mine?.baseDamage, ran));
-    out.push(compareTruncated(where, "finalDamage", event.finalDamage, mine?.finalDamage, ran));
-
-    for (const layer of event.layers) {
-      // Side is part of the identity. `additive_damage` is written by both halves of the event
-      // and the log prints the prefix precisely because the two rows are different rows.
-      const got = mine?.layers.find(
-        (l) => l.layerId === layer.layerId && l.side === layer.side && l.element === layer.element,
-      );
-      const id = `${where}.${layer.layerId}${layer.element === undefined ? "" : `>${layer.element}`}[${layer.side}]`;
-      if (layer.amount !== undefined) {
-        out.push(compareField(id, "layerAmount", layer.amount, got?.amount, ran, tolerance, source));
-      }
-      if (layer.multiplier !== undefined) {
-        out.push(
-          compareField(id, "layerMultiplier", layer.multiplier, got?.multiplier, ran, tolerance, source),
-        );
-      }
+/**
+ * The ailment half of a damage capture: the block that applied each one, and the proc that
+ * released it.
+ *
+ * Keyed by ailment id rather than by position, for the reason the hit's blocks are keyed by
+ * element — a capture is a human reading hovers in whatever order they scrolled past.
+ *
+ * Nothing here is keyed off `ailmentPerSecond`. The two record different things and a capture
+ * can have either: that field is one second of a DoT ticking, this is the event that applied it.
+ */
+function compareAilmentEvents(
+  observed: ObservedDamage,
+  computed: ComputedDamage | undefined,
+  ran: boolean,
+  tolerance: Tolerance | undefined,
+  source: ObservationSource,
+  out: StatComparison[],
+): void {
+  for (const event of observed.ailments ?? []) {
+    const mine = computed?.ailments?.find((a) => a.ailment === event.ailment);
+    const where = `${observed.spellId}/${event.ailment}`;
+    if (event.applied !== undefined) {
+      compareEvent(`${where}:applied`, event.applied, mine?.applied, ran, tolerance, source, out);
     }
+    if (event.proc !== undefined) {
+      compareEvent(`${where}:proc`, event.proc, mine?.proc, ran, tolerance, source, out);
+    }
+  }
+}
 
-    for (const more of event.moreMultis) {
+/**
+ * Walks one printed block — base, every layer row, every MORE, final — against the engine's.
+ *
+ * Shared by the hit's elements and by an ailment's two blocks because the log prints all of them
+ * in the same shape, which is the whole reason the trace was built to match it.
+ */
+function compareEvent(
+  where: string,
+  event: ObservedDamageEvent,
+  mine: ObservedDamageEvent | undefined,
+  ran: boolean,
+  tolerance: Tolerance | undefined,
+  source: ObservationSource,
+  out: StatComparison[],
+): void {
+  out.push(compareTruncated(where, "baseDamage", event.baseDamage, mine?.baseDamage, ran));
+  out.push(compareTruncated(where, "finalDamage", event.finalDamage, mine?.finalDamage, ran));
+
+  for (const layer of event.layers) {
+    // Side is part of the identity. `additive_damage` is written by both halves of the event
+    // and the log prints the prefix precisely because the two rows are different rows.
+    const got = mine?.layers.find(
+      (l) => l.layerId === layer.layerId && l.side === layer.side && l.element === layer.element,
+    );
+    const id = `${where}.${layer.layerId}${layer.element === undefined ? "" : `>${layer.element}`}[${layer.side}]`;
+    if (layer.amount !== undefined) {
+      out.push(compareField(id, "layerAmount", layer.amount, got?.amount, ran, tolerance, source));
+    }
+    if (layer.multiplier !== undefined) {
       out.push(
-        compareField(
-          `${where}.${more.statId}`,
-          "moreMulti",
-          more.multi,
-          mine?.moreMultis.find((m) => m.statId === more.statId)?.multi,
-          ran,
-          tolerance,
-          source,
-        ),
+        compareField(id, "layerMultiplier", layer.multiplier, got?.multiplier, ran, tolerance, source),
       );
     }
+  }
+
+  for (const more of event.moreMultis) {
+    out.push(
+      compareField(
+        `${where}.${more.statId}`,
+        "moreMulti",
+        more.multi,
+        mine?.moreMultis.find((m) => m.statId === more.statId)?.multi,
+        ran,
+        tolerance,
+        source,
+      ),
+    );
   }
 }
 
@@ -975,81 +1089,47 @@ export function parseFixture(value: unknown, origin: string): Fixture {
     if (logRaw !== undefined && !Array.isArray(logRaw)) {
       return fail(`observed.damage[${i}].log must be an array when present`);
     }
-    const log: ObservedDamageEvent[] = (logRaw ?? []).map((rawEvent: unknown, j: number) => {
-      const at = `observed.damage[${i}].log[${j}]`;
-      if (rawEvent === null || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
-        return fail(`${at} must be an object`);
-      }
-      const ev = rawEvent as Record<string, unknown>;
-      const element = ev["element"];
-      if (typeof element !== "string" || element.length === 0) {
-        return fail(`${at}.element must be a non-empty string`);
-      }
-      for (const key of ["baseDamage", "finalDamage"] as const) {
-        if (typeof ev[key] !== "number" || !Number.isFinite(ev[key])) {
-          return fail(`${at}.${key} must be a finite number`);
+    const log: ObservedDamageEvent[] = (logRaw ?? []).map((rawEvent: unknown, j: number) =>
+      parseEvent(rawEvent, `observed.damage[${i}].log[${j}]`, fail),
+    );
+
+    const ailmentsRaw = node["ailments"];
+    if (ailmentsRaw !== undefined && !Array.isArray(ailmentsRaw)) {
+      return fail(`observed.damage[${i}].ailments must be an array when present`);
+    }
+    const ailmentEvents: ObservedAilmentEvent[] = (ailmentsRaw ?? []).map(
+      (rawAilment: unknown, j: number) => {
+        const at = `observed.damage[${i}].ailments[${j}]`;
+        if (rawAilment === null || typeof rawAilment !== "object" || Array.isArray(rawAilment)) {
+          return fail(`${at} must be an object`);
         }
-      }
-      const layersRaw = ev["layers"];
-      if (layersRaw !== undefined && !Array.isArray(layersRaw)) {
-        return fail(`${at}.layers must be an array when present`);
-      }
-      const layers: ObservedLayer[] = (layersRaw ?? []).map((rawLayer: unknown, k: number) => {
-        if (rawLayer === null || typeof rawLayer !== "object" || Array.isArray(rawLayer)) {
-          return fail(`${at}.layers[${k}] must be an object`);
-        }
-        const l = rawLayer as Record<string, unknown>;
-        const layerId = l["layerId"];
-        if (typeof layerId !== "string" || layerId.length === 0) {
-          return fail(`${at}.layers[${k}].layerId must be a non-empty string`);
-        }
-        const side = l["side"];
-        if (side !== "Source" && side !== "Target") {
-          return fail(`${at}.layers[${k}].side must be "Source" or "Target"`);
-        }
-        // Exactly one of the two, because the log prints exactly one: `+N` for an ADD layer and
-        // `xN` for every other action. A row carrying both is a transcription that guessed.
-        const hasAmount = l["amount"] !== undefined;
-        const hasMulti = l["multiplier"] !== undefined;
-        if (hasAmount === hasMulti) {
-          return fail(`${at}.layers[${k}] needs exactly one of "amount" or "multiplier"`);
+        const node2 = rawAilment as Record<string, unknown>;
+        const ailment = node2["ailment"];
+        if (typeof ailment !== "string" || ailment.length === 0) {
+          return fail(`${at}.ailment must be a non-empty string`);
         }
         return {
-          layerId,
-          side,
-          ...(typeof l["element"] === "string" ? { element: l["element"] } : {}),
-          ...optionalNumber(l, "amount", k, fail),
-          ...optionalNumber(l, "multiplier", k, fail),
+          ailment,
+          ...(node2["applied"] === undefined
+            ? {}
+            : { applied: parseEvent(node2["applied"], `${at}.applied`, fail) }),
+          ...(node2["proc"] === undefined
+            ? {}
+            : { proc: parseEvent(node2["proc"], `${at}.proc`, fail) }),
         };
-      });
+      },
+    );
 
-      const moreRaw = ev["moreMultis"];
-      if (moreRaw !== undefined && !Array.isArray(moreRaw)) {
-        return fail(`${at}.moreMultis must be an array when present`);
-      }
-      const moreMultis: ObservedMore[] = (moreRaw ?? []).map((rawMore: unknown, k: number) => {
-        if (rawMore === null || typeof rawMore !== "object" || Array.isArray(rawMore)) {
-          return fail(`${at}.moreMultis[${k}] must be an object`);
-        }
-        const m = rawMore as Record<string, unknown>;
-        const statId = m["statId"];
-        if (typeof statId !== "string" || statId.length === 0) {
-          return fail(`${at}.moreMultis[${k}].statId must be a non-empty string`);
-        }
-        if (typeof m["multi"] !== "number" || !Number.isFinite(m["multi"])) {
-          return fail(`${at}.moreMultis[${k}].multi must be a finite number`);
-        }
-        return { statId, multi: m["multi"] as number };
-      });
-
-      return {
-        element,
-        baseDamage: ev["baseDamage"] as number,
-        layers,
-        moreMultis,
-        finalDamage: ev["finalDamage"] as number,
-      };
-    });
+    const readingSource = node["source"];
+    if (
+      readingSource !== undefined &&
+      (typeof readingSource !== "string" ||
+        !(OBSERVATION_SOURCES as readonly string[]).includes(readingSource))
+    ) {
+      return fail(
+        `observed.damage[${i}].source must be one of ${OBSERVATION_SOURCES.join(" | ")} when present`,
+      );
+    }
 
     const effectsRaw = node["effects"];
     const effects: Record<string, number> = {};
@@ -1088,6 +1168,8 @@ export function parseFixture(value: unknown, origin: string): Fixture {
       ...(typeof node["wasCrit"] === "boolean" ? { wasCrit: node["wasCrit"] } : {}),
       ...(perSecond === undefined ? {} : { ailmentPerSecond: ailments }),
       ...(logRaw === undefined ? {} : { log }),
+      ...(ailmentsRaw === undefined ? {} : { ailments: ailmentEvents }),
+      ...(readingSource === undefined ? {} : { source: readingSource as ObservationSource }),
       ...(effectsRaw === undefined ? {} : { effects }),
       ...(weaponRaw === undefined ? {} : { weapon }),
       ...(typeof node["targetNotes"] === "string" ? { targetNotes: node["targetNotes"] } : {}),
@@ -1129,6 +1211,95 @@ export function parseFixture(value: unknown, origin: string): Fixture {
       stats,
       ...(damageRaw === undefined ? {} : { damage }),
     },
+  };
+}
+
+
+/**
+ * One printed block — `Base Damage`, the `Damage Info:` rows, the `Multipliers:` rows, `Final
+ * Damage`.
+ *
+ * Shared by `log[]` and by an ailment's two blocks, because the log prints all of them in the
+ * same shape. `layers` and `moreMultis` default to empty rather than being required: an
+ * `Ailment Proc:` block genuinely has none, and a capture that writes `"layers": []` is stating
+ * that, not omitting it.
+ */
+function parseEvent(
+  rawEvent: unknown,
+  at: string,
+  fail: (message: string) => never,
+): ObservedDamageEvent {
+  if (rawEvent === null || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
+    return fail(`${at} must be an object`);
+  }
+  const ev = rawEvent as Record<string, unknown>;
+  const element = ev["element"];
+  if (typeof element !== "string" || element.length === 0) {
+    return fail(`${at}.element must be a non-empty string`);
+  }
+  for (const key of ["baseDamage", "finalDamage"] as const) {
+    if (typeof ev[key] !== "number" || !Number.isFinite(ev[key])) {
+      return fail(`${at}.${key} must be a finite number`);
+    }
+  }
+  const layersRaw = ev["layers"];
+  if (layersRaw !== undefined && !Array.isArray(layersRaw)) {
+    return fail(`${at}.layers must be an array when present`);
+  }
+  const layers: ObservedLayer[] = (layersRaw ?? []).map((rawLayer: unknown, k: number) => {
+    if (rawLayer === null || typeof rawLayer !== "object" || Array.isArray(rawLayer)) {
+      return fail(`${at}.layers[${k}] must be an object`);
+    }
+    const l = rawLayer as Record<string, unknown>;
+    const layerId = l["layerId"];
+    if (typeof layerId !== "string" || layerId.length === 0) {
+      return fail(`${at}.layers[${k}].layerId must be a non-empty string`);
+    }
+    const side = l["side"];
+    if (side !== "Source" && side !== "Target") {
+      return fail(`${at}.layers[${k}].side must be "Source" or "Target"`);
+    }
+    // Exactly one of the two, because the log prints exactly one: `+N` for an ADD layer and
+    // `xN` for every other action. A row carrying both is a transcription that guessed.
+    const hasAmount = l["amount"] !== undefined;
+    const hasMulti = l["multiplier"] !== undefined;
+    if (hasAmount === hasMulti) {
+      return fail(`${at}.layers[${k}] needs exactly one of "amount" or "multiplier"`);
+    }
+    return {
+      layerId,
+      side,
+      ...(typeof l["element"] === "string" ? { element: l["element"] } : {}),
+      ...optionalNumber(l, "amount", k, fail),
+      ...optionalNumber(l, "multiplier", k, fail),
+    };
+  });
+
+  const moreRaw = ev["moreMultis"];
+  if (moreRaw !== undefined && !Array.isArray(moreRaw)) {
+    return fail(`${at}.moreMultis must be an array when present`);
+  }
+  const moreMultis: ObservedMore[] = (moreRaw ?? []).map((rawMore: unknown, k: number) => {
+    if (rawMore === null || typeof rawMore !== "object" || Array.isArray(rawMore)) {
+      return fail(`${at}.moreMultis[${k}] must be an object`);
+    }
+    const m = rawMore as Record<string, unknown>;
+    const statId = m["statId"];
+    if (typeof statId !== "string" || statId.length === 0) {
+      return fail(`${at}.moreMultis[${k}].statId must be a non-empty string`);
+    }
+    if (typeof m["multi"] !== "number" || !Number.isFinite(m["multi"])) {
+      return fail(`${at}.moreMultis[${k}].multi must be a finite number`);
+    }
+    return { statId, multi: m["multi"] as number };
+  });
+
+  return {
+    element,
+    baseDamage: ev["baseDamage"] as number,
+    layers,
+    moreMultis,
+    finalDamage: ev["finalDamage"] as number,
   };
 }
 

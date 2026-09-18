@@ -45,7 +45,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildConfig, Diagnostic, SkillSetup } from "@cte2/schema";
-import { CATEGORY, entry, supportLinks } from "@cte2/schema";
+import { CATEGORY, activeSupportLinks, entry } from "@cte2/schema";
 
 import type { Balance } from "../balance.js";
 import type { Compat } from "../compat.js";
@@ -572,7 +572,7 @@ function supportCostMulti(
   const sockets = supportSocketsFor(snapshot, skill, equipped);
   if (sockets === undefined) return 1;
   let multi = 1;
-  for (const link of supportLinks(sockets.skill)) {
+  for (const link of activeSupportLinks(sockets.skill)) {
     const data = entry(snapshot, CATEGORY.supportGem, link.id)?.data;
     const declared = data === undefined ? undefined : num(data["manaMulti"]);
     if (declared !== undefined) multi *= declared;

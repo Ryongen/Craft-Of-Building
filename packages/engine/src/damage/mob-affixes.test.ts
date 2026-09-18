@@ -28,10 +28,11 @@ import {
   statEntry,
   valueCalcEntry,
 } from "../test-support.js";
+import { defence } from "./defence.js";
 import { mobAffixMods } from "./mob-affixes.js";
 import { simulateHit } from "./simulate.js";
 
-function scenario() {
+function scenario(granted: Record<string, unknown>[] = [exact("armor", "FLAT", 0)]) {
   return engineSnapshot({
     mmorpg_value_calc: { hit1000: valueCalcEntry("hit1000", { min: 1000, max: 1000 }) },
     mmorpg_spells: {
@@ -45,7 +46,7 @@ function scenario() {
       water_resist: statEntry("water_resist"),
       lightning_resist: statEntry("lightning_resist"),
     },
-    mmorpg_base_stats: { original_mode_player: baseStats("original_mode_player", [exact("armor", "FLAT", 0)]) },
+    mmorpg_base_stats: { original_mode_player: baseStats("original_mode_player", granted) },
     mmorpg_mob_affix: {
       armored: {
         type: "prefix",
@@ -68,8 +69,32 @@ function scenario() {
         id: "of_elemental_resistance",
         stats: [{ type: "FLAT", max: 40, min: 40, stat: "elemental_resist" }],
       },
+      // The pack's own `penetrating`, which is what found the bug the last test here pins: an
+      // aggregate, a per-element id and a defence rating, in one affix.
+      penetrating: {
+        type: "prefix",
+        format: "GREEN",
+        id: "penetrating",
+        stats: [
+          { type: "FLAT", max: 6, min: 6, stat: "armor_penetration" },
+          { type: "FLAT", max: 25, min: 25, stat: "elemental_penetration" },
+          { type: "FLAT", max: 25, min: 25, stat: "chaos_penetration" },
+        ],
+      },
     },
   });
+}
+
+/** The same registries, over a character who actually has resists to penetrate. */
+function resistedScenario() {
+  return scenario([
+    exact("armor", "FLAT", 0),
+    exact("health", "FLAT", 1000),
+    exact("fire_resist", "FLAT", 50),
+    exact("water_resist", "FLAT", 50),
+    exact("lightning_resist", "FLAT", 50),
+    exact("chaos_resist", "FLAT", 50),
+  ]);
 }
 
 function build(config: Record<string, unknown> = {}, spellId = "strike"): BuildDoc {
@@ -165,4 +190,108 @@ test("more than one prefix is allowed but reported", () => {
   const one = simulateHit(build({ enemy: { level: 100, armor: 0, affixes: ["armored"] } }), scenario());
   assert.ok(one);
   assert.ok(!one.diagnostics.some((d) => d.code === "mob-affix-count"));
+});
+
+// ---------------------------------------------------------------------------
+// Why the layer read what it read
+// ---------------------------------------------------------------------------
+
+test("the target's own stats carry their provenance, so a mitigation figure is explicable", () => {
+  /*
+   * The question this exists to answer, asked of a real build: a mythic mob declares 30 cold
+   * resistance and the character has 33.61 cold penetration, so `30 - 33.61` should read about
+   * x1.13 — and the panel says x1.20. Both are right. Banner of the Piercing Gale takes 16.8
+   * off the mob before any of that, so the layer read 13.2, and `trunc(13.2 - 33.61)` is -20.
+   *
+   * None of those three numbers was reachable from the app: `DamageResult` handed back the
+   * character's sheet and the spell's, and the enemy's existed only inside the sweep. So the
+   * one row a reader wanted to open was the one that could not be opened, and the honest-looking
+   * answer — resolving it against the character, which is what the panel used to do — filed the
+   * mob's resistance under the player's own gear.
+   */
+  const affixed = simulateHit(
+    build({ enemy: { level: 100, armor: 0, resists: { fire: 30 } }, affixes: [] }),
+    scenario(),
+    { element: "Fire", valueCalcId: "hit1000" },
+  );
+  assert.ok(affixed);
+
+  // A stat nothing aimed at has no origin to report: it is simply what the document declared,
+  // and inventing a one-entry history for it would be noise.
+  assert.equal(affixed.target.origins.get("fire_resist"), undefined);
+  assert.equal(affixed.target.sheet.get("fire_resist")?.value, 30);
+
+  // One that an affix did touch carries the whole chain.
+  const withAffix = simulateHit(
+    build({
+      enemy: { level: 100, armor: 0, resists: { fire: 30 }, affixes: ["of_elemental_resistance"] },
+    }),
+    scenario(),
+    { element: "Fire", valueCalcId: "hit1000" },
+  );
+  assert.ok(withAffix);
+
+  const origin = withAffix.target.origins.get("fire_resist");
+  assert.ok(origin, "an affix touched fire_resist, so it must be explicable");
+  assert.equal(origin.declared, 30, "what the document said before anything was aimed at it");
+  assert.deepEqual(
+    origin.mods.map((m) => ({ source: m.source, type: m.type, value: m.value })),
+    [{ source: "of_elemental_resistance", type: "FLAT", value: 40 }],
+  );
+  assert.equal(origin.final, 70, "30 declared plus the affix's 40");
+  // And `final` is not a second opinion — it is what the sweep actually read.
+  assert.equal(origin.final, withAffix.target.sheet.get("fire_resist")?.value);
+});
+
+test("the target sheet is the enemy's, never the character's", () => {
+  // The mistake this guards against is subtle because both sheets have an `armor`. Resolving a
+  // `[Target]` row against the character produced a plausible-looking list of the player's own
+  // gear under a number none of it is in.
+  const hit = simulateHit(build({ enemy: { level: 100, armor: 400 } }), scenario());
+  assert.ok(hit);
+  assert.equal(hit.target.sheet.get("armor")?.value, 400);
+  assert.notEqual(
+    hit.target.sheet.get("armor")?.value,
+    hit.sheets.character.stats.get("armor")?.value,
+  );
+});
+test("an aggregate on the attacker reaches the elements it covers, not an id nothing reads", () => {
+  // The bug: `penetrating` grants `elemental_penetration`, and every mitigation layer is
+  // registered per *single* element. In a real calculation the aggregate never survives to be
+  // read — `ITransferToOtherStats` empties it into fire, cold and lightning before the first
+  // pass — but `defence()` assembles the attacker's sheet by hand from the affix list and never
+  // runs that pass. So the stat sat on the sheet as a dead id.
+  //
+  // What made it hard to see is that the same affix's other two stats *are* real ids:
+  // `armor_penetration` is read by the armour layer and `chaos_penetration` by the chaos resist,
+  // so a Penetrating mob moved your physical and chaos figures and left fire, cold and lightning
+  // exactly where they were. A mob that penetrates every element except the elemental ones is
+  // the shape of a missing expansion, not of a rule.
+  const snapshot = resistedScenario();
+  const bare = defence(build({ enemy: { level: 100 } }), snapshot, { newbieResists: false });
+  const pierced = defence(
+    build({ enemy: { level: 100, affixes: ["penetrating"] } }),
+    snapshot,
+    { newbieResists: false },
+  );
+
+  const taken = (result: ReturnType<typeof defence>, element: string) =>
+    result.byElement.find((e) => e.element === element)!.taken;
+
+  for (const element of ["Fire", "Cold", "Nature", "Shadow"]) {
+    assert.ok(
+      taken(pierced, element) > taken(bare, element) + 1e-9,
+      `${element} has to take more from a penetrating mob: ` +
+        `${taken(bare, element)} -> ${taken(pierced, element)}`,
+    );
+  }
+
+  // And all four move by the same amount, which is the real assertion: `chaos_penetration` is
+  // the control, because it was the one per-element id in the affix and therefore the one that
+  // worked all along. The three elementals landing on its number is what says the aggregate was
+  // spread rather than merely applied to something.
+  const chaos = taken(pierced, "Shadow") - taken(bare, "Shadow");
+  for (const element of ["Fire", "Cold", "Nature"]) {
+    closeTo(taken(pierced, element) - taken(bare, element), chaos, `${element} matches chaos`);
+  }
 });

@@ -189,6 +189,30 @@ export type BuildState = {
   addItem(item: Item): void;
   updateItem(index: number, item: Item): void;
   removeItem(index: number): void;
+
+  // -- the item pool ------------------------------------------------------
+  //
+  // The bench: items the build owns and is not wearing. Equipping and unequipping move an item
+  // between `gear` and `itemPool` rather than creating or destroying one, so trying a sword on
+  // and taking it off again is lossless — which is the entire reason to have a pool.
+
+  /** Put a new item on the bench, unequipped. Returns nothing; the pool is appended to. */
+  addPoolItem(item: Item): void;
+  updatePoolItem(index: number, item: Item): void;
+  removePoolItem(index: number): void;
+  /**
+   * Wear a benched item, sending `displace` off the character to make room for it.
+   *
+   * Anything the slot has no room for comes **off onto the bench** rather than being deleted:
+   * swapping a ring must not silently lose the ring it replaced. Which items those are is the
+   * caller's to work out, not this store's — it takes `SLOT_CAPACITY`, the item's base and the
+   * snapshot to answer, and this module deliberately holds no snapshot. `GearPanel` has one.
+   *
+   * One edit, so equipping and the displacement it caused undo together.
+   */
+  equipPoolItem(index: number, displace?: readonly number[]): void;
+  /** Take a worn item off, onto the bench. The inverse of {@link equipPoolItem}. */
+  unequipItem(index: number): void;
   /**
    * The omen, of which a character wears one — `CURIO_BLOCKS` gives `OMEN` a count of 1.
    * `undefined` removes it.
@@ -202,6 +226,15 @@ export type BuildState = {
   addSkill(skill: SkillSetup): void;
   updateSkill(index: number, skill: SkillSetup): void;
   removeSkill(index: number): void;
+  /**
+   * Copy a skill, its support gems and their rolls, in beside the original.
+   *
+   * The move a socket-group list exists for: "what if this gem were that gem" is answered by
+   * having both, and rebuilding five supports with their rarities and rolls by hand to ask it is
+   * how people stop asking. The copy is never the main skill and is never in the rotation — a
+   * duplicate that silently doubled the Full DPS figure would be worse than no button.
+   */
+  duplicateSkill(index: number): void;
   setMainSkill(index: number): void;
 
   // -- buffs and config ---------------------------------------------------
@@ -579,6 +612,38 @@ export const useBuild = create<BuildState>((set) => ({
     edit(set, (doc) => prune(doc, "gear", replaceAt(doc.gear, index, item))),
   removeItem: (index) => edit(set, (doc) => prune(doc, "gear", removeAt(doc.gear, index))),
 
+  addPoolItem: (item) =>
+    edit(set, (doc) => prune(doc, "itemPool", [...(doc.itemPool ?? []), item])),
+  updatePoolItem: (index, item) =>
+    edit(set, (doc) => prune(doc, "itemPool", replaceAt(doc.itemPool, index, item))),
+  removePoolItem: (index) =>
+    edit(set, (doc) => prune(doc, "itemPool", removeAt(doc.itemPool, index))),
+
+  equipPoolItem: (index, displace = []) =>
+    edit(set, (doc) => {
+      const item = (doc.itemPool ?? [])[index];
+      if (item === undefined) return doc;
+
+      // Read the displaced items out before anything is removed: the indices are into the
+      // *current* `gear`, and filtering first would renumber them under the lookup.
+      const coming = new Set(displace);
+      const takenOff = (doc.gear ?? []).filter((_, i) => coming.has(i));
+
+      const gear = [...(doc.gear ?? []).filter((_, i) => !coming.has(i)), item];
+      const pool = [...(doc.itemPool ?? []).filter((_, i) => i !== index), ...takenOff];
+      return prune(prune(doc, "gear", gear), "itemPool", pool);
+    }),
+
+  unequipItem: (index) =>
+    edit(set, (doc) => {
+      const item = (doc.gear ?? [])[index];
+      if (item === undefined) return doc;
+      return prune(prune(doc, "gear", removeAt(doc.gear, index)), "itemPool", [
+        ...(doc.itemPool ?? []),
+        item,
+      ]);
+    }),
+
   setOmen: (omen) => edit(set, (doc) => prune(doc, "omen", omen)),
 
   addJewel: (jewel) => edit(set, (doc) => prune(doc, "jewels", [...(doc.jewels ?? []), jewel])),
@@ -605,6 +670,25 @@ export const useBuild = create<BuildState>((set) => ({
       }
       return prune(doc, "skills", skills);
     }),
+  duplicateSkill: (index) =>
+    edit(set, (doc) => {
+      const skills = [...(doc.skills ?? [])];
+      const source = skills[index];
+      if (source === undefined) return doc;
+      // The supports are copied element-wise: they are objects, and a shared reference would
+      // make editing one gem's roll edit the other copy's too.
+      const copy: SkillSetup = {
+        ...source,
+        ...(source.supports === undefined
+          ? {}
+          : { supports: source.supports.map((link) => (typeof link === "string" ? link : { ...link })) }),
+      };
+      delete copy.main;
+      delete copy.includeInFullDps;
+      skills.splice(index + 1, 0, copy);
+      return prune(doc, "skills", skills);
+    }),
+
   setMainSkill: (index) =>
     edit(set, (doc) =>
       prune(

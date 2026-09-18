@@ -22,6 +22,14 @@ files:
 asar: true
 
 win:
+  # `build/icon.ico` — seven sizes from 16 to 256, generated from the repo-root CTE2POB.jpg.
+  # electron-builder would find it under `buildResources` anyway; it is named because a missing
+  # icon is silent (you get Electron's own) and that is the kind of thing nobody notices until
+  # the installer is in somebody else's hands.
+  #
+  # To regenerate after replacing the source image, from the repo root:
+  #   powershell -File tools/make-icons.ps1
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]

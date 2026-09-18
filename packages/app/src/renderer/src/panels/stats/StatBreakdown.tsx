@@ -48,6 +48,8 @@ import { useBuild } from "../../state/build-store.js";
 import { useDerived, type ModContribution } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { num, signed, smart } from "../../ui/format.js";
+import { StatIcon } from "../../ui/StatIcon.js";
+import { statLook } from "../../ui/stat-look.js";
 import { StepRow } from "../../ui/StepRow.js";
 
 /**
@@ -113,17 +115,36 @@ const CTX_BLURB: Record<string, string> = {
   MISC: "Everything the game files under Misc, including the solo-class bonus.",
 };
 
+/**
+ * Which sheet a breakdown is about.
+ *
+ * `character` is the stat as the game's own character screen reports it. `skill` is the main
+ * skill's separate stat unit — the same stat id, a different number, and the only place a
+ * support gem's contribution exists at all. See `DerivedBuild.skillBreakdown`.
+ */
+export type BreakdownScope = "character" | "skill";
+
 export function StatBreakdown({
   statId,
+  scope = "character",
   onSelect,
+  onScope,
 }: {
   statId: string;
+  scope?: BreakdownScope;
   /** Lets a transfer row jump to the stat that actually holds the value. */
   onSelect?: (statId: string) => void;
+  /** Switches sheets, where the caller can hold the other one. */
+  onScope?: (scope: BreakdownScope) => void;
 }): ReactNode {
   const { snapshot } = useWorld();
   const derived = useDerived();
-  const breakdown = derived.breakdown(statId);
+  const skill = scope === "skill" ? derived.skillBreakdown(statId) : undefined;
+  // A skill scope with no skill set falls back rather than rendering nothing: the character's
+  // own number is still the honest answer to "where did this come from", and the banner below
+  // says which sheet is on screen so the two can never be mistaken for each other.
+  const onSkillSheet = skill !== undefined;
+  const breakdown = skill ?? derived.breakdown(statId);
   const display = statDisplay(snapshot, statId);
   const { stat, flat, percent, multi, base, addedAfterCalc, transferredTo } = breakdown;
 
@@ -137,19 +158,85 @@ export function StatBreakdown({
 
   // Which stats hand their value to this one. The complaint the plan named was a 70.9 row that
   // did not say where it came from; this is the other end of that link.
-  const transferredFrom = derived.derived
-    .filter((d) => d.statId === statId && d.kind === "transfer")
+  const transferredFrom = breakdown.derived
+    .filter((d) => d.kind === "transfer")
     .map((d) => d.from);
 
   const groups = groupContributions(breakdown.contributions);
+  const spellId = derived.damage?.spellId;
+
+  /*
+   * What the main skill resolves this same stat to, when that is a different number.
+   *
+   * Compared rather than merely fetched: every stat the spell unit does not touch resolves
+   * identically on both sheets, and announcing "on Tailwind Sweep this is also 47" on two
+   * hundred rows would bury the handful where it matters. The epsilon is float noise from two
+   * separate container runs, not a tolerance.
+   */
+  const skillValue = onSkillSheet ? undefined : derived.skillBreakdown(statId)?.stat.value;
+  const differs =
+    skillValue !== undefined && Math.abs(skillValue - stat.value) > 1e-6;
 
   return (
     <div className="breakdown">
       <div className="row mb-3">
-        <span style={{ color: display.colour }}>{display.icon}</span>
-        <strong className="grow ellipsis">{statName(snapshot, statId)}</strong>
+        <StatIcon statId={statId} size={16} />
+        <strong className="grow ellipsis" style={{ color: statLook(snapshot, statId).colour }}>
+          {statName(snapshot, statId)}
+        </strong>
+        {onSkillSheet && (
+          <span
+            className="badge good"
+            title="The spell's own stat unit, not the character sheet. This is the number the damage pipeline used."
+          >
+            on {spellId === undefined ? "this skill" : spellName(snapshot, spellId)}
+          </span>
+        )}
         <span className="badge mono">{statId}</span>
       </div>
+
+      {/*
+        Said once, at the top, because the whole reason this scope exists is that the two numbers
+        differ and nothing on screen used to say so. A player linking a crit gem watches the
+        sidebar not move and concludes the gem did nothing.
+      */}
+      {onSkillSheet && (
+        <div className="notice info">
+          This is <strong>{statName(snapshot, statId)} on this skill</strong>, which is not the
+          same number as the one on your character sheet. The game keeps a separate stat unit per
+          spell, and a support gem writes into that unit only — so the gems below are in this
+          figure and are in none of the sidebar&apos;s.{" "}
+          {onScope !== undefined && (
+            <a className="link" onClick={() => onScope("character")}>
+              Show the character sheet&apos;s {smart(derived.stats.get(statId)?.value ?? 0)}
+              {display.isPerc ? "%" : ""} instead.
+            </a>
+          )}
+        </div>
+      )}
+
+      {/*
+        The other direction, and only when the two actually differ.
+
+        A stat opened off the character sheet is the right answer to most questions about it, so
+        this does not nag — but when the skill resolves the same id to a different number there
+        is a support gem or an innate stat behind the gap, and that is a thing the reader wants
+        to be *told* rather than left to discover by opening the sidebar's crit row.
+      */}
+      {differs && skillValue !== undefined && (
+        <div className="notice info">
+          On {spellId === undefined ? "your main skill" : spellName(snapshot, spellId)} this stat
+          is <strong>{smart(skillValue)}{display.isPerc ? "%" : ""}</strong>, not{" "}
+          {smart(stat.value)}
+          {display.isPerc ? "%" : ""} — the spell has its own stat unit and support gems write
+          only into it.{" "}
+          {onScope !== undefined && (
+            <a className="link" onClick={() => onScope("skill")}>
+              Show where the skill&apos;s number comes from.
+            </a>
+          )}
+        </div>
+      )}
 
       {description !== undefined && (
         <p className="faint text-sm mt-0 mb-4 selectable">

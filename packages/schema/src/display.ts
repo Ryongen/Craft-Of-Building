@@ -32,6 +32,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 
+import { CODE_ONLY_STATS } from "./code-only-stats.generated.js";
 import { CATEGORY, entry } from "./queries.js";
 
 // ---------------------------------------------------------------------------
@@ -448,7 +449,9 @@ export function statBuffName(_snapshot: Snapshot, id: string): string {
  *  - `order` is **100 on all 619 stats that declare it**, so it sorts nothing. Fall back to
  *    the name.
  *  - the 181 derived-serializer stats (`one_to_other`, `more_x_per_y`, `core_stat`, ...) nest
- *    everything under `data` and declare none of these fields, so they all take the defaults.
+ *    everything under `data`, so the fields have to be read one level down. They spell two of
+ *    them differently while they are there — `perc` for `is_perc`, `scale` for `scaling` —
+ *    which is why {@link statDisplay} unwraps rather than merging.
  */
 export type StatDisplay = {
   id: string;
@@ -484,11 +487,36 @@ export function statDisplay(snapshot: Snapshot, id: string): StatDisplay {
     order: typeof data["order"] === "number" ? data["order"] : 100,
     icon: typeof data["icon"] === "string" ? data["icon"] : "★",
     colour: MC_COLOUR_NAMES[format] ?? MC_COLOUR_NAMES.aqua!,
-    isPerc: data["is_perc"] === true,
+    isPerc: isPercentStat(data, id),
     showInGui: data["show_in_gui"] !== false,
     minusIsGood: data["minus_is_good"] === true,
     templated: raw !== undefined && isTemplate(raw),
   };
+}
+
+/**
+ * Whether the game prints this stat's value as a percentage.
+ *
+ * Three routes to the same fact, and the sheet was only taking the first — which is why Attack
+ * Speed, Draw Speed, Shatter Chance, Shock Chance and most of Utility & Find rendered as bare
+ * numbers that could not be told from a flat rating.
+ *
+ *  1. a plain `data` stat says `is_perc` at the top level;
+ *  2. the five nested serializers wrap their payload under `data` and spell it **`perc`** —
+ *     `attack_speed` is `vanilla_attribute_stat_ser` with `data.perc: true`, and reading
+ *     `is_perc` off the wrapper finds nothing. `statIndex` in `@cte2/engine` already unwraps
+ *     exactly this way (`nested ? node["perc"] : node["is_perc"]`), so the sheet was the only
+ *     reader that disagreed with the engine about the same stat;
+ *  3. a code-only stat has no JSON at all, so the only record of its `is_perc` is the Java
+ *     constructor — `AilmentProcStat` sets `is_perc = true`, which is Shatter and Shock.
+ */
+function isPercentStat(data: Record<string, unknown>, id: string): boolean {
+  const ser = typeof data["ser"] === "string" ? data["ser"] : "data";
+  const nested =
+    ser === "data" ? undefined : (data["data"] as Record<string, unknown> | undefined);
+  if (nested !== null && typeof nested === "object") return nested["perc"] === true;
+  if (data["is_perc"] === true) return true;
+  return CODE_ONLY_STATS[id]?.isPerc === true;
 }
 
 // ---------------------------------------------------------------------------

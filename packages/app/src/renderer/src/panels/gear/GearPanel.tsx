@@ -28,6 +28,7 @@ import type { Snapshot } from "@cte2/extractor";
 import { balance, collectGear, makeEnv, statIndex } from "@cte2/engine";
 import {
   SLOT_CAPACITY,
+  allUniques,
   baseGearType,
   countOmenPieces,
   omen as omenView,
@@ -39,6 +40,9 @@ import {
   slotFamily,
   slotName,
   statName,
+  unique as uniqueView,
+  uniqueName,
+  uniqueRarityId,
   type Diagnostic,
   type Item,
 } from "@cte2/schema";
@@ -48,8 +52,11 @@ import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { signed, smart } from "../../ui/format.js";
+import { RarityBadge } from "../../ui/RarityBadge.js";
 import { AddPicker } from "../../ui/AddPicker.js";
-import type { PickerOption } from "../../ui/Picker.js";
+import { AugmentList } from "../../ui/Augments.js";
+import { Picker, type PickerOption } from "../../ui/Picker.js";
+import { modDetail, modKeywords } from "../../ui/mods.js";
 
 import { ImportDialog } from "./ImportDialog.js";
 import { ItemEditor } from "./ItemEditor.js";
@@ -78,22 +85,89 @@ const PAPERDOLL: SlotRow[] = [
   { kind: "family", id: "offhand", family: "OffHand", capacity: 1 },
   { kind: "slot", id: "necklace", capacity: SLOT_CAPACITY.necklace ?? 1 },
   { kind: "slot", id: "ring", capacity: SLOT_CAPACITY.ring ?? 2 },
+  // A pack-added slot, not one of `CURIO_BLOCKS` — see `SLOT_CAPACITY`, where its count of 1
+  // is recorded as the pack author's statement rather than as something the Java says.
+  { kind: "slot", id: "elytra", capacity: SLOT_CAPACITY.elytra ?? 1 },
 ];
+
+/**
+ * Which item the middle column is editing, and where it lives.
+ *
+ * Two lists hold items and the editor has to be able to point at either: `gear` is what the
+ * character is wearing and `itemPool` is the bench. An index alone would be ambiguous — pool
+ * item 0 and worn item 0 are different items — and carrying the item itself would go stale the
+ * moment an edit produced a new document.
+ */
+type ItemRef = { where: "gear" | "pool"; index: number };
+
+function sameRef(a: ItemRef | null, b: ItemRef): boolean {
+  return a !== null && a.where === b.where && a.index === b.index;
+}
+
+/**
+ * One row of the pool: an item, where it lives, and the slot it is worn in.
+ *
+ * `slot` is `undefined` for a benched item and the paperdoll's own label for a worn one — the
+ * label rather than the slot id, so the badge reads "Ring 2" and matches the row on the left
+ * that the same item appears in.
+ */
+type PoolEntry = { item: Item; ref: ItemRef; slot: string | undefined };
+
+/**
+ * What the base/unique search is narrowed to.
+ *
+ * Resolved through the paperdoll rows rather than a list of slot ids typed here, so the filter
+ * and the loadout can never disagree about what counts as a weapon.
+ */
+const FINDER_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "armor", label: "Armor" },
+  { id: "weapon", label: "Weapons" },
+  // "Jewelry", because that is what `mmorpg_gear_slot.fam` calls it and what the game shows.
+  // "Curios" is the Forge mod the rings and necklace are *implemented* through, which is a fact
+  // about the code and not a word any player uses.
+  { id: "curio", label: "Jewelry" },
+] as const;
+
+type FilterId = (typeof FINDER_FILTERS)[number]["id"];
+
+/** The four armour rows, for the finder's filter. */
+const ARMOUR_SLOTS = new Set(["helmet", "chest", "pants", "boots"]);
+
+/**
+ * How many pool rows are shown before the list starts scrolling inside itself.
+ *
+ * Nine, because that is `CharacterEquipment.SIZE` plus the mainhand — a full loadout. Below it
+ * the list is the character; above it the list is a collection, and a collection belongs in a
+ * box with a scrollbar rather than in a column that grows without limit.
+ */
+const POOL_ROWS = 9;
+
+/** `POOL_ROWS` rows at the height `.items-col .slot-row` renders one at, plus its margin. */
+const POOL_MAX = POOL_ROWS * 26;
+
+/** The two hands. */
+const HAND_SLOTS = new Set(["weapon", "offhand"]);
 
 export function GearPanel(): ReactNode {
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
-  const addItem = useBuild((s) => s.addItem);
   const updateItem = useBuild((s) => s.updateItem);
   const removeItem = useBuild((s) => s.removeItem);
+  const unequipItem = useBuild((s) => s.unequipItem);
+  const addPoolItem = useBuild((s) => s.addPoolItem);
+  const updatePoolItem = useBuild((s) => s.updatePoolItem);
+  const removePoolItem = useBuild((s) => s.removePoolItem);
+  const equipPoolItem = useBuild((s) => s.equipPoolItem);
+  const setOmen = useBuild((s) => s.setOmen);
   const derived = useDerived();
 
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [editing, setEditing] = useState<ItemRef | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [omenOpen, setOmenOpen] = useState(false);
-  const setOmen = useBuild((s) => s.setOmen);
 
   const items = doc.gear ?? [];
+  const pool = doc.itemPool ?? [];
 
   /** Which document indices sit in each paperdoll row, and which sit in none. */
   const placement = useMemo(() => {
@@ -101,11 +175,7 @@ export function GearPanel(): ReactNode {
     const unplaced: number[] = [];
 
     for (const [index, item] of items.entries()) {
-      const slotId = baseGearType(world.snapshot, item.base)?.gearSlot;
-      const family = slotId === undefined ? undefined : slotFamily(world.snapshot, slotId);
-      const row = PAPERDOLL.find((r) =>
-        r.kind === "slot" ? r.id === slotId : r.family === family,
-      );
+      const row = rowFor(world.snapshot, item);
       if (row === undefined) {
         unplaced.push(index);
         continue;
@@ -122,158 +192,688 @@ export function GearPanel(): ReactNode {
    * `EquipmentSlot.OFFHAND` while one is held, so Mine and Slash reads an empty offhand and
    * sums nothing from it. Greying the row out is the honest rendering of that.
    */
-  const twoHandedIndex = (placement.byRow.get("weapon") ?? []).find((index) => {
+  const twoHanded = (placement.byRow.get("weapon") ?? []).some((index) => {
     const item = items[index];
     return item !== undefined && isTwoHanded(world.snapshot, item.base);
   });
 
-  /** Every base this row could hold, for its own picker. */
-  const basesFor = (row: SlotRow): PickerOption[] => {
-    const bases =
-      row.kind === "slot"
-        ? world.basesFor(row.id)
-        : world.slots.filter((s) => s.family === row.family).flatMap((s) => world.basesFor(s.id));
-    return bases.map((base) => ({
-      id: base.id,
-      label: gearTypeName(world.snapshot, base.id),
-      keywords: base.id,
-    }));
+  /**
+   * Put a benched item on, taking off whatever the slot has no room for.
+   *
+   * The displaced pieces go back to the bench rather than being deleted, which is the rule that
+   * makes trying things on safe: swapping one of two rings must leave you holding the other.
+   * Oldest first, so the ring worn longest is the one that comes off.
+   */
+  const equip = (poolIndex: number): void => {
+    const item = pool[poolIndex];
+    if (item === undefined) return;
+    const row = rowFor(world.snapshot, item);
+    const occupying = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
+    const capacity = row?.capacity ?? 1;
+    // One place has to be free for the arrival, so everything past `capacity - 1` comes off.
+    const displace = occupying.slice(0, Math.max(0, occupying.length - (capacity - 1)));
+    equipPoolItem(poolIndex, displace);
+    // It arrives at the end of `gear`, which has lost `displace.length` entries on the way.
+    setEditing({ where: "gear", index: items.length - displace.length });
   };
 
-  // `bases[0]` used to be the answer — whichever base the registry happened to order first,
-  // added at `rare` with no affixes, leaving you to find the one you meant in the editor that
-  // opened on top of it.
-  const addFor = (baseId: string): void => {
-    addItem({ base: baseId, rarity: "rare", itemLevel: doc.character.level });
-    setOpenIndex(items.length);
+  /** A new item always lands on the bench, never straight onto the character. */
+  const create = (item: Item): void => {
+    addPoolItem(item);
+    setEditing({ where: "pool", index: pool.length });
   };
+
+  const target =
+    editing === null
+      ? undefined
+      : editing.where === "gear"
+        ? items[editing.index]
+        : pool[editing.index];
+
+  /**
+   * The whole collection, worn first.
+   *
+   * Worn first because that is the order they are read in — the character, then what is spare —
+   * and because a list whose top half shuffled every time you took something off would be the
+   * wrong shape for comparing two candidates side by side.
+   */
+  const poolEntries = useMemo<PoolEntry[]>(() => {
+    const label = (item: Item): string | undefined => {
+      const row = rowFor(world.snapshot, item);
+      if (row === undefined) return "worn";
+      const name = row.kind === "slot" ? slotName(world.snapshot, row.id) : row.family;
+      if (row.capacity <= 1) return name;
+      // Which of the two rings this is, counted the way the paperdoll numbers them.
+      const nth = (placement.byRow.get(row.id) ?? []).indexOf(items.indexOf(item));
+      return nth < 0 ? name : `${name} ${nth + 1}`;
+    };
+    return [
+      ...items.map<PoolEntry>((item, index) => ({
+        item,
+        ref: { where: "gear", index },
+        slot: label(item),
+      })),
+      ...pool.map<PoolEntry>((item, index) => ({
+        item,
+        ref: { where: "pool", index },
+        slot: undefined,
+      })),
+    ];
+  }, [items, pool, world.snapshot, placement]);
 
   return (
-    <div className="panel">
-      <div className="row wrap mb-5">
-        <button className="primary" onClick={() => setImportOpen(true)}>
-          Import item…
-        </button>
-        <span className="faint text-sm">
-          Paste an in-game tooltip (hold Shift over the item first) or the output of
-          <code style={{ margin: "0 4px" }}>/data get entity @s SelectedItem</code>.
-        </span>
-      </div>
-
+    <div className="panel items-panel">
       {importOpen && (
         <ImportDialog
           onClose={() => setImportOpen(false)}
           onImport={(item) => {
-            addItem(item);
-            setOpenIndex(items.length);
+            create(item);
             setImportOpen(false);
           }}
         />
       )}
 
-      {PAPERDOLL.map((row) => {
-        const indices = placement.byRow.get(row.id) ?? [];
-        const label = row.kind === "slot" ? slotName(world.snapshot, row.id) : row.family;
-        const suppressed = row.id === "offhand" && twoHandedIndex !== undefined;
+      {/* -- left: what the character is wearing -------------------------- */}
+      <div className="items-col">
+        <div className="section-title mt-0">Equipped</div>
 
-        return (
-          <div key={row.id} className="mb-3">
-            {indices.map((index, nth) => (
+        {PAPERDOLL.map((row) => {
+          const indices = placement.byRow.get(row.id) ?? [];
+          const label = row.kind === "slot" ? slotName(world.snapshot, row.id) : row.family;
+          const suppressed = row.id === "offhand" && twoHanded;
+          // One row per place the slot has, filled or not, so the paperdoll keeps its shape as
+          // items come on and off. `Ring 1` and `Ring 2` rather than one label over two rows:
+          // they are two different items and each is chosen separately.
+          const rows = Math.max(row.capacity, indices.length);
+
+          return (
+            <div key={row.id}>
+              {Array.from({ length: rows }, (_, nth) => {
+                const index = indices[nth];
+                const rowLabel = row.capacity > 1 ? `${label} ${nth + 1}` : label;
+
+                if (index === undefined) {
+                  return (
+                    <EmptySlot
+                      key={`empty-${nth}`}
+                      label={rowLabel}
+                      suppressed={suppressed}
+                      candidates={pool
+                        .map((item, i) => ({ item, i }))
+                        .filter(({ item }) => rowFor(world.snapshot, item)?.id === row.id)}
+                      onEquip={equip}
+                    />
+                  );
+                }
+
+                return (
+                  <ItemRow
+                    key={index}
+                    item={items[index]!}
+                    slotLabel={rowLabel}
+                    overCapacity={nth >= row.capacity}
+                    suppressed={suppressed}
+                    selected={sameRef(editing, { where: "gear", index })}
+                    diagnostics={derived.diagnostics.filter((d) =>
+                      d.path.startsWith(`gear[${index}]`),
+                    )}
+                    onSelect={() => setEditing({ where: "gear", index })}
+                    onOff={() => {
+                      unequipItem(index);
+                      setEditing(null);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
+
+        <OmenRow
+          open={omenOpen}
+          onToggle={() => setOmenOpen(!omenOpen)}
+          onChange={setOmen}
+          diagnostics={derived.diagnostics.filter((d) => d.path.startsWith("omen"))}
+        />
+
+        {placement.unplaced.length > 0 && (
+          <>
+            <div className="section-title">Not in any slot</div>
+            <div className="notice">
+              These items name a gear slot with no row above it: <code>head</code> is a
+              pack-added slot matching no block in{" "}
+              <code>CharacterEquipment.CURIO_BLOCKS</code>, so how many of it a character may
+              wear is genuinely unanswered. Nothing is enforced and the engine still sums them.
+            </div>
+            {placement.unplaced.map((index) => (
               <ItemRow
                 key={index}
                 item={items[index]!}
-                index={index}
-                slotLabel={nth === 0 ? label : ""}
-                overCapacity={nth >= row.capacity}
-                suppressed={suppressed}
-                open={openIndex === index}
+                slotLabel=""
+                overCapacity={false}
+                suppressed={false}
+                selected={sameRef(editing, { where: "gear", index })}
                 diagnostics={derived.diagnostics.filter((d) => d.path.startsWith(`gear[${index}]`))}
-                onToggle={() => setOpenIndex(openIndex === index ? null : index)}
-                onChange={(next) => updateItem(index, next)}
-                onRemove={() => {
-                  removeItem(index);
-                  setOpenIndex(null);
-                }}
-                onDuplicate={() => {
-                  // Deep-cloned: the affix arrays are shared otherwise, and editing the copy
-                  // would edit the original.
-                  addItem(structuredClone(items[index]!));
-                  setOpenIndex(items.length);
+                onSelect={() => setEditing({ where: "gear", index })}
+                onOff={() => {
+                  unequipItem(index);
+                  setEditing(null);
                 }}
               />
             ))}
+          </>
+        )}
 
-            {indices.length < row.capacity && (
-              <div className={`slot-row empty${suppressed ? " suppressed" : ""}`}>
-                <span className="slot-name">{indices.length === 0 ? label : ""}</span>
-                {suppressed ? (
-                  <span className="faint text-sm">
-                    emptied by the two-handed weapon — an item here would grant nothing
-                  </span>
-                ) : (
-                  <>
-                    <AddPicker
-                      label="+ add"
-                      placeholder={`Which ${row.kind === "slot" ? row.id : row.family}?`}
-                      options={basesFor(row)}
-                      width={200}
-                      onAdd={addFor}
-                    />
-                    <span className="faint text-sm">
-                      {row.capacity > 1 ? `${indices.length} of ${row.capacity}` : "empty"}
-                    </span>
-                  </>
-                )}
-              </div>
+        <AugmentList compact />
+        <JewelList />
+      </div>
+
+      {/* -- middle: find, keep, craft ------------------------------------ */}
+      <div className="items-col">
+        <ItemFinder onCreate={create} onImport={() => setImportOpen(true)} />
+
+        <ItemPool
+          entries={poolEntries}
+          editing={editing}
+          onSelect={setEditing}
+          onEquip={equip}
+          onUnequip={(index) => {
+            unequipItem(index);
+            setEditing(null);
+          }}
+          onRemove={(ref) => {
+            if (ref.where === "gear") removeItem(ref.index);
+            else removePoolItem(ref.index);
+            setEditing(null);
+          }}
+        />
+
+        {editing === null || target === undefined ? (
+          <div className="empty">
+            Pick a slot on the left, or an item from the pool above, to edit it here. Searching
+            for a base or a unique adds a new one to the pool.
+          </div>
+        ) : (
+          <EditorCard
+            item={target}
+            where={editing.where}
+            suppressed={editing.where === "gear" && twoHanded && isOffhand(world.snapshot, target)}
+            diagnostics={derived.diagnostics.filter((d) =>
+              d.path.startsWith(
+                editing.where === "gear" ? `gear[${editing.index}]` : `itemPool[${editing.index}]`,
+              ),
             )}
-          </div>
-        );
-      })}
+            onChange={(next) =>
+              editing.where === "gear"
+                ? updateItem(editing.index, next)
+                : updatePoolItem(editing.index, next)
+            }
+            onRemove={() => {
+              if (editing.where === "gear") removeItem(editing.index);
+              else removePoolItem(editing.index);
+              setEditing(null);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-      <OmenRow
-        open={omenOpen}
-        onToggle={() => setOmenOpen(!omenOpen)}
-        onChange={setOmen}
-        diagnostics={derived.diagnostics.filter((d) => d.path.startsWith("omen"))}
-      />
+/** Which paperdoll row an item belongs in, by its base's slot and that slot's family. */
+function rowFor(snapshot: Snapshot, item: Item): SlotRow | undefined {
+  const slotId = baseGearType(snapshot, item.base)?.gearSlot;
+  const family = slotId === undefined ? undefined : slotFamily(snapshot, slotId);
+  return PAPERDOLL.find((r) => (r.kind === "slot" ? r.id === slotId : r.family === family));
+}
 
-      {placement.unplaced.length > 0 && (
-        <>
-          <div className="section-title">Not in any slot</div>
-          <div className="notice">
-            These items name a gear slot the mod does not give a character a place for —{" "}
-            <code>elytra</code> and <code>head</code> are pack-added slots matching no block in{" "}
-            <code>CharacterEquipment.CURIO_BLOCKS</code>. How many you may wear is genuinely
-            unanswered, so nothing is enforced and the engine still sums them.
-          </div>
-          {placement.unplaced.map((index) => (
-            <ItemRow
-              key={index}
-              item={items[index]!}
-              index={index}
-              slotLabel=""
-              overCapacity={false}
-              suppressed={false}
-              open={openIndex === index}
-              diagnostics={derived.diagnostics.filter((d) => d.path.startsWith(`gear[${index}]`))}
-              onToggle={() => setOpenIndex(openIndex === index ? null : index)}
-              onChange={(next) => updateItem(index, next)}
-              onRemove={() => {
-                removeItem(index);
-                setOpenIndex(null);
-              }}
-              onDuplicate={() => {
-                // Deep-cloned: the affix arrays are shared otherwise, and editing the copy
-                // would edit the original.
-                addItem(structuredClone(items[index]!));
-                setOpenIndex(items.length);
-              }}
-            />
+function isOffhand(snapshot: Snapshot, item: Item): boolean {
+  return rowFor(snapshot, item)?.id === "offhand";
+}
+
+/** A unique is known by its own name; everything else by its base. */
+function itemLabel(snapshot: Snapshot, item: Item): string {
+  return item.unique === undefined
+    ? gearTypeName(snapshot, item.base)
+    : uniqueName(snapshot, item.unique);
+}
+
+/** A place on the paperdoll with nothing in it, and what the pool could put there. */
+function EmptySlot({
+  label,
+  suppressed,
+  candidates,
+  onEquip,
+}: {
+  label: string;
+  suppressed: boolean;
+  /** Benched items whose base belongs in this row, with their pool indices. */
+  candidates: { item: Item; i: number }[];
+  onEquip: (poolIndex: number) => void;
+}): ReactNode {
+  const world = useWorld();
+
+  return (
+    <div className={`slot-row empty${suppressed ? " suppressed" : ""}`}>
+      <span className="slot-name">{label}</span>
+      {suppressed ? (
+        <span className="faint text-sm">emptied by the two-handed weapon</span>
+      ) : candidates.length === 0 ? (
+        <span className="faint text-sm">empty — nothing in the pool fits here</span>
+      ) : (
+        <AddPicker
+          label="equip…"
+          placeholder={`Which ${label.toLowerCase()}?`}
+          width={190}
+          options={candidates.map(({ item, i }) => ({
+            id: String(i),
+            label: itemLabel(world.snapshot, item),
+            hint: item.rarity,
+          }))}
+          onAdd={(id) => onEquip(Number(id))}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Search the registry for something to build from.
+ *
+ * Bases and uniques in one list, because "what shall I put here" is one question: nobody
+ * looking for a chest piece first decides whether they want a rare or a unique. Picking either
+ * adds an item to the pool and opens it in the editor below.
+ */
+function ItemFinder({
+  onCreate,
+  onImport,
+}: {
+  onCreate: (item: Item) => void;
+  onImport: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const { snapshot } = world;
+  const level = useBuild((s) => s.doc.character.level);
+  const [filter, setFilter] = useState<FilterId>("all");
+
+  const uniques = useMemo(() => allUniques(snapshot), [snapshot]);
+
+  const options = useMemo<PickerOption[]>(() => {
+    const inFilter = (baseId: string | undefined): boolean => {
+      if (filter === "all") return true;
+      if (baseId === undefined) return false;
+      const row = rowFor(snapshot, { base: baseId, rarity: "common", itemLevel: 1 });
+      if (row === undefined) return false;
+      if (filter === "armor") return ARMOUR_SLOTS.has(row.id);
+      if (filter === "weapon") return HAND_SLOTS.has(row.id);
+      return !ARMOUR_SLOTS.has(row.id) && !HAND_SLOTS.has(row.id);
+    };
+
+    const bases = world.slots
+      .flatMap((slot) => world.basesFor(slot.id))
+      .filter((base) => inFilter(base.id))
+      .map<PickerOption>((base) => ({
+        id: `base:${base.id}`,
+        label: gearTypeName(snapshot, base.id),
+        hint: "base",
+        keywords: `${base.id} ${base.tags.join(" ")}`,
+      }));
+
+    const uniqueRows = uniques
+      .filter((u) => inFilter(u.baseGear))
+      .map<PickerOption>((u) => {
+        const detail = modDetail(snapshot, u.uniqueStats);
+        return {
+          id: `unique:${u.id}`,
+          label: uniqueName(snapshot, u.id),
+          hint: "unique",
+          keywords: `${u.id} ${u.baseGear ?? ""} ${modKeywords(snapshot, u.uniqueStats)}`,
+          ...(detail === undefined ? {} : { detail }),
+        };
+      });
+
+    // Uniques first: those are the ones searched for by name, where a base list is a list of
+    // nouns you already know you want.
+    return [...uniqueRows, ...bases];
+  }, [world, snapshot, uniques, filter]);
+
+  const pick = (id: string): void => {
+    if (id.startsWith("base:")) {
+      onCreate({ base: id.slice(5), rarity: "rare", itemLevel: level });
+      return;
+    }
+    const view = uniqueView(snapshot, id.slice(7));
+    if (view?.baseGear === undefined) return;
+    onCreate({
+      base: view.baseGear,
+      rarity: uniqueRarityId(snapshot, view) ?? "unique",
+      // `min_drop_lvl` is a floor rather than the level: start at the character's where that is
+      // already legal, and at the floor where it is not.
+      itemLevel: Math.max(level, view.minDropLvl),
+      unique: view.id,
+    });
+  };
+
+  return (
+    <div className="card">
+      <div className="section-title mt-0">Find an item</div>
+      <div className="row wrap mb-3">
+        <Picker
+          options={options}
+          value={undefined}
+          placeholder="Search a base or a unique…"
+          width={300}
+          onChange={(id) => id !== undefined && pick(id)}
+        />
+        <div className="row" style={{ gap: 2 }}>
+          {FINDER_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              className={filter === f.id ? "nudge word primary" : "nudge word"}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label}
+            </button>
           ))}
-        </>
+        </div>
+        <div className="grow" />
+        <button onClick={onImport}>Import item…</button>
+      </div>
+      <span className="faint text-sm">
+        Whatever you pick lands in the pool below, unequipped, and opens in the editor. Import
+        reads an in-game tooltip (hold Shift over the item first) or the output of{" "}
+        <code>/data get entity @s SelectedItem</code>.
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Everything the build owns, worn or not.
+ *
+ * **The pool is the whole collection, not the spares.** Worn items are listed here too, with
+ * the slot they are in, because "what do I have" and "what am I wearing" are one question asked
+ * two ways — and a pool that hid the worn half made loading a build look like it had lost nine
+ * items. Equipping never removes anything from this list; it only changes which row carries a
+ * slot badge.
+ *
+ * The left column stays the authority on *where* a thing is. This is the authority on *what
+ * there is*, and it is the list that exports.
+ */
+function ItemPool({
+  entries,
+  editing,
+  onSelect,
+  onEquip,
+  onUnequip,
+  onRemove,
+}: {
+  entries: readonly PoolEntry[];
+  editing: ItemRef | null;
+  onSelect: (ref: ItemRef) => void;
+  onEquip: (poolIndex: number) => void;
+  onUnequip: (gearIndex: number) => void;
+  onRemove: (ref: ItemRef) => void;
+}): ReactNode {
+  const world = useWorld();
+  const worn = entries.filter((e) => e.slot !== undefined).length;
+
+  return (
+    <>
+      <div className="section-title">
+        Item pool{" "}
+        <span className="faint">
+          ({entries.length}
+          {entries.length > 0 ? ` · ${worn} equipped` : ""})
+        </span>
+        {entries.length > POOL_ROWS && (
+          <span className="faint text-sm" style={{ fontWeight: "normal", marginLeft: 8 }}>
+            — scrolling
+          </span>
+        )}
+      </div>
+      {entries.length === 0 ? (
+        <div className="faint text-sm mb-4">
+          Nothing yet. Items you search for or import land here, and taking a piece off leaves it
+          here too — so comparing two swords never means losing one of them.
+        </div>
+      ) : (
+        /*
+         * Past {@link POOL_ROWS} the list scrolls inside itself rather than growing.
+         *
+         * A worn loadout is nine pieces, so nine rows is the point at which the list stops being
+         * "what am I wearing" and starts being a collection — and the collection is unbounded:
+         * every item ever searched for or taken off stays here, which is the whole point of the
+         * bench. Unbounded, it pushed the item editor below the fold, so choosing between two
+         * swords meant scrolling past every sword you own to reach the one you were editing.
+         */
+        <div className="item-pool" style={{ maxHeight: entries.length > POOL_ROWS ? POOL_MAX : undefined }}>
+        {entries.map((entry) => (
+          <div
+            key={`${entry.ref.where}-${entry.ref.index}`}
+            className={`slot-row${sameRef(editing, entry.ref) ? " selected" : ""}`}
+            style={{ cursor: "pointer" }}
+            onClick={() => onSelect(entry.ref)}
+          >
+            <GearIcon baseId={entry.item.base} />
+            <strong className="ellipsis">{itemLabel(world.snapshot, entry.item)}</strong>
+            <RarityBadge rarity={entry.item.rarity} />
+            <span className="badge">ilvl {entry.item.itemLevel}</span>
+            {isTwoHanded(world.snapshot, entry.item.base) && <span className="badge warn">2H</span>}
+            {entry.slot !== undefined && (
+              <span className="badge good" title="Worn — this one is on the character">
+                {entry.slot}
+              </span>
+            )}
+            <span className="grow" />
+            <CopyItemButton item={entry.item} />
+            {entry.slot === undefined ? (
+              <button
+                title="Wear this. Anything the slot has no room for comes off, back into the pool."
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEquip(entry.ref.index);
+                }}
+              >
+                equip
+              </button>
+            ) : (
+              <button
+                title="Take this off. It stays in the pool."
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onUnequip(entry.ref.index);
+                }}
+              >
+                take off
+              </button>
+            )}
+            <button
+              title="Delete this item from the build entirely"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove(entry.ref);
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * The editor, and what the item under it is worth.
+ *
+ * One editor for the whole tab rather than one per row. The old panel expanded a card inside
+ * the paperdoll, which pushed every slot below it off the screen — so the character you were
+ * editing for was not visible while you edited.
+ */
+function EditorCard({
+  item,
+  where,
+  suppressed,
+  diagnostics,
+  onChange,
+  onRemove,
+}: {
+  item: Item;
+  where: "gear" | "pool";
+  suppressed: boolean;
+  diagnostics: Diagnostic[];
+  onChange: (item: Item) => void;
+  onRemove: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const level = useBuild((s) => s.doc.character.level);
+  const slotId = baseGearType(world.snapshot, item.base)?.gearSlot ?? "";
+  const preview = useItemPreview(world.snapshot, item, 0, level);
+
+  return (
+    <>
+      <div className="section-title">
+        Editing <span className="faint">{itemLabel(world.snapshot, item)}</span>{" "}
+        {where === "pool" && (
+          <span className="badge" title="On the bench — it contributes nothing until you equip it">
+            not equipped
+          </span>
+        )}
+      </div>
+
+      {diagnostics.length > 0 && (
+        <div className="card mb-0">
+          {diagnostics.map((d, i) => (
+            <div key={i} className={`diag ${d.severity}`} style={{ borderBottom: "none" }}>
+              <span className="dot">{d.severity === "error" ? "✖" : "▲"}</span>
+              <span className="grow">{d.message.replace(/`/g, "")}</span>
+              <span className="code">{d.code}</span>
+            </div>
+          ))}
+        </div>
       )}
 
-      <JewelList />
+      <ItemEditor item={item} slotId={slotId} onChange={onChange} onRemove={onRemove} />
+
+      <div className="card" style={{ marginTop: -8 }}>
+        <div className="section-title mt-0">What this item contributes</div>
+        {where === "pool" && (
+          <div className="faint mb-2">
+            Nothing yet — this item is on the bench. Below is what it would add if you equipped
+            it.
+          </div>
+        )}
+        {where === "gear" && suppressed && (
+          <div className="faint mb-2">
+            Nothing — the offhand is empty while a two-handed weapon is held. The engine still
+            sums it, which is why the validator calls this an error rather than a note.
+          </div>
+        )}
+        {preview.lines.length === 0 ? (
+          <div className="faint">Nothing.</div>
+        ) : (
+          preview.lines.map((line, i) => (
+            <div key={i} className="text-md" style={{ color: "var(--good)" }}>
+              {line}
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * One item on the paperdoll.
+ *
+ * A row, not a disclosure: clicking it selects the item for the single editor in the middle
+ * column. The badges are what you need to tell two rings apart at a glance, and the preview
+ * line under it is what the piece is actually doing.
+ */
+function ItemRow({
+  item,
+  slotLabel,
+  overCapacity,
+  suppressed,
+  selected,
+  diagnostics,
+  onSelect,
+  onOff,
+}: {
+  item: Item;
+  slotLabel: string;
+  /** Past what the slot holds — kept visible, because hiding it would hide the error too. */
+  overCapacity: boolean;
+  /** In an offhand a two-handed weapon has emptied. */
+  suppressed: boolean;
+  selected: boolean;
+  diagnostics: Diagnostic[];
+  onSelect: () => void;
+  /** Take it off, onto the bench. Never a delete — that lives in the editor. */
+  onOff: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const level = useBuild((s) => s.doc.character.level);
+  const errors = diagnostics.filter((d) => d.severity === "error").length;
+  const warnings = diagnostics.length - errors;
+  const aboveLevel = item.itemLevel > level;
+
+  return (
+    <div>
+      <div
+        className={`slot-row${suppressed ? " suppressed" : ""}${selected ? " selected" : ""}`}
+        style={{
+          cursor: "pointer",
+          borderColor: errors > 0 ? "#5c3131" : undefined,
+          opacity: suppressed ? 0.6 : 1,
+        }}
+        onClick={onSelect}
+      >
+        <span className="slot-name">{slotLabel}</span>
+        <GearIcon baseId={item.base} />
+        <strong className="ellipsis">{itemLabel(world.snapshot, item)}</strong>
+        <RarityBadge rarity={item.rarity} />
+        {isTwoHanded(world.snapshot, item.base) && <span className="badge warn">2H</span>}
+        {overCapacity && (
+          <span className="badge bad" title="More items in this slot than a character has of it">
+            over capacity
+          </span>
+        )}
+        {suppressed && (
+          <span
+            className="badge bad"
+            title="Better Combat empties the offhand while a two-handed weapon is held"
+          >
+            grants nothing
+          </span>
+        )}
+        {aboveLevel && (
+          <span
+            className="badge bad"
+            title="An item above the character's level contributes nothing at all"
+          >
+            above your level
+          </span>
+        )}
+        {errors > 0 && (
+          <span className="badge bad">
+            {errors} error{errors === 1 ? "" : "s"}
+          </span>
+        )}
+        {warnings > 0 && <span className="badge warn">{warnings}</span>}
+        <span className="grow" />
+        <button
+          title="Take this off, onto the bench. Nothing is lost — it goes back to the item pool."
+          onClick={(event) => {
+            event.stopPropagation();
+            onOff();
+          }}
+        >
+          off
+        </button>
+      </div>
     </div>
   );
 }
@@ -308,147 +908,6 @@ function CopyItemButton({ item }: { item: Item }): ReactNode {
     >
       {copied ? "copied" : "⧉ JSON"}
     </button>
-  );
-}
-
-function ItemRow({
-  item,
-  index,
-  slotLabel,
-  overCapacity,
-  suppressed,
-  open,
-  diagnostics,
-  onToggle,
-  onChange,
-  onRemove,
-  onDuplicate,
-}: {
-  item: Item;
-  index: number;
-  slotLabel: string;
-  /** Past what the slot holds — kept visible, because hiding it would hide the error too. */
-  overCapacity: boolean;
-  /** In an offhand a two-handed weapon has emptied. */
-  suppressed: boolean;
-  open: boolean;
-  diagnostics: Diagnostic[];
-  onToggle: () => void;
-  onChange: (item: Item) => void;
-  onRemove: () => void;
-  /** Add a copy of this item. A pair of rings differs in one affix, not in twenty-five clicks. */
-  onDuplicate: () => void;
-}): ReactNode {
-  const world = useWorld();
-  const doc = useBuild((s) => s.doc);
-  const base = baseGearType(world.snapshot, item.base);
-  const slotId = base?.gearSlot ?? "";
-
-  const errors = diagnostics.filter((d) => d.severity === "error").length;
-  const warnings = diagnostics.length - errors;
-
-  const preview = useItemPreview(world.snapshot, item, index, doc.character.level);
-  const aboveLevel = item.itemLevel > doc.character.level;
-
-  return (
-    <div style={{ marginBottom: open ? 6 : 0 }}>
-      <div
-        className={`slot-row${suppressed ? " suppressed" : ""}`}
-        style={{ cursor: "pointer", borderColor: errors > 0 ? "#5c3131" : undefined, opacity: suppressed ? 0.6 : 1 }}
-        onClick={onToggle}
-      >
-        <span className="slot-name">{slotLabel === "" ? (slotId === "" ? "?" : "") : slotLabel}</span>
-        <GearIcon baseId={item.base} />
-        <strong className="ellipsis">{gearTypeName(world.snapshot, item.base)}</strong>
-        <span className="badge">{item.rarity}</span>
-        <span className="badge">ilvl {item.itemLevel}</span>
-        {item.unique !== undefined && <span className="badge warn">unique</span>}
-        {isTwoHanded(world.snapshot, item.base) && <span className="badge warn">2H</span>}
-        {overCapacity && (
-          <span className="badge bad" title="More items in this slot than a character has of it">
-            over capacity
-          </span>
-        )}
-        {suppressed && (
-          <span className="badge bad" title="Better Combat empties the offhand while a two-handed weapon is held">
-            grants nothing
-          </span>
-        )}
-        {aboveLevel && (
-          <span className="badge bad" title="An item above the character's level contributes nothing at all">
-            above your level
-          </span>
-        )}
-        {errors > 0 && <span className="badge bad">{errors} error{errors === 1 ? "" : "s"}</span>}
-        {warnings > 0 && <span className="badge warn">{warnings}</span>}
-        <span className="grow" />
-        {/*
-          Copy, then duplicate. Both stop the row's own click, which would otherwise collapse the
-          card the copy just opened.
-
-          `Copy item` writes the document's own JSON, which `ImportDialog` reads back — so an item
-          moves between two builds, or into a fixture, without being rebuilt by hand. Duplicate is
-          the same move within one build and does not go via the clipboard, because it does not
-          need to and because a clipboard round trip would be a silent way to lose a field.
-        */}
-        <CopyItemButton item={item} />
-        <button
-          title="Add a copy of this item"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDuplicate();
-          }}
-        >
-          ⧉
-        </button>
-        <span className="faint">{open ? "▾" : "▸"}</span>
-      </div>
-
-      {!open && preview.lines.length > 0 && (
-        <div className="faint ellipsis text-sm" style={{ padding: "0 6px 3px 88px" }}>
-          {preview.lines.slice(0, 3).join(" · ")}
-          {preview.lines.length > 3 ? ` · +${preview.lines.length - 3} more` : ""}
-        </div>
-      )}
-
-      {open && (
-        <>
-          {diagnostics.length > 0 && (
-            <div className="card mb-0" style={{ borderTop: "none" }}>
-              {diagnostics.map((d, i) => (
-                <div key={i} className={`diag ${d.severity}`} style={{ borderBottom: "none" }}>
-                  <span className="dot">{d.severity === "error" ? "✖" : "▲"}</span>
-                  <span className="grow">{d.message.replace(/`/g, "")}</span>
-                  <span className="code">{d.code}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <ItemEditor item={item} slotId={slotId} onChange={onChange} onRemove={onRemove} />
-
-          <div className="card" style={{ marginTop: -8 }}>
-            <div className="section-title mt-0">
-              What this item contributes
-            </div>
-            {suppressed ? (
-              <div className="faint">
-                Nothing — the offhand is empty while a two-handed weapon is held. The engine
-                still sums it, which is why the validator calls this an error rather than a note.
-              </div>
-            ) : preview.lines.length === 0 ? (
-              <div className="faint">Nothing.</div>
-            ) : (
-              preview.lines.map((line, i) => (
-                <div key={i} className="text-md" style={{ color: "var(--good)" }}>
-                  {line}
-                </div>
-              ))
-            )}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 
@@ -517,7 +976,7 @@ function OmenRow({
       <div className="slot-row" style={{ cursor: "pointer" }} onClick={onToggle}>
         <span className="slot-name">{word}</span>
         <strong className="ellipsis">{omenName(world.snapshot, omen.id)}</strong>
-        <span className="badge">{omen.rarity}</span>
+        <RarityBadge rarity={omen.rarity} />
         <span className="badge">lvl {omen.itemLevel}</span>
         <span className={`badge ${active ? "good" : "warn"}`}>
           {filled} piece{filled === 1 ? "" : "s"}

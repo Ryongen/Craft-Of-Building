@@ -59,7 +59,7 @@ import type { Snapshot } from "@cte2/extractor";
 
 import type { EnemySetup, MobOffence } from "./build-doc.js";
 import { SINGLE_ELEMENTS } from "./elements.js";
-import { CATEGORY, entry, ids } from "./queries.js";
+import { CATEGORY, MOB_BASE_STATS_ID, entry, ids } from "./queries.js";
 
 /** `MobStatUtils`: `10 * rarity.StatMultiplier()` is both the armour and every resist. */
 const MOB_BASE_STAT = 10;
@@ -252,6 +252,7 @@ export function buildTargetEnemy(
   }
 
   if (id === "max_resist") {
+    const base = mobBaseStats(snapshot, lvl, balanceId);
     return {
       offence: mobOffence(snapshot, lvl, balanceId),
       level: lvl,
@@ -262,6 +263,10 @@ export function buildTargetEnemy(
       // reading this preset as "a boss with capped resists" understated physical mitigation by
       // a factor of three and made every physical build look better against it than it is.
       armor: armourForMitigation(snapshot, lvl, MAX_RESIST_MITIGATION, balanceId),
+      // The dummy's Max Resist preset overrides armour and the resists and leaves everything
+      // else MnS's, so the base block's dodge comes along exactly as it does for a rarity.
+      dodge: base["dodge"] ?? 0,
+      spellDodge: base["spell_dodge"] ?? 0,
       resists: filledResists(RESIST_HARD_CAP),
       // `max_<element>_resist` is an **addition above the 75% base cap**, not the cap itself:
       // `clamp(75 + getAdditionalMax(unit), min, 90)` in `ElementalResist.getUsableValue`. The
@@ -277,16 +282,80 @@ export function buildTargetEnemy(
   const rarityId = targetPreset(id)?.rarityId ?? RARITY.common;
   const multi = rarityStatMultiplier(snapshot, rarityId) ?? 1;
   const flat = MOB_BASE_STAT * multi;
+  const base = mobBaseStats(snapshot, lvl, balanceId);
 
   return {
     level: lvl,
-    armor: scaledArmour(snapshot, multi, lvl, balanceId),
+    armor: scaledArmour(snapshot, multi, lvl, balanceId) + (base["armor"] ?? 0),
+    dodge: base["dodge"] ?? 0,
+    spellDodge: base["spell_dodge"] ?? 0,
     // `ExactStatData.noScaling` — the same flat number at every level, and no physical entry,
-    // because `getAllSingle()` is iterated with `Physical` skipped.
-    resists: filledResists(flat),
+    // because `getAllSingle()` is iterated with `Physical` skipped. The base block's own
+    // resists land on top, which is the half that used to be missing.
+    resists: filledResists(flat, base),
     offence: mobOffence(snapshot, lvl, balanceId),
   };
 }
+
+/**
+ * `mmorpg_base_stats/mob` — the block `CommonStatUtils.addBaseStats` gives every non-player.
+ *
+ * This is the half of a mob's stat block that is **not** in `MobStatUtils.getMobBaseStats`, and
+ * leaving it out was why every preset here disagreed with the Training Dummy standing in the
+ * player's own world. Craft to Exile 2 overrides the jar's entry with a substantial one:
+ *
+ *     armor            15  scaled      dodge              20  scaled
+ *     spell_dodge      15  scaled      elemental_resist   10  flat
+ *     chaos_resist     10  flat        accuracy            8  scaled
+ *     armor_penetration 6  scaled      critical_damage   -50  flat
+ *     all_elemental_damage 50 flat     all_chaos_damage   50  flat
+ *
+ * Add it to the rarity's `10 x stat_multi` and the four numbers a player reads off an Epic
+ * dummy at level 100 come out exactly: armour `(15 + 19) x 20.8 = 707`, dodge `20 x 20.8 = 416`,
+ * spell dodge `15 x 20.8 = 312`, and every resist `10 + 19 = 29`. Before this the same preset
+ * said 395 armour, no dodge at all and 19 resist.
+ *
+ * `elemental_resist` is spread here rather than carried as itself: `ElementalResist`'s
+ * generated family transfers it to fire, water and lightning and **not** to chaos, which is why
+ * the pack has to name `chaos_resist` separately to give a mob all four.
+ */
+function mobBaseStats(snapshot: Snapshot, level: number, balanceId?: string): Record<string, number> {
+  const curve = normalScaling(snapshot, balanceId);
+  const lvl = curve.capToMaxLvl ? Math.min(Math.max(level, 1), curve.maxLevel) : level;
+  const scale = curve.baseScaling + curve.perLevelScaling * (lvl - 1);
+
+  const out: Record<string, number> = {};
+  const data = entry(snapshot, CATEGORY.baseStats, MOB_BASE_STATS_ID)?.data;
+  const raw = data?.["base_stats"];
+  if (!Array.isArray(raw)) return out;
+
+  for (const mod of raw) {
+    if (mod === null || typeof mod !== "object") continue;
+    const m = mod as Record<string, unknown>;
+    // The block is all `FLAT`; a `PERCENT` entry would be a multiplier on a stat this preset
+    // has not computed yet, so it is left for the engine rather than guessed at here.
+    if (String(m["type"] ?? "FLAT").toUpperCase() !== "FLAT") continue;
+    const statId = typeof m["stat"] === "string" ? m["stat"] : undefined;
+    const v1 = typeof m["v1"] === "number" ? m["v1"] : undefined;
+    if (statId === undefined || v1 === undefined) continue;
+
+    const value = m["scale_to_lvl"] === true ? v1 * scale : v1;
+    if (statId === "elemental_resist") {
+      for (const guid of ELEMENTAL_RESIST_FAMILY) out[guid] = (out[guid] ?? 0) + value;
+      continue;
+    }
+    out[statId] = (out[statId] ?? 0) + value;
+  }
+  return out;
+}
+
+/**
+ * `CODE_ONLY_TRANSFERS["elemental_resist"]` — fire, water and lightning, and not chaos.
+ *
+ * Written out rather than imported so this file stays a statement of the preset arithmetic;
+ * the engine's table is the same three and is what the damage pipeline reads.
+ */
+const ELEMENTAL_RESIST_FAMILY = ["fire_resist", "water_resist", "lightning_resist"] as const;
 
 /**
  * What `MobStatUtils.getMobBaseStats` gives a mob to hit you *with*.
@@ -305,9 +374,14 @@ export function buildTargetEnemy(
 function mobOffence(snapshot: Snapshot, level: number, balanceId?: string): MobOffence {
   const curve = normalScaling(snapshot, balanceId);
   const lvl = curve.capToMaxLvl ? Math.min(Math.max(level, 1), curve.maxLevel) : level;
+  const base = mobBaseStats(snapshot, lvl, balanceId);
   return {
-    accuracy: curve.baseScaling + curve.perLevelScaling * (lvl - 1),
-    armorPenetration: 0,
+    // `getMobBaseStats` scales 1 to the level; `mmorpg_base_stats/mob` scales 8 more onto the
+    // same curve, so a mob's accuracy is nine times what this used to report.
+    accuracy: curve.baseScaling + curve.perLevelScaling * (lvl - 1) + (base["accuracy"] ?? 0),
+    // Not zero any more. The pack's block carries `armor_penetration 6` scaled, which is real
+    // mitigation coming off the player's armour and was previously being thrown away.
+    armorPenetration: base["armor_penetration"] ?? 0,
     penetration: zeroResists(),
     critChance: 0,
   };
@@ -389,12 +463,18 @@ function normalScaling(snapshot: Snapshot, balanceId?: string): Curve {
   };
 }
 
-/** Every single element but Physical, which no mob has a resistance to. */
-function filledResists(value: number): Record<string, number> {
+/**
+ * Every single element but Physical, which no mob has a resistance to.
+ *
+ * `base` is the resolved `mmorpg_base_stats/mob` block, whose resists are keyed by stat id
+ * (`fire_resist`) where an `EnemySetup` is keyed by element guid (`fire`). Omitted by the two
+ * callers that are stating a number outright rather than building a mob.
+ */
+function filledResists(value: number, base?: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const element of SINGLE_ELEMENTS) {
     if (element.name === "Physical") continue;
-    out[element.guid] = value;
+    out[element.guid] = value + (base?.[`${element.guid}_resist`] ?? 0);
   }
   return out;
 }

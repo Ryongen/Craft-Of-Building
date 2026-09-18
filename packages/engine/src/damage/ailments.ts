@@ -24,6 +24,7 @@
 import type { ElementName } from "@cte2/schema";
 
 import { EVENT } from "./event.js";
+import type { EventTrace } from "./breakdown.js";
 import { sheetValue, type DamageCtx, type Sheet } from "./ctx.js";
 
 export type Ailment = {
@@ -62,6 +63,22 @@ export type AilmentResult = {
   /** Accumulated pool for `freeze` and `electrify`, released by a shatter/shock proc. */
   accumulated: number;
   /**
+   * `<ailment>_proc_chance` as a fraction — Shatter for freeze, Shock for electrify.
+   *
+   * The stat is `AilmentProcStat`, whose whole description is "Procs the accumulated damage of
+   * the ailment". Zero for the three DoTs, which have no pool to release.
+   */
+  procChance: number;
+  /**
+   * How much of the pool `onTick` burns off each second while it waits to be released.
+   *
+   * `decayPerSecond` is `clamp(percentLostEveryXSeconds / max(0.01, durationMulti), 0, 1)` —
+   * 10% a second for both strength ailments before `<ailment>_duration` slows it. It is on the
+   * result because it is half of what a proc is worth: the pool is a leaking bucket, and how
+   * much reaches the proc depends on how fast you refill it and how often you tip it.
+   */
+  poolDecayPerSecond: number;
+  /**
    * The base the hit handed the ailment, before its own event ran.
    *
    * `originalNumber + appliedFlatDamage`, scaled by however much of the hit converted away.
@@ -71,6 +88,17 @@ export type AilmentResult = {
   hitBase: number;
   /** What the ailment's own `DamageEvent` turned {@link hitBase} into. */
   eventDamage: number;
+  /**
+   * The layer stack of that second event, when a breakdown was asked for.
+   *
+   * It is a whole `DamageEvent` and the game prints it as its own block in the damage log —
+   * `Damage Over Time / Ailment: Freeze`, with its own base, layers and MOREs. Recording it is
+   * what makes {@link eventDamage} checkable row by row rather than as one number at the end,
+   * and the rows are the interesting part: the ailment's `additive_damage` is a *different*
+   * number from the hit's, because its event is `dot`/`int` rather than `hit`/the weapon's
+   * style, and reading the two side by side is how you see which stats crossed over.
+   */
+  trace?: EventTrace;
 };
 
 /**
@@ -80,7 +108,15 @@ export type AilmentResult = {
  * this file, and a second edge between them would be a cycle. A caller with no pipeline to hand
  * omits it and gets the old arithmetic, which is the floor.
  */
-export type AilmentEventRunner = (ailment: Ailment, base: number) => number;
+export type AilmentEventRunner = (ailment: Ailment, base: number) => AilmentEvent;
+
+/** What {@link AilmentEventRunner} arrives at: the number, and the stack it took to get there. */
+export type AilmentEvent = {
+  /** `event.data.getNumber()` once `Activate()` has run. */
+  damage: number;
+  /** Present only when the caller asked for a breakdown. */
+  trace?: EventTrace;
+};
 
 /**
  * `AilmentChance.Effect` at `FINAL_DAMAGE` (100), Source side, for each of the five.
@@ -190,7 +226,9 @@ function resolve(
 
   // `event.data.getNumber()` after `Activate()`. Without a runner this is the old floor, which
   // is the pre-layer number and therefore never larger.
-  const eventDamage = runEvent === undefined ? hitBase : runEvent(ailment, hitBase);
+  const ran: AilmentEvent = runEvent === undefined ? { damage: hitBase } : runEvent(ailment, hitBase);
+  const eventDamage = ran.damage;
+  const trace = ran.trace === undefined ? {} : { trace: ran.trace };
 
   let dmg = eventDamage * ailment.damageMulti * strength * resistance;
 
@@ -198,6 +236,12 @@ function resolve(
     // `freeze` and `electrify` accumulate into a pool released by a shatter or shock proc
     // rather than ticking. The strength half of that (the chill slow tier) is a movement
     // effect, not damage, so it is not modelled here.
+    //
+    //     dmgMap.put(guid, dmgMap.getOrDefault(guid, 0f) + dmg);   // onAilmentCausingDamage
+    //
+    // — uncapped, and `shatterAccumulated` takes the whole of it in one event and removes the
+    // entry. What decides how much of it ever lands is `decayPerSecond` against the rate you
+    // refill and tip it at, which is a rate question and therefore `dps.ts`'s.
     return {
       ailment: ailment.id,
       element: ailment.element,
@@ -206,8 +250,17 @@ function resolve(
       totalDamage: dmg,
       durationSeconds: 0,
       accumulated: dmg,
+      procChance: clamp01(sheetValue(source, `${ailment.id}_proc_chance`) / 100),
+      // `clamp(percentLostEveryXSeconds / max(0.01F, durMulti), 0, 1)` — EntityAilmentData
+      // .decayPerSecond, where `durMulti` is the same `<ailment>_duration` multiplier a DoT
+      // stretches its ticks with. Slowing the decay is what makes duration worth anything to
+      // an ailment that never ticks.
+      poolDecayPerSecond: clamp01(
+        ailment.percentLostPerInterval / Math.max(0.01, duration),
+      ),
       hitBase,
       eventDamage,
+      ...trace,
     };
   }
 
@@ -230,8 +283,13 @@ function resolve(
     totalDamage: dmg * seconds,
     durationSeconds: seconds,
     accumulated: 0,
+    // A DoT has no pool: `usesStrengthMeter` is freeze alone, and `hasAccumulated` reads
+    // `dmgMap`, which only the two non-DoT ailments ever write.
+    procChance: 0,
+    poolDecayPerSecond: 0,
     hitBase,
     eventDamage,
+    ...trace,
   };
 }
 

@@ -118,3 +118,46 @@ export function compact(value: number): string {
 export function round(value: number): number {
   return Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 100) / 100;
 }
+
+/**
+ * What a stat's `usableValue` is a percentage *of*.
+ *
+ * `IUsableStat` returns a fraction and the app prints it as a percent, but the word differs per
+ * stat and the word is most of the meaning: 43% of armour is damage not taken, 43% of dodge is
+ * hits that miss, and 43% of a resist is just the resist. A stat absent from this map falls back
+ * to the neutral "effective", which is right for the resists.
+ *
+ * Here rather than in the stat sheet because two surfaces print it now — the sheet and the
+ * what-if diff — and a hover that called armour "mitigation" in one and "effective" in the other
+ * would read as two different stats.
+ */
+export const USABLE_NOUN: Record<string, string> = {
+  armor: "mitigation",
+  dodge: "avoided",
+  spell_dodge: "spells avoided",
+  block_chance: "blocked",
+};
+
+/**
+ * A stat that has a usable value, written the way it is actually read: **the percent first**.
+ *
+ * `1575.9 (43.1% mitigation)` puts the number nobody can act on in the reading position. 2679
+ * armour is not a quantity anyone has an intuition for — it is a rating on a hyperbolic curve,
+ * and the only question ever asked of it is what share of a hit it stops. So the share leads and
+ * the rating is the parenthetical that explains where it came from:
+ *
+ *     56.29% (2,679)
+ *
+ * The noun goes on the hover rather than inline. Inline it doubled the width of every armour and
+ * dodge row in a 320px sidebar, and the two stats it distinguishes are already told apart by
+ * their own labels.
+ *
+ * `rawIsPercent` is for the family where the parenthetical is *also* a percentage — the resists
+ * and block chance, whose raw value is already the number the game prints with a `%` after it.
+ * `75.00% (120)` reads as 120 of something; `75.00% (120%)` reads as what it is, which is 120%
+ * resistance capped to the 75 that `ElementalResist.getUsableValue` will actually use. Armour and
+ * dodge are ratings on a curve and take the bare number, because a `%` there would be a lie.
+ */
+export function usable(usableValue: number, raw: number, rawIsPercent = false): string {
+  return `${num(usableValue, 2)}% (${smart(round(raw))}${rawIsPercent ? "%" : ""})`;
+}

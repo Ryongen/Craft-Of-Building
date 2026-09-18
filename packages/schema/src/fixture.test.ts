@@ -18,6 +18,7 @@ import {
   FIELD_TOLERANCE,
   MOD_DUMP,
   compareFixture,
+  parseFixture,
   toleranceFor,
   type ComputedDamage,
   type ComputedStat,
@@ -359,4 +360,104 @@ test("a bonus element is its own block, keyed by element rather than by position
   const rows = result.comparisons.filter((c) => c.status !== "unimplemented");
   assert.equal(rows.length, 4);
   assert.ok(rows.every((c) => c.status === "match"));
+});
+
+test("an ailment's own blocks are compared, and the proc is checked for having no layers", () => {
+  // An ailment is a second `DamageEvent` with its own hover, so it is recorded beside the hit's
+  // element blocks rather than inside them. The proc is a third: `EntityAilmentData` fires the
+  // pool with both sweeps off, so its block is base == final with an empty `Damage Info:`.
+  const observed: ObservedDamage = {
+    spellId: "tidal_strike",
+    ailments: [
+      {
+        ailment: "freeze",
+        applied: {
+          element: "cold",
+          baseDamage: 659,
+          layers: [{ layerId: "additive_damage", side: "Source", multiplier: 1.3 }],
+          moreMultis: [{ statId: "area_dmg", multi: 1.15 }],
+          finalDamage: 1162,
+        },
+        proc: { element: "cold", baseDamage: 988, layers: [], moreMultis: [], finalDamage: 988 },
+      },
+    ],
+  };
+  const engine: DamageCalculator = () => ({
+    baseValue: 0,
+    hit: 0,
+    crit: 0,
+    ailmentPerSecond: {},
+    ailments: [
+      {
+        ailment: "freeze",
+        applied: {
+          element: "cold",
+          baseDamage: 659,
+          layers: [{ layerId: "additive_damage", side: "Source", multiplier: 1.2999 }],
+          moreMultis: [{ statId: "area_dmg", multi: 1.15 }],
+          finalDamage: 1162.54,
+        },
+        // 1162.54 x 0.85, which is what the game printed as 988.
+        proc: { element: "cold", baseDamage: 988.16, layers: [], moreMultis: [], finalDamage: 988.16 },
+      },
+    ],
+  });
+  const result = compareFixture(damageFixture(observed), makeSnapshot({}), null, { damage: engine });
+  const rows = result.comparisons.filter((c) => c.status !== "unimplemented");
+  // applied: base, final, one layer, one MORE. proc: base, final.
+  assert.equal(rows.length, 6);
+  assert.ok(rows.every((c) => c.status === "match"), JSON.stringify(rows));
+
+  // A proc that picked up a layer is a real disagreement, not a transcription gap: it would mean
+  // the engine swept the source again on damage the game sends out untouched.
+  const swept = compareFixture(damageFixture(observed), makeSnapshot({}), null, {
+    damage: () => {
+      const answer = engine({} as BuildDoc, makeSnapshot({}), "tidal_strike");
+      answer!.ailments![0]!.proc!.finalDamage = 1300;
+      return answer;
+    },
+  });
+  assert.ok(
+    swept.comparisons.some((c) => c.statId === "tidal_strike/freeze:proc" && c.status === "mismatch"),
+  );
+});
+
+test("a capture's ailment blocks and its own source survive parsing", () => {
+  // `parseFixture` is an allowlist, so a field the parser does not name is dropped silently and
+  // the rows it would have checked simply never appear — which reads as a passing run.
+  const parsed = parseFixture(
+    {
+      name: "freeze",
+      build: { schemaVersion: 1, character: { level: 100 } },
+      observed: {
+        source: "mod_dump",
+        capturedAt: "2026-09-18",
+        mineAndSlashVersion: "6.4.13",
+        packVersion: "2.0.2",
+        stats: [],
+        damage: [
+          {
+            spellId: "tidal_strike",
+            // The stat sheet is a dump; the damage numbers are still a human reading a hover.
+            source: "damage_log",
+            ailments: [
+              {
+                ailment: "freeze",
+                applied: { element: "cold", baseDamage: 659, finalDamage: 1162 },
+                proc: { element: "cold", baseDamage: 988, layers: [], moreMultis: [], finalDamage: 988 },
+              },
+            ],
+          },
+        ],
+      },
+    },
+    "test",
+  );
+  const reading = parsed.observed.damage![0]!;
+  assert.equal(reading.source, "damage_log");
+  assert.equal(reading.ailments!.length, 1);
+  assert.equal(reading.ailments![0]!.applied!.finalDamage, 1162);
+  // Omitted layer lists default to empty rather than being required — a proc genuinely has none.
+  assert.deepEqual(reading.ailments![0]!.applied!.layers, []);
+  assert.equal(reading.ailments![0]!.proc!.baseDamage, 988);
 });

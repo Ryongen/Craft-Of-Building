@@ -69,6 +69,21 @@ import { useWorld } from "../../state/snapshot.js";
 const COLUMNS = 10;
 const ROWS = 7;
 
+/**
+ * How many levels a shift-click moves a perk by.
+ *
+ * Levelling a ten-rank passive one click at a time is ten round trips through the store and ten
+ * re-renders of a grid that re-prices every cell, which is the kind of thing you only notice when
+ * you are actually planning a class rather than reading one. Shift is the modifier every other
+ * allocation screen in this app already uses for "more of that".
+ *
+ * It is a convenience rather than a rule the game has: `AllocateStatPacket.MAX_ALLOCATE_AT_ONCE`
+ * is about *stat* points, and the perk packet has no batch form at all. So the step is clamped
+ * the same way a single click is — by `max_lvls`, by the row's level requirement, and by the
+ * points left in the pool — and a shift-click that can only afford two spends two.
+ */
+const SHIFT_STEP = 4;
+
 export function SchoolPanel(): ReactNode {
   const { snapshot, icon } = useWorld();
   const doc = useBuild((s) => s.doc);
@@ -404,19 +419,49 @@ function PerkCell({
       : `Spell: ${spellName(snapshot, spellId) ?? spellId} · rank ${perkLevel}/${maxLevels}`,
     statLines(snapshot, perkId, perkLevel),
     why,
-    "Click to add, right-click to remove",
+    `Click to add, right-click to remove · shift for ${SHIFT_STEP} at a time`,
   ]
     .filter((line) => line.length > 0)
     .join("\n");
+
+  /**
+   * How many levels one click actually moves this perk.
+   *
+   * Everything a single click is checked against applies to a shift-click too, so the step is
+   * taken as the smallest of the three ceilings rather than sent and then refused: `max_lvls`,
+   * the points left in the pool, and — because `canLearn` compares against the level each
+   * *individual* rank needs — how many of the next ranks this character is high enough for.
+   * `levelNeededForNextPerkLevel` is asked once per rank for that reason: a level-40 character
+   * buying into a row whose fourth rank wants 44 gets three, not four.
+   */
+  const addStep = (many: number): number => {
+    if (!canAdd) return 0;
+    let step = 0;
+    while (
+      step < many &&
+      perkLevel + step < maxLevels &&
+      step < free[pool] &&
+      level >= levelNeededForNextPerkLevel(view, point, perkLevel + step, spellsPerLevel)
+    ) {
+      step += 1;
+    }
+    return step;
+  };
 
   return (
     <button
       className={`school-cell${perkLevel > 0 ? " taken" : ""}${isSpellPerk(snapshot, perkId) ? " spell" : " passive"}${canAdd ? "" : " blocked"}`}
       title={title}
-      onClick={() => canAdd && onChange(perkId, perkLevel + 1)}
+      onClick={(event) => {
+        const step = addStep(event.shiftKey ? SHIFT_STEP : 1);
+        if (step > 0) onChange(perkId, perkLevel + step);
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
-        if (perkLevel > 0) onChange(perkId, perkLevel - 1);
+        // Down to zero and no further, so a shift-click on a rank-two perk refunds the two it
+        // has rather than being refused for not having four.
+        const step = Math.min(event.shiftKey ? SHIFT_STEP : 1, perkLevel);
+        if (step > 0) onChange(perkId, perkLevel - step);
       }}
     >
       <img className="school-cell-icon" src={icon(data?.icon) ?? undefined} alt="" />

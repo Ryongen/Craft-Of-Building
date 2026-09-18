@@ -483,7 +483,7 @@ ${classRows.join("\n")}
 function parseArgs(argv) {
   let src = null;
   let snapshot = null;
-  let out = "packages/engine/src/code-only-stats.generated.ts";
+  let out = "packages/schema/src/code-only-stats.generated.ts";
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--src") src = argv[++i] ?? null;

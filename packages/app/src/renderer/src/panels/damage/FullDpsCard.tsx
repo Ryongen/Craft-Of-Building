@@ -42,10 +42,14 @@ export function FullDpsCard({
   return (
     <div className="card">
       <div className="row wrap" style={{ gap: 18, alignItems: "flex-start" }}>
+        {/* Ailments are in the headline, not beside it. They were a figure further along this
+            row, which made "Full DPS" a number that left out a rotation's whole cold output for
+            a build whose damage is Shatter — and made this card and the sidebar print two
+            different numbers under one name. The terms are all still here, to its right. */}
         <Figure
           label="Full DPS"
-          value={full.skills.length === 0 ? "—" : smart(full.dps)}
-          hint="One pass through every ticked skill plus everything it procs, divided by how long that pass takes"
+          value={full.skills.length === 0 ? "—" : smart(full.dps + full.ailmentDps)}
+          hint="One pass through every ticked skill, everything it procs and everything it leaves burning, divided by how long that pass takes. Pets and the weapon swing are not in it — the topbar's Total DPS has those."
         />
         {full.skills.length > 0 && (
           <>
@@ -71,11 +75,18 @@ export function FullDpsCard({
               value={smart(full.damagePerRotation)}
               hint="Damage one pass puts on the target, from the casts"
             />
-            {full.ailmentDps > 0 && (
+            {full.ailmentDps - full.ailmentProcDps > 0.005 && (
               <Figure
                 label="Ailment DPS"
-                value={smart(full.ailmentDps)}
-                hint="Summed across the rotation; ailments run on their own clock and are not in the Full DPS figure"
+                value={smart(full.ailmentDps - full.ailmentProcDps)}
+                hint="Bleed, ignite and poison, summed across the rotation — part of the Full DPS above"
+              />
+            )}
+            {full.ailmentProcDps > 0 && (
+              <Figure
+                label="Ailment hit DPS"
+                value={smart(full.ailmentProcDps)}
+                hint="Shatter and Shock releasing what the rotation's freezes and electrifies accumulated — part of the Full DPS above"
               />
             )}
           </>

@@ -2,7 +2,7 @@
  * Small form pieces, extracted only where the same behaviour appears in several panels.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * A number input that keeps what was typed until it is committed.
@@ -22,8 +22,15 @@ export function NumberField({
 }: {
   value: number;
   onChange: (value: number) => void;
-  min?: number;
-  max?: number;
+  /**
+   * Explicitly `| undefined` rather than merely optional: under `exactOptionalPropertyTypes`
+   * those are different types, and a bound that comes from the snapshot is not always there —
+   * `maxQuality` is `undefined` when the pack ships no currency that caps it. "No maximum" and
+   * "maximum not mentioned" mean the same thing to the clamp below, so the type should say so
+   * instead of making every such caller spread a conditional object.
+   */
+  min?: number | undefined;
+  max?: number | undefined;
   step?: number;
   width?: number;
   disabled?: boolean;
@@ -101,9 +108,45 @@ export function bandEnd(band: { min: number; max: number }, end: BandEnd): numbe
   return Math.round((band.min + band.max) / 2);
 }
 
+/**
+ * A roll being dragged, held locally until the thumb is let go.
+ *
+ * The drag is the whole performance problem on this app's sliders. A roll is an edit like any
+ * other: it produces a new `BuildDoc`, which is the key `useDerived` memoises on, so every value
+ * that reaches the store is a full engine pass (7-12 ms) plus a re-render of the sheet, the
+ * damage tab and every panel watching the document. A range input emits a move event per pixel.
+ *
+ * This used to be throttled to eight stores a second, which kept the thumb attached to the
+ * cursor and still spent eight engine passes per second of dragging — on answers nobody reads,
+ * because a value you are still sliding past is not a value you are reading. Now nothing reaches
+ * the store until the drag ends, and the numbers beside the slider follow this draft instead.
+ *
+ * Hold it in the component that renders *both* the slider and whatever shows its value:
+ *
+ *     const roll = useRollDraft(aura.rollPercent ?? band.min);
+ *     <RollSlider value={roll.shown} onPreview={roll.preview} onChange={commit} />
+ *     <StatLines rollPercent={roll.shown} ... />
+ *
+ * The draft clears itself whenever the committed value changes, which covers both ends: the
+ * commit on release (the draft and the new value are the same number, so nothing flickers) and a
+ * change from elsewhere — an undo, a tier switch, loading a build — which must win over a
+ * draft the user has stopped touching.
+ */
+export function useRollDraft(value: number): {
+  /** What to render: the drag in progress, or the committed value when there is none. */
+  shown: number;
+  /** Called per pixel of drag. Cheap: one `setState` in this component. */
+  preview: (next: number) => void;
+} {
+  const [draft, setDraft] = useState<number | undefined>(undefined);
+  useEffect(() => setDraft(undefined), [value]);
+  return { shown: draft ?? value, preview: setDraft };
+}
+
 export function RollSlider({
   value,
   onChange,
+  onPreview,
   min = 0,
   max = 100,
   label,
@@ -111,7 +154,15 @@ export function RollSlider({
   ends = false,
 }: {
   value: number;
+  /** The committed roll. Called when the drag ends, never during it. */
   onChange: (value: number) => void;
+  /**
+   * Called per pixel while dragging, for a caller holding a {@link useRollDraft}.
+   *
+   * Omitted, the thumb still tracks the cursor — the slider keeps its own drag state — but
+   * anything *else* on screen showing this roll stays where it was until the drag ends.
+   */
+  onPreview?: (value: number) => void;
   min?: number;
   max?: number;
   label?: string;
@@ -127,7 +178,57 @@ export function RollSlider({
   ends?: boolean;
 }): ReactNode {
   const clamp = (next: number): number => Math.min(Math.max(Math.round(next), min), max);
-  const current = clamp(value);
+
+  /**
+   * What the thumb is on while it is being dragged, before the store has heard about it.
+   *
+   * `undefined` means "not dragging", which is different from "dragging at the stored value":
+   * the stored value is what the slider must snap back to when an undo or a tier change moves
+   * it from elsewhere, and only an idle slider should follow that.
+   */
+  const [dragging, setDragging] = useState<number | undefined>(undefined);
+  const current = dragging ?? clamp(value);
+
+  // `commit` runs from an unmount cleanup, which fires after the render that scheduled it, so it
+  // must not close over that render's `onChange`. A ref is the usual way to let a callback
+  // outlive the render it was created in.
+  const handler = useRef(onChange);
+  useEffect(() => {
+    handler.current = onChange;
+  });
+
+  /** The value the thumb is on that the store has not been told about. */
+  const pending = useRef<number | undefined>(undefined);
+
+  const commit = useCallback((): void => {
+    const next = pending.current;
+    pending.current = undefined;
+    if (next !== undefined) handler.current(next);
+  }, []);
+
+  // A drag abandoned by an unmount — switching tabs mid-drag, removing the affix — must still
+  // land where the thumb was left, not where it started.
+  useEffect(() => () => commit(), [commit]);
+
+  /**
+   * Paint now; tell the store on release.
+   *
+   * Nothing here reaches the document. `setDragging` moves this component's own thumb and
+   * `onPreview` moves whatever else the caller is showing for this roll — both are one
+   * `setState` in one subtree, where a store write is an engine pass and a re-render of the app.
+   */
+  const drag = (next: number): void => {
+    setDragging(next);
+    pending.current = next;
+    onPreview?.(next);
+  };
+
+  /** The thumb is down no longer: store what it landed on and follow the document again. */
+  const release = (): void => {
+    commit();
+    setDragging(undefined);
+  };
+
   const step = (by: number): void => {
     const next = clamp(current + by);
     if (next !== value) onChange(next);
@@ -142,7 +243,13 @@ export function RollSlider({
         max={max}
         step={1}
         value={current}
-        onChange={(event) => onChange(clamp(Number(event.target.value)))}
+        onChange={(event) => drag(clamp(Number(event.target.value)))}
+        // Three ways a drag ends and no single event covers them: the pointer lifting, an
+        // arrow key coming back up, and focus leaving the control while the value is still
+        // only local. Each one flushes, and flushing twice is a no-op.
+        onPointerUp={release}
+        onKeyUp={release}
+        onBlur={release}
         style={{ width: 132 }}
       />
       <button

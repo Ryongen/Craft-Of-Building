@@ -128,6 +128,20 @@ export type DamageCtx = {
    * and that is a decision of the caller's rather than a property of the build.
    */
   inCombat?: boolean;
+  /**
+   * Resolve the hit as though every avoidance roll failed.
+   *
+   * Dodge and block are rolls, and the pipeline folds them in as *expectation* — `dodgeEffect`
+   * multiplies the block layer by `1 - chance` rather than zeroing the hit, because a figure
+   * averaged over many hits is the only form a DPS or effective-HP number can use. That is the
+   * right answer to "how much damage do I take over a fight" and the wrong one to "what is the
+   * largest single hit I survive": you cannot spend a 40% dodge chance on the hit that kills you.
+   *
+   * With this set, `canAvoidHit` is false and the two rolls do nothing, so the sweep reports
+   * mitigation alone — armour, the resists, flat reduction, `dmg_received`. It is the same door
+   * a self-hit already goes through, and it exists for `Defence.maximumHit`.
+   */
+  noAvoidance?: boolean;
 };
 
 export function sheetValue(sheet: Sheet, statId: string): number {

@@ -1,17 +1,23 @@
 /**
- * The character sheet.
+ * Every stat the build resolved, grouped, filtered and complete.
  *
- * Presentation still comes off `mmorpg_stat` where the pack has an opinion — `icon`, `format`,
- * `is_perc`, `show_in_gui`, `minus_is_good` — but the **order** does not, because the pack has
- * no usable one: 536 of its 832 stats declare `group: Misc`, another 191 declare nothing, and
- * every stat that declares `order` declares 100. That made the sheet one alphabetical dump of
- * 223 rows, where finding block chance meant reading past bleed chance and blood. The section
- * order and the order inside each section are authored in `@cte2/schema`'s `SHEET_GROUPS`.
+ * This used to be the bottom four fifths of the sidebar, under the vitals block. It is on the
+ * Stats tab now, and the move is the point rather than a side effect: the sidebar is read
+ * *while you click* — it answers "what is my effective HP now" between edits — and a 223-row
+ * scrolling list with its own search box and its own sticky header is not something anybody
+ * reads that way. It is a reference, and a reference belongs on the screen you go to.
  *
- * Two other things the data does not do are handled here: 327 stat names are templates rather
+ * What it must not lose by moving is completeness. The curated boxes above it on this tab are a
+ * chosen set per subject and a stat missing from all of them is not lost, because this is here
+ * and this is exhaustive — the same contract the sidebar used to hold. `SHEET_GROUPS` in
+ * `@cte2/schema` authors the section order and the order inside each section, because the pack
+ * cannot: 536 of its 832 stats declare `group: Misc`, another 191 declare nothing at all, and
+ * every stat that declares `order` declares 100.
+ *
+ * Two things the data still does not do are handled here: 327 stat names are templates rather
  * than labels, so the value is spliced into the name instead of printed after it; and the four
- * `IUsableStat` stats have a second number that is the one people actually want — 1575.9 armour
- * is 43.1% mitigation, and the raw value alone does not say so.
+ * `IUsableStat` stats have a second number that is the one people actually want — 1,575.9
+ * armour is 43.1% mitigation, and the raw value alone does not say so.
  */
 
 import {
@@ -31,8 +37,10 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
-import { smart } from "../../ui/fields.js";
+import { USABLE_NOUN, num, smart } from "../../ui/format.js";
 import { SearchInput } from "../../ui/SearchInput.js";
+import { StatIcon } from "../../ui/StatIcon.js";
+import { statLook } from "../../ui/stat-look.js";
 
 export type SheetRow = {
   display: StatDisplay;
@@ -49,22 +57,7 @@ export type SheetRow = {
   desc: string | undefined;
 };
 
-/**
- * What a stat's `usableValue` is a percentage *of*.
- *
- * `IUsableStat` returns a fraction and the sheet prints it as a percent, but the word differs
- * per stat and the word is most of the meaning: 43% of armour is damage not taken, 43% of dodge
- * is hits that miss, and 43% of a resist is just the resist. A stat absent from this map falls
- * back to the neutral "effective", which is right for the resists.
- */
-const USABLE_NOUN: Record<string, string> = {
-  armor: "mitigation",
-  dodge: "avoided",
-  spell_dodge: "spells avoided",
-  block_chance: "blocked",
-};
-
-export function StatSheet({
+export function StatList({
   selected,
   onSelect,
 }: {
@@ -126,8 +119,8 @@ export function StatSheet({
   const shown = groups.reduce((n, [, rows]) => n + rows.length, 0);
 
   return (
-    <div className="sheet">
-      <div className="sheet-controls">
+    <div className="stat-list">
+      <div className="row wrap mb-3">
         <SearchInput
           placeholder={`Filter ${derived.stats.size} stats…`}
           value={query}
@@ -143,25 +136,36 @@ export function StatSheet({
         >
           {showAll ? "All" : "Active"}
         </button>
+        <span className="faint text-sm">
+          {shown} shown
+          {selected === null ? " — click one for where its number came from" : ""}
+        </span>
       </div>
 
       {shown === 0 && <div className="empty">No stat matches.</div>}
 
-      {groups.map(([group, rows]) => (
-        <div key={group} className="sheet-section">
-          <div className="section-title">
-            {sheetGroupName(group)} <span className="faint">({rows.length})</span>
+      {/*
+        Laid out in however many columns the tab is wide enough for, rather than one tall
+        scroller. A section never breaks across a column — `break-inside: avoid` — because the
+        heading is what makes the rows under it mean anything.
+      */}
+      <div className="stat-list-columns">
+        {groups.map(([group, rows]) => (
+          <div key={group} className="sheet-section">
+            <div className="section-title">
+              {sheetGroupName(group)} <span className="faint">({rows.length})</span>
+            </div>
+            {rows.map((row) => (
+              <StatRow
+                key={row.display.id}
+                row={row}
+                selected={row.display.id === selected}
+                onSelect={() => onSelect(row.display.id === selected ? null : row.display.id)}
+              />
+            ))}
           </div>
-          {rows.map((row) => (
-            <StatRow
-              key={row.display.id}
-              row={row}
-              selected={row.display.id === selected}
-              onSelect={() => onSelect(row.display.id === selected ? null : row.display.id)}
-            />
-          ))}
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -175,6 +179,7 @@ function StatRow({
   selected: boolean;
   onSelect: () => void;
 }): ReactNode {
+  const { snapshot } = useWorld();
   const { display, stat, label, desc } = row;
   const capped = stat.hardcap > 0 && stat.value >= stat.hardcap;
   // `minus_is_good` is the pack's own flag for the stats where down is up — cooldowns, costs,
@@ -186,14 +191,16 @@ function StatRow({
 
   return (
     <div className={`stat-row${selected ? " selected" : ""}`} onClick={onSelect}>
-      <span className="icon" style={{ color: display.colour }}>
-        {display.icon}
-      </span>
+      <StatIcon statId={display.id} />
       {/* The description where the pack wrote one, and the id only where it did not — hovering
           a stat to be told its own id back is the one thing a tooltip here cannot usefully do. */}
-      <span className="name" title={desc === undefined ? display.id : `${desc}
+      <span
+        className="name"
+        style={{ color: statLook(snapshot, display.id).colour }}
+        title={desc === undefined ? display.id : `${desc}
 
-${display.id}`}>
+${display.id}`}
+      >
         {label}
       </span>
 
@@ -217,15 +224,25 @@ ${display.id}`}>
 
       {!display.templated && (
         <span className={`value${tone}`}>
-          {smart(stat.value)}
-          {display.isPerc ? "%" : ""}
-          {/* Inline rather than a badge, because this is the half of the row that answers the
-              question. A badge reading "43.1%" beside "1575.9" reads as a second, unrelated
-              number; "(43.1% mitigation)" reads as what the first one buys. */}
-          {stat.usableValue !== undefined && (
-            <span className="usable" title="What this converts to in play (IUsableStat)">
-              {" "}
-              ({smart(stat.usableValue)}% {USABLE_NOUN[display.id] ?? "effective"})
+          {/*
+            The percent leads and the rating follows it in brackets: `56.29% (2,679)`.
+            It used to be the other way round, with the noun spelled out inline, and that put the
+            number nobody can act on in the reading position. 2,679 armour is a rating on a
+            hyperbolic curve — the only question ever asked of it is what share of a hit it stops,
+            and the same +120 is worth four points of mitigation on a bare character and a tenth
+            of one here. The noun moved to the hover to buy the width back.
+          */}
+          {stat.usableValue === undefined ? (
+            <>
+              {smart(stat.value)}
+              {display.isPerc ? "%" : ""}
+            </>
+          ) : (
+            <span
+              title={`${smart(stat.usableValue)}% ${USABLE_NOUN[display.id] ?? "effective"} — what this converts to in play (IUsableStat)`}
+            >
+              {num(stat.usableValue, 2)}%{" "}
+              <span className="usable">({smart(stat.value)})</span>
             </span>
           )}
         </span>

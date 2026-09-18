@@ -28,11 +28,8 @@ export function SourceTable({ dps }: { dps: DpsResult }): ReactNode {
 
   return (
     <>
-      <div className="section-title">
-        Damage sources
-        <span className="faint text-sm" style={{ fontWeight: 400, marginLeft: 8 }}>
-          what one cast produces, and how much of it lands where the target is standing
-        </span>
+      <div className="muted text-sm mb-3 prose">
+        What one cast produces, and how much of it lands where the target is standing.
       </div>
 
       <table className="grid">

@@ -31,6 +31,7 @@ import { HEADLINE, useBaselineComparison, type BaselineComparison } from "../../
 import { useWorld } from "../../state/snapshot.js";
 import { DeltaTable, formatDelta } from "../../ui/DeltaTable.js";
 import { EMPTY, percent, signGlyph } from "../../ui/format.js";
+import { elementLabel } from "../../ui/palette.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 
 export function ComparePanel(): ReactNode {
@@ -185,12 +186,8 @@ function ElementTable({ against }: { against: BaselineComparison }): ReactNode {
   const { before, after } = against;
   const moved = useMemo(
     () =>
-      new Map(
-        against.comparison.headline
-          .filter((d) => d.key.startsWith("ehp:"))
-          .map((d) => [d.key.slice(4), d]),
-      ),
-    [against.comparison.headline],
+      new Map(against.comparison.ehpByElement.map((d) => [d.key.slice(4), d])),
+    [against.comparison.ehpByElement],
   );
 
   const baselineByElement = new Map(before.ehpByElement.map((e) => [e.element, e.effectiveHealth]));
@@ -216,7 +213,7 @@ function ElementTable({ against }: { against: BaselineComparison }): ReactNode {
             return (
               <tr key={entry.element}>
                 <td>
-                  {entry.element}
+                  {elementLabel(entry.element)}
                   {/* The one row that decides the headline figure, said rather than implied —
                       and, when it has changed, which row used to decide it. */}
                   {weakestNow && (

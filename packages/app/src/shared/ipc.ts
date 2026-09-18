@@ -107,6 +107,16 @@ export type DataStatus = {
    * app produced. Re-extracting writes to userData and will take precedence next launch.
    */
   fromRepo: boolean;
+  /**
+   * True when the loaded snapshot is a file the user handed over, rather than one this host
+   * produced or shipped.
+   *
+   * Only the web build can be in this state, and only there does it mean anything: the site
+   * always has a snapshot, so "is one loaded" cannot be the test for whether there is something
+   * to revert *to*. Always false in Electron, where a snapshot is either extracted or the
+   * repository's — which is what `fromRepo` distinguishes.
+   */
+  userSupplied: boolean;
 };
 
 /** What the extractor found, summarised for the first-run screen. */
@@ -147,7 +157,19 @@ export type OpenResult =
     }
   | { ok: false; cancelled: boolean; error?: string };
 
-export type RecentBuild = { path: string; name: string; openedAt: string };
+export type RecentBuild = {
+  /**
+   * Opaque: hand it back to `openBuildAt`.
+   *
+   * A filesystem path in Electron, and the id of a stored `FileSystemFileHandle` on the web —
+   * which is why it is no longer safe to *show*. Use `detail` for that.
+   */
+  path: string;
+  name: string;
+  openedAt: string;
+  /** What to show beneath the name. Falls back to `path`, which is right on the desktop. */
+  detail?: string;
+};
 
 /**
  * A build held still, to measure the one being edited against.
@@ -180,8 +202,38 @@ export type AutosaveSession = {
   baseline: PinnedBaseline | null;
 };
 
-/** The surface `preload` exposes on `window.cte2`. */
+/**
+ * What the host this renderer is running in can actually do.
+ *
+ * The renderer runs unchanged in two places now — Electron, and a static site on GitHub Pages —
+ * and the difference between them is not cosmetic. A browser cannot read a Minecraft install, so
+ * the extractor is simply absent there; Firefox and Safari have no File System Access API, so
+ * "Save" cannot write back to the file you opened and there is no such thing as a recent file
+ * to reopen.
+ *
+ * These are flags rather than a `platform === "web"` check at each call site because the
+ * divisions do not line up: `saveInPlace` and `recentBuilds` are false in Firefox and true in
+ * Chrome, both of which are the web. Ask what the host can do, not what it is.
+ */
+export type Capabilities = {
+  /** Can read a modpack folder and produce a snapshot. Electron only. */
+  extract: boolean;
+  /** `saveBuild` with a path writes back silently; false means every save is a fresh file. */
+  saveInPlace: boolean;
+  /** `recentBuilds`/`openBuildAt` can reopen something without a dialog. */
+  recentBuilds: boolean;
+  /** There is a native menu bar issuing `menuCommand`. */
+  nativeMenu: boolean;
+  /** The user can supply their own snapshot, replacing the one the host shipped. */
+  loadOwnSnapshot: boolean;
+};
+
+/** The surface `preload` (or the web shim) exposes on `window.cte2`. */
 export type Cte2Api = {
+  /** Which host this is. For wording, mostly — branch on `capabilities`, not on this. */
+  readonly platform: "electron" | "web";
+  readonly capabilities: Capabilities;
+
   getSnapshot(): Promise<SnapshotPayload | null>;
   chooseInstall(): Promise<string | null>;
   runExtract(installPath: string): Promise<ExtractResult>;
@@ -202,11 +254,26 @@ export type Cte2Api = {
    */
   onMenuCommand(handler: (command: MenuCommand) => void): () => void;
 
-  /** `"mmorpg:textures/gui/..."` -> a `cte2-asset://` URL, or null when it was not extracted. */
+  /** `"mmorpg:textures/gui/..."` -> a URL the `<img>` can use, or null when it was not extracted. */
   assetUrl(resourcePath: string): string | null;
-  /** `"roe_weapons:bow_3"` -> a `cte2-asset://` URL for its item sprite, or null. */
+  /** `"roe_weapons:bow_3"` -> a URL for its item sprite, or null. */
   itemIconUrl(itemId: string): string | null;
+
+  /**
+   * Hand over a `snapshot.json` the desktop app extracted, replacing the one the host shipped.
+   *
+   * Only present when `capabilities.loadOwnSnapshot` is true, which today means the web build.
+   * The site ships one snapshot, taken from one pack version; anyone running a different version
+   * would otherwise get confident answers computed from the wrong registry. Icons are whatever
+   * the site already has — a snapshot file carries none — so this is a degraded mode, and the
+   * Data panel says so.
+   */
+  loadSnapshotFile?(): Promise<SnapshotFileResult>;
 };
+
+export type SnapshotFileResult =
+  | { ok: true; name: string }
+  | { ok: false; cancelled: boolean; error?: string };
 
 /**
  * The scheme extracted textures are served over.
@@ -227,7 +294,14 @@ export const ASSET_SCHEME = "cte2-asset";
  */
 export const UNKNOWN_ICON = "mmorpg:textures/gui/talent_icons/unknown.png";
 
-/** Built in the preload so the renderer never sees a filesystem path. */
-export function assetUrlFor(relative: string): string {
-  return `${ASSET_SCHEME}://asset/${relative.split("/").map(encodeURIComponent).join("/")}`;
+/**
+ * Turn a path relative to the assets directory into a URL.
+ *
+ * Built in the preload so the renderer never sees a filesystem path — and parameterised by
+ * `base` so the web build can point the same index at `…/data/assets/` over plain HTTP instead.
+ * The per-segment encoding is the part that must not diverge: these names come out of a jar and
+ * some of them contain characters that are fine in a zip entry and not in a URL.
+ */
+export function assetUrlFor(relative: string, base = `${ASSET_SCHEME}://asset/`): string {
+  return `${base}${relative.split("/").map(encodeURIComponent).join("/")}`;
 }

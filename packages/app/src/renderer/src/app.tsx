@@ -10,9 +10,10 @@ import { maxLevel, type BuildDoc, type Observation } from "@cte2/schema";
 import { ATTACK_SPEED_ATTRIBUTE, baseAttackSpeedFrom } from "@cte2/engine";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { StatBreakdown } from "./panels/stats/StatBreakdown.js";
+import { SheetDetail, type SheetFocus } from "./panels/stats/SheetDetail.js";
 import { Splitter } from "./ui/Splitter.js";
-import { StatSheet } from "./panels/stats/StatSheet.js";
+import { VitalsBlock } from "./panels/stats/VitalsBlock.js";
+import { PackIcon } from "./ui/StatIcon.js";
 import { useBuild } from "./state/build-store.js";
 import { useDerived } from "./state/derived.js";
 import { useCaptureCheck } from "./state/capture.js";
@@ -30,7 +31,7 @@ import { RecentBuilds } from "./ui/RecentBuilds.js";
  * sessions never open. They are code-split instead; `Suspense` below covers the one frame a first
  * visit costs.
  */
-const StatPointsPanel = lazy(() => import("./panels/character/StatPointsPanel.js").then((m) => ({ default: m.StatPointsPanel })));
+const CalcsPanel = lazy(() => import("./panels/stats/CalcsPanel.js").then((m) => ({ default: m.CalcsPanel })));
 const ConfigPanel = lazy(() => import("./panels/config/ConfigPanel.js").then((m) => ({ default: m.ConfigPanel })));
 const DamagePanel = lazy(() => import("./panels/damage/DamagePanel.js").then((m) => ({ default: m.DamagePanel })));
 const DefencePanel = lazy(() => import("./panels/defence/DefencePanel.js").then((m) => ({ default: m.DefencePanel })));
@@ -71,26 +72,47 @@ function withWeaponSpeed(doc: BuildDoc, observed: Observation | null | undefined
   return { ...doc, character: { ...doc.character, baseAttackSpeed: base } };
 }
 
+/**
+ * The tab strip, each tab carrying the pack's own icon for the thing it is about.
+ *
+ * Twelve words in a row at 11px is a strip you read rather than aim at; an icon is what makes
+ * the one you want findable without reading. They are the mod's own textures — the talent tree
+ * icon here is the talent tree icon in game — so nothing has to be learned twice. A path that
+ * did not extract simply renders no image and the word stands alone, which is why the labels are
+ * still here and still first.
+ */
 const TABS = [
-  { id: "tree", label: "Tree" },
-  { id: "stats", label: "Stats" },
-  { id: "classes", label: "Classes" },
-  { id: "skills", label: "Skills" },
-  { id: "gear", label: "Items" },
-  { id: "damage", label: "Damage" },
-  { id: "defence", label: "Defence" },
-  { id: "compare", label: "Compare" },
-  { id: "config", label: "Config" },
-  { id: "capture", label: "Capture" },
-  { id: "diagnostics", label: "Diagnostics" },
-  { id: "data", label: "Data" },
+  { id: "tree", label: "Tree", icon: "mmorpg:textures/gui/main_hub/icons/talents.png" },
+  { id: "classes", label: "Classes", icon: "mmorpg:textures/gui/main_hub/icons/spells.png" },
+  { id: "skills", label: "Skills", icon: "mmorpg:textures/gui/main_hub/icons/skill_gems.png" },
+  { id: "gear", label: "Items", icon: "mmorpg:textures/gui/inv_gui/icons/gear.png" },
+  { id: "damage", label: "Damage", icon: "mmorpg:textures/gui/stat_groups/damage.png" },
+  { id: "defence", label: "Defence", icon: "mmorpg:textures/gui/stat_groups/defense.png" },
+  { id: "compare", label: "Compare", icon: "mmorpg:textures/gui/main_hub/icons/map_upgrade.png" },
+  { id: "config", label: "Config", icon: "mmorpg:textures/gui/main_hub/icons/configs.png" },
+  // Between Config and Capture on purpose: it is the reference screen you go and look something
+  // up on, not one of the screens you build on, and the three reference tabs now sit together.
+  { id: "stats", label: "Stats", icon: "mmorpg:textures/gui/main_hub/icons/stats.png" },
+  {
+    id: "capture",
+    label: "Capture",
+    icon: "mmorpg:textures/gui/stat_gui/info_button_icons/current_value.png",
+  },
+  {
+    id: "diagnostics",
+    label: "Diagnostics",
+    icon: "mmorpg:textures/gui/main_hub/exclamation_mark.png",
+  },
+  { id: "data", label: "Data", icon: "mmorpg:textures/gui/main_hub/icons/wiki.png" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 export function App(): ReactNode {
   const [tab, setTab] = useState<TabId>("tree");
-  const [selectedStat, setSelectedStat] = useState<string | null>(null);
+  // What the detail window under the sidebar is about: a stat, the same stat on the main skill's
+  // own unit, or one of the figures the pipeline derived. `null` closes the window.
+  const [focus, setFocus] = useState<SheetFocus | null>(null);
   // Held here rather than in the drill-down so it survives selecting a different stat:
   // somebody who made room to read one breakdown wants the same room for the next.
   const [breakdownHeight, setBreakdownHeight] = useState(320);
@@ -296,7 +318,10 @@ export function App(): ReactNode {
           what="the headline"
           fallback={() => <span className="faint" style={{ marginLeft: 8 }}>figures unavailable</span>}
         >
-          <Headline />
+          {/* Clicking a headline figure opens its breakdown in the sidebar, and opens the
+              sidebar's pane from wherever you were — the figure that made you ask is in the
+              chrome, so the answer should not be on a tab. */}
+          <Headline onFocus={setFocus} />
         </ErrorBoundary>
 
         <div className="spacer" />
@@ -310,13 +335,27 @@ export function App(): ReactNode {
         <button onClick={() => void open()} title="Ctrl+O">
           Open
         </button>
-        <RecentBuilds onOpen={openAt} />
-        <button onClick={() => void save(false)} title="Ctrl+S">
-          Save{dirty ? " •" : ""}
-        </button>
-        <button onClick={() => void save(true)} title="Ctrl+Shift+S">
-          Save as…
-        </button>
+        {/* Nothing to list in a browser with no File System Access API: a file opened through
+            an `<input>` leaves behind no handle, so there is no way to reopen it and a menu
+            offering to would be a menu of dead entries. */}
+        {window.cte2.capabilities.recentBuilds && <RecentBuilds onOpen={openAt} />}
+        {window.cte2.capabilities.saveInPlace ? (
+          <>
+            <button onClick={() => void save(false)} title="Ctrl+S">
+              Save{dirty ? " •" : ""}
+            </button>
+            <button onClick={() => void save(true)} title="Ctrl+Shift+S">
+              Save as…
+            </button>
+          </>
+        ) : (
+          // Where the host cannot write back to the file you opened, "Save" would be a lie —
+          // every save is a fresh copy in the downloads folder. One button, named for what it
+          // actually does.
+          <button onClick={() => void save(true)} title="Ctrl+S — downloads a copy">
+            Download{dirty ? " •" : ""}
+          </button>
+        )}
         {/*
           Fixture authoring in one click. `fixtures/README.md` asks for a `build` block plus
           observations transcribed from the game; this produces the first half exactly, so the
@@ -352,6 +391,7 @@ export function App(): ReactNode {
                 className={tab === entry.id ? "active" : ""}
                 onClick={() => setTab(entry.id)}
               >
+                <PackIcon path={entry.icon} size={14} />
                 {entry.label}
                 {entry.id === "diagnostics" && errors + warnings > 0 && (
                   <span className={`badge ${errors > 0 ? "bad" : "warn"}`} style={{ marginLeft: 6 }}>
@@ -370,7 +410,7 @@ export function App(): ReactNode {
           <ErrorBoundary key={tab} what={`the ${TABS.find((t) => t.id === tab)?.label ?? tab} panel`}>
             <Suspense fallback={<div className="empty">Loading…</div>}>
             {tab === "tree" && <TreePanel />}
-            {tab === "stats" && <StatPointsPanel />}
+            {tab === "stats" && <CalcsPanel />}
             {tab === "classes" && <SchoolPanel />}
             {tab === "skills" && <SkillsPanel />}
             {tab === "gear" && <GearPanel />}
@@ -390,15 +430,17 @@ export function App(): ReactNode {
           {/* The sheet and the breakdown read the same engine result the panels do, so they can
               fail on their own and must not take the panel with them. */}
           <ErrorBoundary what="the stat sheet">
-            <StatSheet selected={selectedStat} onSelect={setSelectedStat} />
-          {selectedStat !== null && (
+            <div className="sheet">
+              <VitalsBlock focus={focus} onFocus={setFocus} />
+            </div>
+          {focus !== null && (
             <>
               <Splitter height={breakdownHeight} onChange={setBreakdownHeight} />
               <div className="breakdown-pane" style={{ height: breakdownHeight }}>
-                {/* `onSelect` is what makes a transfer navigable: `elemental_resist` reads 0 and
+                {/* `onFocus` is what makes a breakdown navigable: `elemental_resist` reads 0 and
                     hands everything to the three resists, so the useful move from either end is
-                    to jump to the other. */}
-                <StatBreakdown statId={selectedStat} onSelect={setSelectedStat} />
+                    to jump to the other — and a figure's terms link the same way. */}
+                <SheetDetail focus={focus} onFocus={setFocus} />
               </div>
             </>
           )}

@@ -14,9 +14,20 @@
   --border: #2a2f3d;
   --border-strong: #3a4152;
 
-  --text: #d7dbe4;
-  --text-dim: #8b93a5;
-  --text-faint: #5e6779;
+  /*
+   * Three text weights, and all three have to be *readable* — dim is not the same as unusable.
+   *
+   * `--text-faint` was #5e6779, which is 2.6:1 against `--bg-panel` and 3.0:1 against
+   * `--bg-raised`. That is below the 4.5:1 body-text floor and well below it, and the class that
+   * carries it is used 248 times in this app — on table captions, on the notes under every card,
+   * on the hint that explains what a number means. The explanation of a figure is not decoration,
+   * so it is now #98a1b4 (5.1:1) and `--text-dim` moved with it to keep the three ranks apart.
+   *
+   * What faint still means: subordinate, read second. What it no longer means: squint.
+   */
+  --text: #d9dde6;
+  --text-dim: #aab2c2;
+  --text-faint: #98a1b4;
 
   --accent: #5b9dd9;
   --accent-dim: #2f5578;
@@ -25,6 +36,24 @@
   --bad: #d96a6a;
 
   --allocated: #d9b44a;
+
+  /*
+   * The pack's own colour vocabulary, for CSS that cannot reach `ui/palette.ts`.
+   *
+   * Minecraft's sixteen with the five unreadable ones lifted — see that module for why, and for
+   * the rarity, element and tier ladders built on top. Anything a component computes should come
+   * from there; these are for stylesheet rules, where a hex would otherwise be typed by hand.
+   */
+  --mc-gold: #ffaa00;
+  --mc-red: #ff5555;
+  --mc-green: #55ff55;
+  --mc-aqua: #55ffff;
+  --mc-blue: #5555ff;
+  --mc-yellow: #ffff55;
+  --mc-light-purple: #ff55ff;
+  --mc-dark-purple: #c264c2;
+  --mc-dark-red: #d05555;
+  --mc-gray: #aaaaaa;
 
   --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
   --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -158,10 +187,29 @@ a {
 
 /* -- layout ------------------------------------------------------------- */
 
+/*
+ * Flex rather than a three-row grid, because the shell does not always have three children.
+ *
+ * `grid-template-rows: auto 1fr auto` assigns `1fr` to whatever is *second*, and the second
+ * child is the version-drift banner whenever a build was authored against another pack version.
+ * That banner then absorbed every spare pixel in the window: on a tab whose content did not fill
+ * the height it grew into a quarter-screen empty box with one line of text at the top of it, and
+ * on a tab whose content overflowed it looked correct — which is why it read as a rendering
+ * glitch rather than a layout rule.
+ *
+ * With flex the rule is stated on the thing it is about: the body takes the slack and everything
+ * else is its own height, however many banners the shell decides to show.
+ */
 .app {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
+}
+
+.app > .topbar,
+.app > .notice,
+.app > .statusbar {
+  flex: 0 0 auto;
 }
 
 .topbar {
@@ -194,6 +242,19 @@ a {
   white-space: nowrap;
 }
 
+/* A figure that opens its own breakdown — the three in the topbar. */
+.field.pick {
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 0 var(--space-3);
+  margin: 0 calc(var(--space-3) * -1);
+}
+
+.field.pick:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
 /*
  * Hiding the stat sheet has to collapse its column, not leave a 380px hole: the grid is what
  * places the sheet, so the toggle lives here rather than on the panel.
@@ -203,6 +264,7 @@ a {
 }
 
 .body {
+  flex: 1;
   display: grid;
   grid-template-columns: 1fr 380px;
   min-height: 0;
@@ -231,18 +293,33 @@ a {
   border-bottom: 1px solid var(--border);
 }
 
+/* Flex rather than inline, because each tab is now the pack's icon for the thing plus its name,
+   and the two have to sit on one baseline at every tab width. */
 .tabs button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
   color: var(--text-dim);
-  padding: 7px var(--space-7);
+  padding: 6px var(--space-5);
+}
+
+/* The unselected tabs are dimmed by opacity as well as by colour, so the icons dim with the
+   words — an icon at full saturation beside a grey label reads as the selected one. */
+.tabs button:not(.active) .stat-icon {
+  opacity: 0.6;
 }
 
 .tabs button:hover {
   background: transparent;
   color: var(--text);
+}
+
+.tabs button:hover .stat-icon {
+  opacity: 1;
 }
 
 .tabs button.active {
@@ -350,6 +427,27 @@ a {
   border-radius: var(--radius-md);
   padding: var(--space-5);
   margin-bottom: var(--space-4);
+}
+
+/*
+ * A card's own heading — "Sustain", "Regeneration", "Procs".
+ *
+ * Eleven cards across the Damage, Defence and Config tabs each wrote this by hand as
+ * `className="faint text-sm" style={{ fontWeight: 600 }}`, which is a heading in the sense that
+ * it is bold and not in any other: same size as the prose under it, same colour, no case change,
+ * and it sits inline in a row of badges. So a card looked like a table that started without
+ * being introduced, which is most of why the Damage tab read as one undivided sheet.
+ *
+ * Deliberately *not* `.section-title`: that one owns a bottom rule and vertical margins, which
+ * is right for a divider between sections of a page and wrong inside a box that already has a
+ * border. Same type treatment, no furniture.
+ */
+.card-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
 }
 
 .muted {
@@ -576,28 +674,19 @@ tr.highlight > td {
 
 /* -- stat sheet ---------------------------------------------------------- */
 
+/*
+ * The sidebar column. One list, top to bottom, with nothing sticky in it.
+ *
+ * A filter box used to be pinned to the top of this with `position: sticky`, and the section
+ * headings under it at `top: 26px` — which meant the row you were reading slid *under* an opaque
+ * bar as you scrolled and came out the other side half drawn. Move Speed, the last row of the
+ * vitals block, sat exactly where that happened. The bar belonged to the exhaustive 223-row
+ * list, which is on the Stats tab now; what is left here is short enough to need no furniture.
+ */
 .sheet {
   overflow: auto;
   min-height: 0;
   padding: var(--space-4) var(--space-5);
-}
-
-.sheet-controls {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  padding-bottom: var(--space-4);
-  position: sticky;
-  top: -8px;
-  background: var(--bg-panel);
-  z-index: 1;
-  padding-top: var(--space-4);
-  margin-top: -8px;
-}
-
-.sheet-controls input[type="search"] {
-  flex: 1;
-  min-width: 0;
 }
 
 .stat-row {
@@ -616,12 +705,6 @@ tr.highlight > td {
 
 .stat-row.selected {
   background: var(--accent-dim);
-}
-
-.stat-row .icon {
-  width: 12px;
-  text-align: center;
-  flex-shrink: 0;
 }
 
 .stat-row .name {
@@ -659,10 +742,33 @@ tr.highlight > td {
 }
 
 .sheet-section .section-title {
-  position: sticky;
-  top: 26px;
-  background: var(--bg-panel);
-  z-index: 1;
+  margin-top: 0;
+}
+
+/*
+ * The complete sheet on the Stats tab, in as many columns as the window is wide enough for.
+ *
+ * CSS columns rather than a grid, because the sections are wildly uneven — forty rows of Misc
+ * beside three of Attributes — and a grid row would be as tall as its tallest cell, leaving the
+ * short sections floating in a column of whitespace. Columns pack them.
+ *
+ * `break-inside: avoid` keeps a heading with its rows, which is the one break that must not
+ * happen: a column of stat names whose section title is at the bottom of the previous column is
+ * a list of numbers about nothing.
+ */
+.stat-list-columns {
+  columns: 300px 3;
+  column-gap: var(--space-8);
+}
+
+.stat-list-columns .sheet-section {
+  break-inside: avoid;
+  margin: 0 0 var(--space-6);
+}
+
+/* The shorthand above sets `column-count`, which the adjacency rule would otherwise fight. */
+.stat-list-columns .sheet-section + .sheet-section {
+  margin-top: 0;
 }
 
 /* -- breakdown ----------------------------------------------------------- */
@@ -681,6 +787,18 @@ tr.highlight > td {
   min-height: 0;
   overflow: auto;
   padding: var(--space-5);
+}
+
+/*
+ * The drill-down is 380px wide in the sidebar and the full panel wide when a tab docks it.
+ *
+ * A `.step-row` pushes its value to the right edge, which is right at 380px and absurd at 1,400:
+ * the label and the number it belongs to end up a hand's width apart with nothing between them.
+ * Capping the content rather than the pane keeps the pane's own background full width, which is
+ * what makes it read as a docked panel rather than a floating card.
+ */
+.breakdown > * {
+  max-width: 920px;
 }
 
 .splitter {
@@ -809,6 +927,285 @@ table.contribs td.n {
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
+/*
+ * `table.grid` — the Damage and Defence tabs' data tables.
+ *
+ * Thirteen tables in those two panels carried this class and **nothing in this file styled it**,
+ * so every one of them rendered with the browser's default 1px cell padding and no rules at all:
+ * seven columns of numbers in a monospaced face with a pixel between them, which is why the
+ * Sustain card read as a wall with no edges. The columns were not close together by choice; they
+ * had never been laid out.
+ *
+ * Rules rather than more whitespace, because these are dense tables that have to stay dense —
+ * a hairline between rows separates them at a tenth of the vertical cost of a gap, and a
+ * vertical rule is what tells you which number belongs to `Regen` and which to `Leech`.
+ */
+table.grid {
+  /*
+   * Sized to its contents, not to the panel.
+   *
+   * At `width: 100%` a five-column table on a 1,400px screen put "Pool" against the left edge
+   * and "Full in" against the right with 700px of nothing between them, which is the same
+   * failure as the columns touching: the eye cannot carry a row across it. A table is as wide
+   * as the numbers in it.
+   */
+  width: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+table.grid th {
+  text-align: left;
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border-strong);
+  padding: var(--space-2) var(--space-4);
+}
+
+table.grid th.num {
+  text-align: right;
+}
+
+table.grid td {
+  padding: 3px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  vertical-align: baseline;
+}
+
+/* The column boundary. Subtler than the row rule on purpose — a reader follows rows and only
+   needs the columns to stop touching. */
+table.grid th + th,
+table.grid td + td {
+  border-left: 1px solid var(--border);
+}
+
+table.grid tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Zebra striping over a border grid would be two devices doing one job, so this is the hover
+   alone: it says which row the pointer is on and nothing else. */
+table.grid tbody tr:hover > td {
+  background: rgba(91, 157, 217, 0.05);
+}
+
+/* The first column is what a row *is* — a pool, a source, an element — so it is not a number
+   and should not be read as one. */
+table.grid td:first-child {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+table.grid td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/*
+ * Numeric columns hug their contents; the words take the slack.
+ *
+ * A `width: 100%` table with seven columns and no widths splits the table evenly, so a column
+ * holding `5.1s` was as wide as one holding a pool name and its right-aligned number ended up
+ * half a screen from the header it belonged under. `width: 1px` on an `auto` layout is the
+ * standard way to say "as narrow as the content allows": the browser honours the content's
+ * minimum and hands every spare pixel to the columns that did not ask.
+ */
+table.grid th.num,
+table.grid td.num {
+  width: 1px;
+}
+
+/*
+ * The Damage and Defence tabs, which now dock a drill-down at the bottom like the Stats tab.
+ *
+ * Same shape as `.calcs-panel` and sharing `.calcs-body` for the scrolling half: the panel itself
+ * holds still so the pane can, and the padding and the overflow live one level in.
+ */
+.damage-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+/*
+ * The stats a figure was built from, listed on the tab that shows the figure.
+ *
+ * Two columns when there is room, because these lists run to thirty rows and a card holding one
+ * of them would otherwise be twice the height of everything beside it.
+ */
+.trace-stats {
+  columns: 240px 2;
+  column-gap: var(--space-6);
+}
+
+.trace-stats .stat-row {
+  break-inside: avoid;
+}
+
+/* -- folding cards ------------------------------------------------------- */
+
+/*
+ * `ui/Panel` — the Damage and Defence tabs' cards.
+ *
+ * Like `.card` but with a head you can press and a summary on it. The head stays the same height
+ * open or closed, because a column of these is scanned by their titles and a list whose rows move
+ * as you fold them is a list you lose your place in.
+ */
+.panel-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  break-inside: avoid;
+}
+
+.panel-card.open {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+/* A card reporting something wrong keeps its border visible whether or not it is open. */
+.panel-card.warn {
+  border-color: #5a4a24;
+}
+
+.panel-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.panel-card-head:hover {
+  background: var(--bg-raised);
+}
+
+.panel-card-head .caret {
+  flex: 0 0 auto;
+  width: 10px;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.panel-card-head .card-title {
+  flex: 0 0 auto;
+}
+
+/* The answer, where the title cannot reach: right-aligned so a column of cards lines its
+   verdicts up whatever their titles are. */
+.panel-card-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+/*
+ * A table wider than its column scrolls inside the card, not across the tab.
+ *
+ * `table.grid` cells are `white-space: nowrap` — a seven-column sustain table will not fold — so
+ * in a 660px column one of them overflows and, without this, pushed a horizontal scrollbar onto
+ * the whole panel. The card is the right thing to scroll: everything beside it stays put.
+ */
+.panel-card-body {
+  padding: 0 var(--space-5) var(--space-5);
+  overflow-x: auto;
+}
+
+/*
+ * A card inside a folding card is one frame too many.
+ *
+ * The Damage and Defence cards each build their own `.card` and are now wrapped by `ui/Panel`,
+ * which supplies the frame and the head. Flattening the inner one here rather than editing twelve
+ * components keeps each of them renderable on its own — and keeps the change to those files down
+ * to deleting the heading the panel head now carries.
+ */
+.panel-card-body > .card {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
+/*
+ * Two columns of cards where the window allows it, one where it does not.
+ *
+ * CSS columns rather than a grid for the same reason `StatList` uses them: these cards are wildly
+ * uneven — a four-row rate card beside a two-table sustain card — and a grid row is as tall as
+ * its tallest cell. `break-inside: avoid` on the card is what keeps one whole.
+ */
+.card-columns {
+  columns: 420px 2;
+  column-gap: var(--space-6);
+}
+
+/* -- rarity -------------------------------------------------------------- */
+
+/*
+ * The rarity ladder, in the game's own colours.
+ *
+ * `GemRoll` has been putting a `rarity-<id>` class on its dropdown since it was written and
+ * **nothing in this file defined one**, so every gem's rarity select rendered identical — the
+ * same dead-reference the `table.grid` rules above were. The colours are `COLOR-CODING.md`'s,
+ * and `ui/palette.ts` holds the same ladder for the components that compute one.
+ *
+ * `mythic` and `pinnacle` are the two the game draws too dark to read on this background; both
+ * are lifted here exactly as `INK` lifts them, so a rarity means one colour whichever side of
+ * the TS/CSS boundary drew it.
+ */
+.rarity-common { color: var(--mc-gray); }
+.rarity-uncommon { color: var(--mc-green); }
+.rarity-rare { color: var(--mc-aqua); }
+.rarity-epic { color: var(--mc-light-purple); }
+.rarity-legendary { color: var(--mc-gold); }
+.rarity-mythic { color: var(--mc-dark-purple); }
+.rarity-unique { color: var(--mc-red); }
+.rarity-runeword,
+.rarity-runed { color: var(--mc-yellow); }
+.rarity-pinnacle { color: var(--mc-dark-red); }
+
+/* -- stat icons ---------------------------------------------------------- */
+
+/*
+ * The pack's 16px stat textures, drawn at the size a row is tall.
+ *
+ * `pixelated` because they are Minecraft textures: smoothed, a 16px armour plate at 14px is a
+ * grey smudge. The fixed box is what keeps every label in a list starting at the same x whether
+ * its stat has a texture, a glyph or neither.
+ */
+.stat-icon {
+  flex: 0 0 auto;
+  image-rendering: pixelated;
+  object-fit: contain;
+  align-self: center;
+}
+
+.stat-icon.glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 /* -- tree ---------------------------------------------------------------- */
@@ -992,10 +1389,14 @@ table.contribs td.n {
   background: var(--accent-dim);
 }
 
-.picker-option .id {
-  font-family: var(--mono);
-  font-size: var(--text-sm);
-  color: var(--text-faint);
+/*
+ * The hint takes the right edge, which is where the id used to sit.
+ *
+ * A row is now "name … hint" rather than "name, hint, id", so the badge has to claim the slack
+ * itself — without this it sits against the label and the column of tiers or slots that made
+ * two similar rows tellable apart stops being a column.
+ */
+.picker-option .badge {
   margin-left: auto;
 }
 
@@ -1067,7 +1468,15 @@ button.nudge.word {
   font-size: var(--text-xs);
 }
 
-/* An affix's own stat lines, with the value editable in place. */
+/*
+ * An affix's own stat lines, with the value editable in place.
+ *
+ * The label does **not** grow. It used to be `flex: 1 1 auto`, which ate every pixel of an
+ * editor that can be 700px wide and parked the box against the far edge — so "Gear Defense"
+ * sat at one end of the row and the number it belongs to at the other, with nothing between
+ * them, and reading an item meant tracking across the gap line by line. The pair is one fact
+ * and now reads as one: the name, then its number, then slack.
+ */
 .stat-line {
   display: flex;
   align-items: center;
@@ -1079,10 +1488,68 @@ button.nudge.word {
 }
 
 .stat-line .label {
-  flex: 1 1 auto;
+  /* Shrink-to-fit, but bounded: a stat name long enough to push the box off the panel is the
+     other failure, and these run to "Increased Effect of Non-Damage Ailments on You". */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 22rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Whatever follows the value takes the slack, so the row still fills its width. */
+.stat-line::after {
+  content: "";
+  flex: 1 1 auto;
+}
+
+/*
+ * The Items tab: the character on the left, the workbench in the middle.
+ *
+ * The third column of the layout is the app's own stat sidebar, which is already there on every
+ * tab — so this grid is two columns, not three. That is the point of the arrangement: the
+ * numbers a piece of gear is chosen for stay on screen while you choose it, where the old
+ * single-column tab pushed the paperdoll off the top the moment an editor opened.
+ *
+ * The columns scroll independently. `.panel` scrolls as a whole by default, which would move
+ * the equipped list every time the editor grew.
+ */
+.items-panel {
+  display: grid;
+  /*
+   * Wide enough for a unique's name beside its slot label and its badges. At 330px every
+   * interesting item read "Honourho…", which defeats the point of naming uniques by their own
+   * name in the first place.
+   */
+  grid-template-columns: 400px minmax(0, 1fr);
+  gap: var(--space-6);
+  overflow: hidden;
+  align-items: stretch;
+}
+
+/* The paperdoll is denser than the pool: ten rows that have to be readable at a glance. */
+.items-col .slot-row {
+  gap: var(--space-3);
+  padding: 2px var(--space-3);
+}
+
+.items-col .slot-row .slot-name {
+  width: 58px;
+}
+
+.items-col {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Room for the scrollbar, so it never sits on top of a badge. */
+  padding-right: var(--space-2);
+}
+
+/* The row the middle column is editing, on either list. */
+.slot-row.selected {
+  border-color: var(--accent);
+  background: var(--bg-raised);
 }
 
 /* The paperdoll: one row per slot the mod actually gives a character. */
@@ -1347,6 +1814,22 @@ textarea.paste:focus {
   color: var(--bad);
 }
 
+/*
+ * A change too small to act on, in a muted version of the colour it would have had.
+ *
+ * Not `--text-faint`: the direction is still worth reading at a glance, and a grey row in a
+ * ranked list reads as disabled rather than as small. Desaturating toward the panel background
+ * keeps green-ish green and red-ish red while dropping them out of the eye's first pass, which
+ * is what the ranking above already decided they deserve.
+ */
+.up.minor {
+  color: color-mix(in srgb, var(--good) 45%, var(--text-faint));
+}
+
+.down.minor {
+  color: color-mix(in srgb, var(--bad) 45%, var(--text-faint));
+}
+
 .gem-rank-list {
   max-height: 420px;
   /* Wider than the field it drops from: every gem's name ends in "Support Gem", so the part
@@ -1476,4 +1959,565 @@ textarea.paste:focus {
 
 .gem-rank-row.linked:hover {
   background: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Collapsible rows: Augments and jewels.
+ *
+ * Both are editors several controls tall that a character carries several of, in a 400px column
+ * that also has to hold the paperdoll. Collapsed, each one is a single row that still says what
+ * it is granting; open, it is the card it always was.
+ * ------------------------------------------------------------------------- */
+
+.collapsible {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  margin-bottom: var(--space-2);
+}
+
+.collapsible.open {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+/* Switched off, or granting nothing: the row stays legible, its content reads as inactive. */
+.collapsible.off .collapsible-head strong,
+.collapsible.dimmed .collapsible-head strong {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.collapsible.off,
+.collapsible.dimmed {
+  opacity: 0.72;
+}
+
+/*
+ * The same `:has()` escape `.slot-row.empty` and `.card.dimmed` carry, for the same reason:
+ * `opacity` below 1 creates a stacking context, so a picker dropdown opened inside a dimmed row
+ * would be scoped to it and paint behind every row below. See the note in JewelList.
+ */
+.collapsible.off:has(.picker-list),
+.collapsible.dimmed:has(.picker-list) {
+  opacity: 1;
+  position: relative;
+  z-index: 30;
+}
+
+.collapsible-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.collapsible-head:hover {
+  background: var(--bg-raised);
+}
+
+.collapsible-head .caret {
+  width: 10px;
+  flex: 0 0 auto;
+}
+
+/* The checkbox in the head is a control inside a click target, so it gets no extra padding. */
+.collapsible-head .field {
+  margin: 0;
+  gap: 0;
+}
+
+.collapsible-body {
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ---------------------------------------------------------------------------
+ * Augment capacity.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * A bar rather than a count, because Augment Capacity is spent in fractions: an Augment costs 25
+ * to 40 of a base 100, so "3 of 5" is not the reading — "how much room is left" is.
+ */
+.capacity-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.capacity-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 90ms linear;
+}
+
+.capacity-fill.over {
+  background: var(--bad);
+}
+
+
+/*
+ * The item pool, once it is longer than a loadout.
+ *
+ * `overflow-x: hidden` matters as much as the vertical scroll: a row holds an item name, three
+ * badges and four buttons, and letting it scroll sideways would hide the buttons rather than
+ * ellipsising the name.
+ */
+.item-pool {
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Room for the scrollbar, so it never sits on top of a badge. */
+  padding-right: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+/* ---------------------------------------------------------------------------
+ * The vitals block: the figures a build is read by, above the sheet.
+ *
+ * Denser than `.stat-row` on purpose. Those rows carry an icon, badges and a filter behind
+ * them; these are a label and a number in a fixed order, and the whole point is that the
+ * twenty-odd of them fit on screen together without scrolling.
+ * ------------------------------------------------------------------------- */
+
+/* The left padding is wider than the right to leave a gutter for the disclosure arrows, which
+   sit outside the rows so that every label lines up whether or not its row has one. */
+.vitals {
+  padding: var(--space-5) var(--space-5) var(--space-7) 22px;
+}
+
+.vitals-group + .vitals-group {
+  margin-top: var(--space-7);
+}
+
+.vitals-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+
+.vitals-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  margin: 0 calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+}
+
+.vitals-row.pick {
+  cursor: pointer;
+}
+
+.vitals-row.pick:hover {
+  background: var(--bg-raised);
+}
+
+/* The row the pane below is about. Without it the drill-down was a window with no stated
+   subject the moment you scrolled the row that opened it out of view. */
+.vitals-row.active {
+  background: var(--accent-dim);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * The disclosure arrow on Effective HP.
+ *
+ * Its own hit area rather than the whole row, because the row already does something: it opens
+ * the breakdown. One row, two intentions, and the arrow is the one that says "and the other four
+ * elements".
+ */
+.vitals-caret {
+  /* Out of the flex flow and into the block's left gutter, so a row with an arrow and a row
+     without one still start their icons at the same x. */
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 11px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.vitals-caret:hover {
+  color: var(--text);
+}
+
+/* A term of the row above it — per-element EHP, a regeneration rate. */
+.vitals-row.indent .vitals-label {
+  padding-left: var(--space-6);
+  color: var(--text-faint);
+  font-size: var(--text-md);
+}
+
+.vitals-row.indent .vitals-value {
+  font-size: var(--text-md);
+}
+
+/* A figure the rows around it are terms of — effective HP, combined DPS. */
+.vitals-row.strong .vitals-value {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.vitals-row.strong .vitals-label {
+  color: var(--text);
+}
+
+.vitals-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--text-base);
+}
+
+.vitals-value {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-value.bad {
+  color: var(--bad);
+}
+
+/* ---------------------------------------------------------------------------
+ * The Skills tab: the socket-group list, and the group you picked.
+ *
+ * Same shape as the Items tab and for the same reason — the thing you are choosing between has
+ * to stay on screen while you configure the one you chose. The columns scroll independently;
+ * `.panel` scrolling as a whole would move the list every time a gem was linked.
+ * ------------------------------------------------------------------------- */
+
+.skills-panel {
+  display: grid;
+  /* Wide enough for a spell name, a `main` badge, a link count and a DPS figure. */
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-6);
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.skills-col {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: var(--space-2);
+}
+
+/* One row of the socket-group list. Denser than `.slot-row`: it holds a name and badges. */
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-2);
+  background: var(--bg-panel);
+  cursor: pointer;
+}
+
+.skill-row:hover {
+  background: var(--bg-raised);
+}
+
+.skill-row.selected {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.skill-row.off {
+  opacity: 0.55;
+}
+
+.skill-row.off .ellipsis {
+  text-decoration: line-through;
+}
+
+/* The basic attack: in the list, but not of the document. Set apart by a dashed edge. */
+.skill-row.basic {
+  border-style: dashed;
+  margin-top: var(--space-4);
+}
+
+/* One socketed support gem: a checkbox, a picker, a roll and what it resolves to. */
+.gem-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.gem-card.off {
+  opacity: 0.55;
+}
+
+/*
+ * The same `:has()` escape the dimmed rows elsewhere carry: `opacity` below 1 creates a stacking
+ * context, so a gem picker opened inside a switched-off socket would paint behind the sockets
+ * below it whatever its `z-index` says.
+ */
+.gem-card.off:has(.picker-list) {
+  opacity: 1;
+  position: relative;
+  z-index: 30;
+}
+
+/*
+ * A gem's controls and what it grants, side by side — and stacked when there is no room.
+ *
+ * `flex-wrap` on a row of two `flex: 1 1 <basis>` children is the whole mechanism: while the card
+ * is at least the two bases wide the stats sit beside the picker, and below it otherwise. That is
+ * exactly the rule asked for, and it needs no breakpoint and no measurement.
+ */
+.gem-card-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3) var(--space-5);
+}
+
+.gem-card-controls {
+  flex: 1 1 250px;
+  min-width: 0;
+}
+
+/*
+ * What the gem does, one line per stat.
+ *
+ * `flex-basis: 220px` is under half the panel at its usual width, so the wrap happens when the
+ * lines would start hyphenating rather than when they merely get tight.
+ */
+.gem-mods {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  padding-top: 3px;
+}
+
+/* A stat that rolled to exactly zero is neither good nor bad, and says so by staying neutral. */
+.gem-mod {
+  color: var(--text-dim);
+}
+
+/*
+ * Green for the half of the trade you wanted, red for the half you paid.
+ *
+ * Every support gem in this pack is a trade and several word the cost without a sign — `aoe_dmg`
+ * reads "20% Less Armor", which is a sentence a reader has to parse before knowing which way it
+ * points. The colour says it before the sentence does.
+ */
+.gem-mod.good {
+  color: var(--good);
+}
+
+.gem-mod.bad {
+  color: var(--bad);
+}
+
+/* Pinned to the card's top-right corner rather than riding the controls column, so it does not
+   move when the stats wrap underneath. */
+.gem-remove {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-left: auto;
+  padding: 1px 7px;
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+ * The Stats tab: three columns of grouped calculations.
+ *
+ * `auto-fit` rather than a fixed three, so a narrow window drops to two columns and then one
+ * instead of scrolling sideways. The column *assignment* in `BOXES` is the reading order, and
+ * CSS reflow preserves it — a box never lands above the one it explains.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * The panel itself no longer scrolls; `.calcs-body` does.
+ *
+ * The drill-down is docked to the bottom of this tab now, the way it is docked to the bottom of
+ * the sidebar, and a pane that has to stay put cannot live inside the thing that scrolls past
+ * it. So the padding and the overflow moved one level in.
+ */
+.calcs-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.calcs-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6);
+}
+
+.calcs-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.calcs-column {
+  min-width: 0;
+}
+
+/* One stat in a box: name, any badges, and the number. Denser than `.stat-row`. */
+.calc-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 1px var(--space-2);
+  margin: 0 calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+/* Every row on this tab opens its own breakdown, so every row has to look like it does. */
+.calc-row.pick {
+  cursor: pointer;
+}
+
+.calc-row.pick:hover {
+  background: var(--bg-input);
+}
+
+.calc-row.selected {
+  background: var(--accent-dim);
+}
+
+.calc-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.calc-value {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The element that kills you first. */
+.calc-row.weakest .calc-value,
+.calc-row.weakest .calc-label {
+  color: var(--bad);
+}
+
+/*
+ * The tree buttons and the stat-point block, stacked.
+ *
+ * `.tree-overlay` is a flex row and everything in it is a sibling, so without this the point
+ * block sat beside the three tree buttons and squeezed the point counter next to it. 254px is
+ * the width three stat rows need: a name, a stepper pair, a number box and a total.
+ */
+.tree-hud-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 254px;
+  flex: 0 0 auto;
+}
+
+/* The stat rows are tighter here than on a panel — this sits over a canvas you are clicking. */
+.tree-hud-column .alloc-row {
+  gap: var(--space-2);
+}
+
+.tree-hud-column .alloc-name {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* -- target preset preview ----------------------------------------------- */
+
+/*
+ * The hover card on a preset button, showing what pressing it would change.
+ *
+ * `position: relative` on the anchor and nothing else: the anchor is a bare `span` precisely so
+ * it creates no stacking context of its own, which is the trap `.slot-row.empty:has(.picker-list)`
+ * above documents — an `opacity` or `transform` anywhere up the tree scopes the `z-index` to that
+ * subtree and the card paints under the rows below it however high the number is.
+ */
+.preset-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.preset-preview {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 260px;
+  max-width: 380px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  /*
+   * `--bg-raised` rather than `--bg-panel`: this floats over a card that is already raised, and
+   * it has to be fully opaque or the rows behind it read straight through the text. There is no
+   * `--panel` or `--line` in this stylesheet — those were the names this rule first used, and an
+   * undefined custom property is not a fallback, it is `transparent`.
+   */
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 55%);
+  /* A hover card must never eat the pointer: the button underneath is the point of it. */
+  pointer-events: none;
+  /* It floats, so it must not push the row it is anchored to around. */
+  margin: 0;
+}
+
+.preset-preview-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.preset-preview-rows {
+  display: grid;
+  /* label, from, arrow, to — the two numbers line up so a column of rows reads as a diff. */
+  grid-template-columns: 1fr auto auto auto;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.preset-preview-row {
+  display: contents;
+}
+
+.preset-preview-row .name {
+  font-size: 12px;
+}
+
+.preset-preview-row .mono {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }

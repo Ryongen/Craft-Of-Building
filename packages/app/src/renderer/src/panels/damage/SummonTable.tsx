@@ -30,9 +30,6 @@ export function SummonTable({
   return (
     <div className="card">
       <div className="row wrap gap-7" style={{ alignItems: "baseline" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          Summons
-        </span>
         <Figure
           label="Summon DPS"
           value={smart(total)}

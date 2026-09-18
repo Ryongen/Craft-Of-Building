@@ -26,6 +26,7 @@ import {
   parseFixture,
   type ComputedStat,
   type DamageCalculator,
+  type ObservedAilmentEvent,
   type ObservedDamageEvent,
   type ObservedLayer,
   type ObservedSource,
@@ -37,6 +38,7 @@ import {
 
 import { calculate } from "./calculate.js";
 import { EVENT } from "./damage/event.js";
+import type { AilmentResult } from "./damage/ailments.js";
 import type { EventTrace } from "./damage/breakdown.js";
 import { simulateHit } from "./index.js";
 
@@ -89,19 +91,33 @@ const DAMAGE: DamageCalculator | null = (build, snapshot, spellId, observed) => 
     observed?.effects === undefined
       ? build
       : { ...build, config: { ...(build.config ?? {}), effects: { ...observed.effects } } };
+  // A breakdown is opt-in because it allocates a trace per event, so ask for one exactly when
+  // the capture has rows to compare it against — either the hit's blocks or an ailment's.
+  const wantsTrace = observed?.log !== undefined || (observed?.ailments ?? []).length > 0;
   const result = simulateHit(withState, snapshot, {
     ...(skill ? { skill } : {}),
-    ...(observed?.log === undefined ? {} : { breakdown: true }),
+    ...(wantsTrace ? { breakdown: true } : {}),
   });
   if (!result) return undefined;
 
-  const ailmentPerSecond: Record<string, number> = {};
-  for (const ailment of result.hit.ailments) {
-    ailmentPerSecond[ailment.ailment] = ailment.damagePerSecond;
-  }
   // Which branch the log recorded. `critical_damage` is a multiplicative layer, so comparing a
   // logged crit against the non-crit branch is wrong by that whole factor.
   const outcome = observed?.wasCrit === true ? result.crit : result.hit;
+
+  const ailmentPerSecond: Record<string, number> = {};
+  const ailments: ObservedAilmentEvent[] = [];
+  for (const ailment of outcome.ailments) {
+    ailmentPerSecond[ailment.ailment] = ailment.damagePerSecond;
+    const applied = ailment.trace === undefined ? undefined : flattenTrace(ailment.trace)[0];
+    const proc = procBlock(ailment);
+    if (applied !== undefined || proc !== undefined) {
+      ailments.push({
+        ailment: ailment.ailment,
+        ...(applied === undefined ? {} : { applied }),
+        ...(proc === undefined ? {} : { proc }),
+      });
+    }
+  }
   const log = outcome.trace === undefined ? undefined : flattenTrace(outcome.trace);
   return {
     baseValue: result.baseValue,
@@ -109,8 +125,32 @@ const DAMAGE: DamageCalculator | null = (build, snapshot, spellId, observed) => 
     crit: result.crit.total,
     ailmentPerSecond,
     ...(log === undefined ? {} : { log, totalCombined: outcome.total }),
+    ...(ailments.length === 0 ? {} : { ailments }),
   };
 };
+
+/**
+ * The `Ailment Proc:` block one application of a strength ailment would fire.
+ *
+ * There is no event to flatten here, and that is the finding rather than a gap:
+ * `EntityAilmentData.shatterAccumulated` builds its event with `calcSourceEffects =
+ * calcTargetEffects = false`, so the pool goes out untouched and the log prints an empty
+ * `Damage Info:` with `Final Damage` equal to `Base Damage`. Synthesising the block from
+ * `accumulated` says exactly that, and a capture showing a layer in it is a real disagreement.
+ *
+ * `accumulated` is one application's contribution, so this is comparable only against a proc
+ * captured after a single hit — see {@link ObservedAilmentEvent}.
+ */
+function procBlock(ailment: AilmentResult): ObservedDamageEvent | undefined {
+  if (ailment.procChance <= 0 || ailment.accumulated <= 0) return undefined;
+  return {
+    element: ailment.element.toLowerCase(),
+    baseDamage: ailment.accumulated,
+    layers: [],
+    moreMultis: [],
+    finalDamage: ailment.accumulated,
+  };
+}
 
 /**
  * Projects an {@link EventTrace} onto the shape the damage log prints.
@@ -131,13 +171,20 @@ function flattenTrace(root: EventTrace): ObservedDamageEvent[] {
       if (step.numberId !== EVENT.NUMBER) continue;
       if (step.conversion.length > 0) {
         for (const conv of step.conversion) {
-          layers.push({ layerId: step.layerId, side: step.side, element: conv.element, amount: conv.percent });
+          layers.push({
+            layerId: step.layerId,
+            side: step.side,
+            // Same normalisation as the block's own element, and for the same reason: a
+            // conversion row's identity includes the element it points at.
+            element: conv.element.toLowerCase(),
+            amount: conv.percent,
+          });
         }
       } else if (step.additionalTo !== undefined) {
         layers.push({
           layerId: step.layerId,
           side: step.side,
-          element: step.additionalTo,
+          element: step.additionalTo.toLowerCase(),
           amount: step.amount,
         });
       } else if (step.action === "ADD") {
@@ -147,7 +194,11 @@ function flattenTrace(root: EventTrace): ObservedDamageEvent[] {
       }
     }
     out.push({
-      element: trace.element,
+      // Lowercased to match `ObservedLayer.element`'s documented form. The engine carries
+      // `ElementName` ("Cold"); the log and therefore a transcription print `cold`, and the
+      // comparison keys blocks by this string — so a mismatch here reports every row of a
+      // correct engine as missing.
+      element: trace.element.toLowerCase(),
       baseDamage: trace.baseNumber,
       layers,
       moreMultis: trace.moreMultis
@@ -230,6 +281,7 @@ function main(): void {
   const fromEngine = new Map<string, Diagnostic[]>();
   const contextsOf = new Map<string, StatContext[]>();
   const observedOf = new Map<string, readonly ObservedSource[]>();
+  const readingSourcesOf = new Map<string, readonly string[]>();
   let loadFailures = 0;
 
   for (const file of files) {
@@ -248,14 +300,26 @@ function main(): void {
     fromEngine.set(result.name, engineDiagnostics);
     contextsOf.set(result.name, engineContexts);
     observedOf.set(result.name, fixture.observed.sources ?? []);
+    readingSourcesOf.set(
+      result.name,
+      (fixture.observed.damage ?? [])
+        .map((d) => d.source)
+        .filter((x): x is NonNullable<typeof x> => x !== undefined && x !== fixture.observed.source),
+    );
     results.push(result);
   }
 
   for (const result of results) {
-    report(result, args.verbose, fromEngine.get(result.name) ?? [], {
-      engine: contextsOf.get(result.name) ?? [],
-      observed: observedOf.get(result.name) ?? [],
-    });
+    report(
+      result,
+      args.verbose,
+      fromEngine.get(result.name) ?? [],
+      {
+        engine: contextsOf.get(result.name) ?? [],
+        observed: observedOf.get(result.name) ?? [],
+      },
+      readingSourcesOf.get(result.name) ?? [],
+    );
   }
 
   const errors = results.reduce((n, r) => n + r.diagnostics.filter((d) => d.severity === "error").length, 0);
@@ -332,6 +396,8 @@ function report(
   verbose: boolean,
   engine: readonly Diagnostic[],
   sources: Sources,
+  /** Sources that a `damage` reading declared for itself, where they differ from the fixture's. */
+  readingSources: readonly string[],
 ): void {
   const errors = result.diagnostics.filter((d) => d.severity === "error");
   const warnings = result.diagnostics.filter((d) => d.severity === "warning");
@@ -340,7 +406,15 @@ function report(
   const verdict = errors.length > 0 ? "ILLEGAL" : bad.length > 0 ? "WRONG" : "legal";
   // The source is printed because it decides how tightly this fixture was compared: a mod dump
   // is held to float drift, a transcription to the two decimals its screen prints.
-  console.log(`${verdict.padEnd(8)} ${result.name}  [${result.source}: ${precisionOf(result.source)}]`);
+  // A damage reading may declare its own source — the ordinary case being log numbers
+  // transcribed beside a float-exact dump — and then one phrase would be claiming a precision
+  // half the fixture was not held to.
+  const alsoAt = [...new Set(readingSources)]
+    .map((s) => `, damage ${s}: ${precisionOf(s)}`)
+    .join("");
+  console.log(
+    `${verdict.padEnd(8)} ${result.name}  [${result.source}: ${precisionOf(result.source)}${alsoAt}]`,
+  );
 
   for (const d of errors) console.log(`         error   ${d.path}  [${d.code}] ${d.message}`);
   for (const d of warnings) console.log(`         warn    ${d.path}  [${d.code}] ${d.message}`);

@@ -13,33 +13,25 @@
  */
 
 import {
-  CATEGORY,
   FOOD_BUFF_SLOTS,
   SINGLE_ELEMENTS,
   TARGET_PRESETS,
-  auraName,
-  entry,
-  isAuraEnabled,
   isFoodBuffEnabled,
-  modifierLine,
   mobAffixName,
   serverConfigNumber,
   statBuffName,
+  buildTargetEnemy,
   targetPreset,
-  type AuraSetup,
   type EnemySetup,
   type FoodBuffSetup,
   type FoodBuffSlot,
+  type TargetPreset,
 } from "@cte2/schema";
 import {
   IN_COMBAT_REGEN_MULTI_KEY,
   inCombatRegenMultiOf,
-  balance,
   mobAffix,
   mobAffixIds,
-  parseRolledMod,
-  rollToExact,
-  statIndex,
 } from "@cte2/engine";
 
 /**
@@ -49,7 +41,7 @@ import {
  * is why nothing can usefully hold more.
  */
 const MAX_ELEMENTAL_RESIST = 15;
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
@@ -58,9 +50,9 @@ import { useWorld } from "../../state/snapshot.js";
 import { AddEffect, AssumeSwitch, EffectToggles } from "../../ui/Effects.js";
 // Food buffs are not gems and carry no rarity, so they keep the plain slider.
 import { NumberField, RollSlider } from "../../ui/fields.js";
-import { GemRarityRoll, gemBand } from "../../ui/GemRoll.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
+import { FoodDiversity } from "./FoodDiversity.js";
 
 export function ConfigPanel(): ReactNode {
   return (
@@ -68,8 +60,13 @@ export function ConfigPanel(): ReactNode {
       <EnemySection />
       <ServerSection />
       <ConditionsSection />
-      <AurasSection />
+      {/* Augments live on the Items tab: they are socketed gems, not settings, and a player
+          looks for them beside the gear. One editor, one place — two would be two ideas about
+          what an unset roll means. */}
       <FoodSection />
+      {/* Beside the food buffs rather than on a tab of its own: both are "what has this
+          character eaten", and one of them was two clicks away from the other. */}
+      <FoodDiversity />
       <ExileEffectsSection />
     </div>
   );
@@ -187,20 +184,20 @@ function EnemySection(): ReactNode {
 
       <div className="card">
         <div className="row wrap mb-2">
-          <span className="faint text-sm" style={{ fontWeight: 600 }}>
+          <span className="card-title">
             Preset
           </span>
           {TARGET_PRESETS.map((option) => (
-            <button
+            <PresetButton
               key={option.id}
-              className={preset === option.id ? "primary" : ""}
-              title={option.description}
-              onClick={() =>
+              option={option}
+              active={preset === option.id}
+              enemy={enemy}
+              level={enemy.level ?? doc.character.level}
+              onApply={() =>
                 applyTargetPreset(option.id, world.snapshot, enemy.level ?? doc.character.level)
               }
-            >
-              {option.name}
-            </button>
+            />
           ))}
           {preset !== undefined && (
             <span className="faint text-sm">
@@ -247,8 +244,20 @@ function EnemySection(): ReactNode {
             />
           </div>
           <div className="field">
-            <label>Dodge %</label>
+            <label>Dodge</label>
             <NumberField value={enemy.dodge ?? 0} min={0} onChange={(dodge) => patch({ dodge })} />
+          </div>
+          {/* `spell_dodge` is a separate stat with a separate curve, and every mob in this pack
+              has both — `mmorpg_base_stats/mob` gives 20 dodge and 15 spell dodge, level-scaled.
+              Without this row a spell build was measured against a target that evaded none of
+              its spells. */}
+          <div className="field">
+            <label>Magic dodge</label>
+            <NumberField
+              value={enemy.spellDodge ?? 0}
+              min={0}
+              onChange={(spellDodge) => patch({ spellDodge })}
+            />
           </div>
         </div>
 
@@ -404,137 +413,6 @@ function ConditionsSection(): ReactNode {
   );
 }
 
-function AurasSection(): ReactNode {
-  const world = useWorld();
-  const doc = useBuild((s) => s.doc);
-  const setAuras = useBuild((s) => s.setAuras);
-  const auras = doc.auras ?? [];
-
-  const options = useMemo<PickerOption[]>(
-    () => world.auraIds.map((id) => ({ id, label: auraName(world.snapshot, id), keywords: id })),
-    [world],
-  );
-
-  const update = (index: number, next: AuraSetup): void =>
-    setAuras(auras.map((aura, i) => (i === index ? next : aura)));
-
-  return (
-    <>
-      <div className="section-title">Augments</div>
-      <div className="notice">
-        Every Augment is a gem with a rarity and a roll of its own
-        (<code>SkillGemData.rar</code> and <code>.perc</code>). The rarity grants nothing
-        directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a
-        common one 0-17. One with no roll set computes at the bottom of its band and says so in
-        Diagnostics. <code>aura_effect</code> — Augment Effect — scales whatever these grant,
-        and is applied.
-      </div>
-
-      {auras.map((aura, index) => (
-        <div key={`${aura.id}-${index}`} className="mb-3">
-          <div className="row wrap">
-            <Picker
-              options={options}
-              value={aura.id}
-              onChange={(id) => id !== undefined && update(index, { ...aura, id })}
-              width={260}
-            />
-            <GemRarityRoll
-              gem={aura}
-              onChange={(next) => {
-                const merged = { ...aura, ...next } as AuraSetup;
-                for (const key of Object.keys(merged) as (keyof AuraSetup)[]) {
-                  if (merged[key] === undefined) delete merged[key];
-                }
-                update(index, merged);
-              }}
-            />
-            <label className="field">
-              <input
-                type="checkbox"
-                checked={isAuraEnabled(aura)}
-                onChange={(event) => {
-                  // Spread rather than rebuild: an aura rebuilt from its id alone lost the roll
-                  // the capture measured, so unticking one to see what it was worth and ticking
-                  // it back gave a weaker aura than the character actually has.
-                  const next: AuraSetup = { ...aura };
-                  if (event.target.checked) delete next.enabled;
-                  else next.enabled = false;
-                  update(index, next);
-                }}
-              />
-              enabled
-            </label>
-            <div className="grow" />
-            <button onClick={() => setAuras(auras.filter((_, i) => i !== index))}>✕</button>
-          </div>
-          <AuraStatLines aura={aura} />
-        </div>
-      ))}
-
-      {/* `world.auraIds[0]` used to be added outright — an Augment nobody picked, already
-          enabled and already on the sheet. */}
-      <AddPicker
-        label="Add aura"
-        placeholder="Which Augment?"
-        options={options}
-        width={240}
-        onAdd={(id) => setAuras([...auras, { id }])}
-      />
-    </>
-  );
-}
-
-/**
- * What an Augment is granting this character, at the roll it is set to.
- *
- * A percent on its own says nothing: "62%" of a band nobody can see is not a number anyone can
- * plan against. These are the resolved values, through the engine's own `rollToExact` — the
- * same call `collectAuras` makes, so a line here cannot disagree with the sidebar.
- *
- * `AuraGem.GetAllStats` scales its flats to the **player's** level rather than to an item level
- * (an Augment is a gem in the character's own inventory), which is why the character's level is
- * what goes in.
- */
-function AuraStatLines({ aura }: { aura: AuraSetup }): ReactNode {
-  const world = useWorld();
-  const { snapshot } = world;
-  const level = useBuild((s) => s.doc.character.level);
-  const roll = aura.rollPercent ?? gemBand(world, aura.rarity).min;
-
-  const raw = entry(snapshot, CATEGORY.aura, aura.id)?.data["stats"];
-  const mods = Array.isArray(raw) ? raw : [];
-  if (mods.length === 0) return null;
-
-  const index = statIndex(snapshot);
-  const curves = balance(snapshot);
-
-  return (
-    <div style={{ paddingLeft: 6 }}>
-      {mods
-        .filter((m): m is Record<string, unknown> => m !== null && typeof m === "object")
-        .map((mod, i) => {
-          const parsed = parseRolledMod(mod);
-          const line =
-            parsed === undefined
-              ? modifierLine(snapshot, mod, roll)
-              : modifierLine(snapshot, {
-                  stat: parsed.statId,
-                  type: parsed.type,
-                  // Feeding the resolved value back in as a fixed `v1` keeps `modifierLine`'s
-                  // own wording — templates, "More"/"Increased", the percent suffix — and swaps
-                  // in the number.
-                  v1: rollToExact(parsed, roll, level, index.shapeOf(parsed.statId), curves).value,
-                });
-          return (
-            <div key={i} className="text-sm" style={{ color: "var(--good)" }}>
-              {line}
-            </div>
-          );
-        })}
-    </div>
-  );
-}
 
 /**
  * Meals, seafood and elixirs.
@@ -669,4 +547,115 @@ function ExileEffectsSection(): ReactNode {
       <AddEffect effects={derived.effects} />
     </>
   );
+}
+
+/**
+ * A preset button that says what it would do before you press it.
+ *
+ * The Training Dummy mod shows this on its own preset screen, and the reason is the same here:
+ * every one of these buttons overwrites a block of fields the player may have edited, and the
+ * only way to know which ones was to press it and read the diff off the rows afterwards. Eleven
+ * presets differing by one `stat_multi` are not distinguishable from their names.
+ *
+ * Built by running `buildTargetEnemy` for real and diffing it against the enemy now, so the
+ * preview cannot drift from what pressing the button does — it is the same call.
+ */
+function PresetButton({
+  option,
+  active,
+  enemy,
+  level,
+  onApply,
+}: {
+  option: TargetPreset;
+  active: boolean;
+  enemy: EnemySetup;
+  level: number;
+  onApply: () => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const [open, setOpen] = useState(false);
+
+  // Only while hovered: eleven of these resolving a full enemy block on every keystroke in the
+  // level field is eleven times the work for ten previews nobody is looking at.
+  const changes = useMemo(
+    () => (open ? presetChanges(enemy, buildTargetEnemy(snapshot, option.id, level)) : []),
+    [open, enemy, snapshot, option.id, level],
+  );
+
+  return (
+    <span
+      className="preset-anchor"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button className={active ? "primary" : ""} onClick={onApply}>
+        {option.name}
+      </button>
+      {open && (
+        <span className="preset-preview card">
+          <span className="preset-preview-title">{option.name}</span>
+          <span className="faint text-sm">{option.description}</span>
+          {changes.length === 0 ? (
+            <span className="faint text-sm mt-3">
+              Every field already reads what this preset would set.
+            </span>
+          ) : (
+            <span className="preset-preview-rows mt-3">
+              {changes.map((row) => (
+                <span key={row.label} className="preset-preview-row">
+                  <span className="name">{row.label}</span>
+                  <span className="faint mono">{row.from}</span>
+                  <span className="faint">&rarr;</span>
+                  <span className="mono">{row.to}</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+type PresetChange = { label: string; from: string; to: string };
+
+/**
+ * What applying this preset would change, field by field.
+ *
+ * Rows that would not move are dropped: the question a hover answers is "what is different about
+ * this one", and eleven identical lists answer nothing. `offence` is summarised rather than
+ * listed, because its five entries move together and the two that matter to a reader are the two
+ * that change what the mob does to you.
+ */
+function presetChanges(from: EnemySetup, to: EnemySetup): PresetChange[] {
+  const out: PresetChange[] = [];
+  const n = (value: number | undefined): string =>
+    value === undefined ? "—" : Math.round(value).toLocaleString();
+  const row = (label: string, a: number | undefined, b: number | undefined): void => {
+    if (Math.round(a ?? 0) === Math.round(b ?? 0)) return;
+    out.push({ label, from: n(a), to: n(b) });
+  };
+
+  row("Level", from.level, to.level);
+  row("Armour", from.armor, to.armor);
+  row("Dodge", from.dodge, to.dodge);
+  row("Magic dodge", from.spellDodge, to.spellDodge);
+  row("Block %", from.blockChance, to.blockChance);
+  row("Damage reduction %", from.damageReduction, to.damageReduction);
+
+  for (const element of SINGLE_ELEMENTS) {
+    if (element.name === "Physical") continue;
+    row(`${element.displayName} resist`, from.resists?.[element.guid], to.resists?.[element.guid]);
+    row(
+      `${element.displayName} max resist`,
+      from.maxResists?.[element.guid],
+      to.maxResists?.[element.guid],
+    );
+  }
+
+  row("Its accuracy", from.offence?.accuracy, to.offence?.accuracy);
+  row("Its armour penetration", from.offence?.armorPenetration, to.offence?.armorPenetration);
+
+  return out;
 }

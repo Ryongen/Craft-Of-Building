@@ -289,6 +289,21 @@ export type SupportLink = {
    * of its own, but the band `rollPercent` was drawn from. See {@link AuraSetup.rarity}.
    */
   rarity?: string;
+  /**
+   * Whether this link counts at all. Defaults to true; read it through {@link isSupportEnabled}.
+   *
+   * Nothing in the game has this switch — a socketed gem is socketed. It is a planner
+   * affordance, and the same one {@link SkillSetup.enabled} is: the question a support gem list
+   * exists to answer is "what would this gem be worth to me", and the only way to read that off
+   * the damage number is to take the gem out and put it back. Doing that by deleting the link
+   * loses the rarity and the roll, which are the two things that made it *your* gem rather than
+   * a generic one — so the comparison you wanted costs you the setup you were comparing
+   * against.
+   *
+   * A disabled link contributes no stats and no cast-cost multiplier, exactly as an empty
+   * socket would, and keeps everything else.
+   */
+  enabled?: boolean;
 };
 
 export type SkillSetup = {
@@ -425,6 +440,15 @@ export type EnemySetup = {
   maxResists?: Record<string, number>;
   blockChance?: number;
   dodge?: number;
+  /**
+   * `spell_dodge` — the mob's evasion against a spell, where {@link dodge} is against an attack.
+   *
+   * Two separate stats in Mine and Slash and two separate numbers on a mob: the pack's
+   * `mmorpg_base_stats/mob` gives 20 of one and 15 of the other, both level-scaled, so an Epic
+   * at level 100 dodges 416 of your attacks' accuracy and 312 of your spells'. Stating only the
+   * first made every spell build read as though the target had no evasion against it at all.
+   */
+  spellDodge?: number;
   damageReduction?: number;
   /** What this mob's own hit does to you — the other half of a target preset. */
   offence?: MobOffence;
@@ -773,7 +797,34 @@ export type BuildDoc = {
     ascendancy?: TreeCoord[];
     atlas?: TreeCoord[];
   };
+  /**
+   * What the character is **wearing**.
+   *
+   * This is the equipped loadout and nothing else: every stat the engine collects, every slot
+   * the validator counts against `SLOT_CAPACITY`, and every fixture ever captured reads this
+   * list and only this list. {@link BuildDoc.itemPool} is the bench beside it and contributes
+   * nothing, which is the whole distinction between the two.
+   */
   gear?: Item[];
+  /**
+   * Items the build owns but is not wearing.
+   *
+   * A planner is mostly used to ask "which of these two swords", and until now the only way to
+   * hold the loser was to keep it equipped in a second document. This is the bench: items you
+   * have crafted, imported or are still deciding about, saved with the build and exported with
+   * it.
+   *
+   * **It contributes nothing.** No stat, no set bonus, no slot occupancy, no requirement check
+   * against the character. The engine does not read it at all — `collectGear` walks `gear` —
+   * which is deliberate and is what keeps every existing capture, fixture and stat comparison
+   * meaning exactly what it meant before this field existed.
+   *
+   * The Items tab shows the two lists as **one pool** with the worn ones marked, because that is
+   * how a player thinks about what they own. Equipping moves an item from here into `gear` and
+   * unequipping moves it back, so nothing is ever lost by trying something on; where the slot is
+   * already full, the item that comes off lands here rather than being deleted.
+   */
+  itemPool?: Item[];
   /**
    * The single omen. `CharacterEquipment.CURIO_BLOCKS` gives `OMEN` a count of 1, so this is
    * one entry rather than a list.
@@ -888,13 +939,32 @@ export function supportLinks(skill: SkillSetup): SupportLink[] {
     const id = typeof link === "string" ? link : link.id;
     const roll = typeof link === "string" ? skill.gemPercent : link.rollPercent ?? skill.gemPercent;
     const rarity = typeof link === "string" ? undefined : link.rarity;
+    const enabled = typeof link === "string" ? undefined : link.enabled;
     // Keys are omitted rather than set to `undefined`, so the result is a `SupportLink` that can
     // be written straight back into the document without leaving dead fields behind.
     const out: SupportLink = { id };
     if (roll !== undefined) out.rollPercent = roll;
     if (rarity !== undefined) out.rarity = rarity;
+    if (enabled !== undefined) out.enabled = enabled;
     return out;
   });
+}
+
+/** Support links default to on. Always read `enabled` through this. */
+export function isSupportEnabled(link: SupportLink): boolean {
+  return link.enabled ?? true;
+}
+
+/**
+ * The links that actually reach the spell — {@link supportLinks} with the switched-off ones
+ * dropped.
+ *
+ * Every consumer that asks "what is socketed here" wants this one, and every consumer that
+ * *renders* the sockets wants `supportLinks`. Keeping them as two functions is what stops a
+ * disabled gem from being drawn as absent or summed as present.
+ */
+export function activeSupportLinks(skill: SkillSetup): SupportLink[] {
+  return supportLinks(skill).filter(isSupportEnabled);
 }
 
 /** An empty document at the current version — the starting point for hand-authoring. */

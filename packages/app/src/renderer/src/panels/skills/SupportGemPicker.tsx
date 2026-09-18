@@ -23,7 +23,7 @@
  * by relative gain rather than absolute DPS is what makes a partial list meaningful.
  */
 
-import { supportGemName, supportLinks, type SkillSetup, type SupportLink } from "@cte2/schema";
+import { rarityName, supportGemName, supportLinks, type SkillSetup, type SupportLink } from "@cte2/schema";
 import { CATEGORY, entry } from "@cte2/schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -32,6 +32,7 @@ import { supportGemAffectsSheet } from "@cte2/engine";
 
 import { useRanking, type Ranked, type Vitals } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
+import type { GemPreset } from "../../ui/GemRoll.js";
 import { percent, signGlyph, smart } from "../../ui/format.js";
 
 /** Below this the two figures are the same number and the difference is float noise. */
@@ -45,6 +46,8 @@ export function SupportGemPicker({
   value,
   onChange,
   width = 260,
+  compatibleOnly = false,
+  preset,
 }: {
   skill: SkillSetup;
   skillIndex: number;
@@ -52,6 +55,33 @@ export function SupportGemPicker({
   value: string | undefined;
   onChange: (id: string) => void;
   width?: number;
+  /**
+   * The rarity and roll a gem this list hands you arrives at — the Skills tab's preset.
+   *
+   * It is on the *picker* rather than only on the caller that writes the link, because the
+   * ranking has to be priced at the same roll the pick will produce. A list that ranked every
+   * gem at the bottom of its band and then handed you a mythic would be sorting by numbers none
+   * of its rows are: `+40% more fire damage` and `+40% increased fire damage` do not keep their
+   * order when both are scaled from 0% of their band to 100% of it.
+   *
+   * `undefined` leaves a gem's rarity unstated, which is what this control did before the preset
+   * existed and what the engine reads as "the bottom of the band".
+   */
+  preset?: GemPreset | undefined;
+  /**
+   * Hide the gems that measured no change on this skill.
+   *
+   * "Compatible" is not something the registry declares and could not be: a gem is compatible
+   * when its stats are read by one of *this* skill's damage sources, which is a question only
+   * the pipeline that resolved those sources can answer. This list has already priced all
+   * ninety, so the filter is a predicate over measurements rather than a second, guessed rule —
+   * and roughly half the pack fails it for any given skill.
+   *
+   * The gem in this socket is never hidden, whatever it measured. A filter that could make the
+   * thing you are looking at disappear from the list of things you could pick is a filter that
+   * has broken the control.
+   */
+  compatibleOnly?: boolean;
 }): ReactNode {
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
@@ -73,14 +103,23 @@ export function SupportGemPicker({
       const links = supportLinks(skill);
       const next: SupportLink[] =
         slot === undefined
-          ? [...links, { id: gemId }]
-          : links.map((link, i) => (i === slot ? { ...link, id: gemId } : link));
+          ? [...links, { id: gemId, ...preset }]
+          : links.map((link, i) =>
+              // The gem already in this socket keeps its own rarity and roll: that row is the
+              // baseline every other one is measured against, and re-rolling it to the preset
+              // would move the zero rather than the candidates.
+              i === slot
+                ? link.id === gemId
+                  ? link
+                  : { ...link, id: gemId, ...preset }
+                : link,
+            );
       const skills = (doc.skills ?? []).map((s, i) =>
         i === skillIndex ? { ...s, supports: next } : s,
       );
       return { ...doc, skills };
     },
-    [doc, skill, skillIndex, slot],
+    [doc, skill, skillIndex, slot, preset],
   );
 
   const keyOf = useCallback((gemId: string) => gemId, []);
@@ -121,11 +160,19 @@ export function SupportGemPicker({
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (needle.length === 0) return ranking.rows;
-    return ranking.rows.filter((row) =>
-      `${supportGemName(world.snapshot, row.id)} ${row.id}`.toLowerCase().includes(needle),
-    );
-  }, [ranking.rows, query, world.snapshot]);
+    const matched =
+      needle.length === 0
+        ? ranking.rows
+        : ranking.rows.filter((row) =>
+            `${supportGemName(world.snapshot, row.id)} ${row.id}`.toLowerCase().includes(needle),
+          );
+    if (!compatibleOnly) return matched;
+    return matched.filter((row) => {
+      if (row.id === value) return true;
+      const moved = row.comparison.headline.find((d) => d.key === "dps");
+      return moved !== undefined && Math.abs(moved.change) > NOISE;
+    });
+  }, [ranking.rows, query, world.snapshot, compatibleOnly, value]);
 
   /**
    * Gems this skill already holds in some *other* socket.
@@ -168,12 +215,21 @@ export function SupportGemPicker({
           <div className="gem-rank-head">
             <span className="faint">
               Ranked by this skill&apos;s DPS
+              {/* The roll every row was priced at. Without it the list is ninety numbers whose
+                  scale is set by a control on the other side of the panel. */}
+              {preset !== undefined &&
+                ` · as ${rarityName(world.snapshot, preset.rarity)} ${preset.rollPercent}%`}
+              {compatibleOnly && " · compatible only"}
               {ranking.pending && ` · pricing ${ranking.done} of ${ranking.total}…`}
             </span>
           </div>
           {rows.length === 0 && (
             <div className="picker-option faint">
-              {ranking.pending ? "Pricing gems…" : "No match"}
+              {ranking.pending
+                ? "Pricing gems…"
+                : compatibleOnly
+                  ? "Nothing in the pack changes this skill's damage. Switch the filter to All to see every gem."
+                  : "No match"}
             </div>
           )}
           {rows.map((row) => (

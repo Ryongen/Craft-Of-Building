@@ -155,3 +155,190 @@ test("an ailment cannot inflict an ailment", () => {
   const result = simulateHit(BUILD, snapshotWith({}, { bleed_chance: 100 }), {})!;
   assert.equal(result.hit.ailments.filter((a) => a.ailment === "bleed").length, 1);
 });
+
+test("freeze accumulates a pool, and carries the two numbers a Shatter is worth", () => {
+  // Freeze and electrify deal nothing when they land: `onAilmentCausingDamage` puts the damage
+  // in `dmgMap` and `shatterAccumulated` releases the whole entry later, on a hit that rolls
+  // `freeze_proc_chance`. The result therefore has to carry three things, and used to carry one
+  // — the pool, without the proc chance or the decay that decide how much of it ever lands.
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: {
+      shard: spellEntry("shard", "Cold", "hit100", {
+        config: { tags: { tags: [] }, use_support_gems_from: "", style: "int", cooldown_ticks: 20 },
+      }),
+    },
+    mmorpg_stat: {
+      freeze_chance: statEntry("freeze_chance"),
+      freeze_proc_chance: statEntry("freeze_proc_chance"),
+      freeze_duration: statEntry("freeze_duration"),
+    },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("freeze_chance", "FLAT", 40),
+        exact("freeze_proc_chance", "FLAT", 25),
+      ]),
+    },
+  });
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "shard", main: true }],
+  } as BuildDoc;
+
+  const freeze = simulateHit(build, snapshot, {})!.hit.ailments.find((a) => a.ailment === "freeze");
+  assert.ok(freeze !== undefined, "a cold hit with freeze chance has to inflict freeze");
+  assert.equal(freeze.damagePerSecond, 0, "freeze never ticks — it pools");
+  assert.ok(freeze.accumulated > 0, "and the pool is what it puts in");
+  closeTo(freeze.chance, 0.4, "freeze_chance 40 is a 0.4 roll");
+  closeTo(freeze.procChance, 0.25, "freeze_proc_chance 25 is a 0.25 roll");
+  // `percentLostEveryXSeconds` is 0.1 for both strength ailments, and `decayPerSecond` divides
+  // it by the duration multiplier — which is 1 here because nothing grants `freeze_duration`.
+  closeTo(freeze.poolDecayPerSecond, 0.1, "10% of the pool a second while it waits");
+});
+test("freeze's pool is built by the same `int` dot event, so an attack stat does not reach it", () => {
+  // The two strength ailments are easy to think of as a share of the hit, because that is how
+  // their tooltips read — "85% of the damage is stored". They are not. `AilmentChance.activate`
+  // builds the same `dot` / `none` / `INT` event for all five and hands `onAilmentCausingDamage`
+  // the number it arrived at, so every gate that keeps `attack_damage` off a bleed keeps it off
+  // a Shatter's pool too. This is the freeze half of the test above, pinned separately because
+  // freeze takes the other branch of `resolve` and could lose the event without the DoTs
+  // noticing.
+  const stats = {
+    freeze_chance: statEntry("freeze_chance"),
+    freeze_proc_chance: statEntry("freeze_proc_chance"),
+    attack_damage: additiveStat("attack_damage", ["style_is_int_is_false"]),
+    // `ailment_damage` deliberately has no entry here: it is `AllAilmentDamage`, a code-only
+    // stat the engine applies off the sheet alone. Giving it one as well would put it through
+    // `additive_damage` twice and the control below would read x3.
+  };
+  const cold = (granted: Record<string, number>) =>
+    engineSnapshot({
+      mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+      mmorpg_spells: {
+        // `str`, so the hit itself passes `style_is_int_is_false` and the ailment's own event
+        // is the only thing that can fail it.
+        shard: spellEntry("shard", "Cold", "hit100", {
+          config: { tags: { tags: [] }, use_support_gems_from: "", style: "str", cooldown_ticks: 20 },
+        }),
+      },
+      mmorpg_stat: stats,
+      mmorpg_stat_effect: EFFECTS,
+      mmorpg_stat_condition: CONDITIONS,
+      mmorpg_base_stats: {
+        original_mode_player: baseStats(
+          "original_mode_player",
+          Object.entries(granted).map(([id, value]) => exact(id, "FLAT", value)),
+        ),
+      },
+    });
+
+  const doc = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "shard", main: true }],
+  } as BuildDoc;
+
+  const freezeOf = (granted: Record<string, number>) => {
+    const result = simulateHit(doc, cold(granted), {})!;
+    const freeze = result.hit.ailments.find((a) => a.ailment === "freeze");
+    assert.ok(freeze !== undefined, "a cold hit with freeze chance inflicts freeze");
+    return { hit: result.hit.total, freeze };
+  };
+
+  const base = freezeOf({ freeze_chance: 100, freeze_proc_chance: 50 });
+  const attack = freezeOf({ freeze_chance: 100, freeze_proc_chance: 50, attack_damage: 100 });
+  const ailment = freezeOf({ freeze_chance: 100, freeze_proc_chance: 50, ailment_damage: 100 });
+
+  // The hit doubled both times: `attack_damage` passed its gate on a `str` spell, and
+  // `ailment_damage` is ungated in this fixture.
+  closeTo(attack.hit, base.hit * 2);
+
+  // The pool did not follow the attack stat — the freeze event is `int`.
+  closeTo(attack.freeze.accumulated, base.freeze.accumulated);
+  // And did follow the ailment stat, which is the control: the event really is being run, rather
+  // than the pool being immune to everything.
+  closeTo(ailment.freeze.accumulated, base.freeze.accumulated * 2);
+
+  // `damageEffectivenessMulti` is 0.85 for freeze, which is the "85% is stored" in the tooltip.
+  // It multiplies the *event's* number, not the hit's.
+  closeTo(base.freeze.accumulated, base.freeze.eventDamage * 0.85);
+});
+
+/**
+ * The calibration, measured in game on 2026-09-18 against Mine and Slash 6.4.13.
+ *
+ * One Tidal Strike on one mob, read off three damage-log hovers:
+ *
+ *     Spell: Tidal Strike                    Damage Over Time            Ailment Proc: Shatter
+ *     Cold:                                  Ailment: Freeze             Ailment: Freeze
+ *     Base Damage: 659                       Base Damage: 659            Base Damage: 988
+ *       [Source]: Additive Damage: x1.82       [Source]: Additive: x1.30    (no rows)
+ *       [Target]: Elemental Mitigation: x1.18  [Target]: Elem Mit: x1.18
+ *       Stat: Area Damage: x1.15               Stat: Area Damage: x1.15
+ *     Final Damage: 1629                     Final Damage: 1162          Final Damage: 988
+ *
+ * Three things fall out of those numbers, and this test is here because the local fixture that
+ * also pins them is a character dump and therefore not committed:
+ *
+ *  - **the ailment's base is the hit's base**, 659 both times, not the hit's 1629 — the hit's
+ *    own multipliers are not in it;
+ *  - **the ailment's event is a different event**, x1.30 against the hit's x1.82 off the same
+ *    sheet, which is the `dot`/`int` gating already pinned above;
+ *  - **the pool is 85% of that event's final number**: 1162 x 0.85 = 987.7, printed 988. It is
+ *    the ailment's *final* damage that gets multiplied, not its base and not the hit's.
+ *
+ * The Shatter block is the fourth fact and the easiest to get wrong: base 988, final 988, with
+ * an empty `Damage Info:`. `EntityAilmentData` fires the pool with `calcSourceEffects =
+ * calcTargetEffects = false`, so nothing applies to it a second time — an engine that swept the
+ * source again here would agree with every number above and still be wrong by a whole pipeline.
+ */
+test("a Shatter releases 85% of the freeze event and a Shock 100% of the electrify", () => {
+  const ailing = (element: string, ailment: string) =>
+    engineSnapshot({
+      mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+      mmorpg_spells: {
+        bolt: spellEntry("bolt", element, "hit100", {
+          config: { tags: { tags: [] }, use_support_gems_from: "", style: "int", cooldown_ticks: 20 },
+        }),
+      },
+      mmorpg_stat: {
+        [`${ailment}_chance`]: statEntry(`${ailment}_chance`),
+        [`${ailment}_proc_chance`]: statEntry(`${ailment}_proc_chance`),
+      },
+      mmorpg_stat_effect: EFFECTS,
+      mmorpg_stat_condition: CONDITIONS,
+      mmorpg_base_stats: {
+        original_mode_player: baseStats("original_mode_player", [
+          exact(`${ailment}_chance`, "FLAT", 100),
+          exact(`${ailment}_proc_chance`, "FLAT", 50),
+        ]),
+      },
+    });
+
+  const poolOf = (element: string, id: string) => {
+    const doc = {
+      schemaVersion: 1,
+      character: { level: 1 },
+      skills: [{ spellId: "bolt", main: true }],
+    } as BuildDoc;
+    const found = simulateHit(doc, ailing(element, id), {})!.hit.ailments.find((a) => a.ailment === id);
+    assert.ok(found !== undefined, `a ${element} hit with ${id} chance inflicts ${id}`);
+    return found;
+  };
+
+  // `Ailments.java:14-20` gives freeze a `damageEffectivenessMulti` of 0.85 and electrify one of
+  // 1. Everything else about the two is identical, which is why one measurement calibrates both
+  // — and why the pair is worth asserting together rather than freeze alone.
+  const freeze = poolOf("Cold", "freeze");
+  closeTo(freeze.accumulated, freeze.eventDamage * 0.85, "freeze stores 85% of its event");
+
+  const electrify = poolOf("Nature", "electrify");
+  closeTo(electrify.accumulated, electrify.eventDamage, "electrify stores all of its event");
+
+  // Neither ticks, so `damagePerSecond` is not where the damage is — the pool is.
+  assert.equal(freeze.damagePerSecond, 0);
+  assert.equal(electrify.damagePerSecond, 0);
+});

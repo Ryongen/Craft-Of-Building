@@ -32,6 +32,18 @@ let assetIndex: Record<string, string> = {};
 let itemIconIndex: Record<string, string> = {};
 
 const api: Cte2Api = {
+  platform: "electron",
+
+  // Everything, which is the point of the desktop build: it is the only host that can read a
+  // modpack folder, and therefore the only one that can produce a snapshot in the first place.
+  capabilities: {
+    extract: true,
+    saveInPlace: true,
+    recentBuilds: true,
+    nativeMenu: true,
+    loadOwnSnapshot: false,
+  },
+
   async getSnapshot() {
     const payload = (await ipcRenderer.invoke(CHANNEL.getSnapshot)) as SnapshotPayload | null;
     assetIndex = payload?.assets ?? {};

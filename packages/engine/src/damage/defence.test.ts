@@ -98,6 +98,50 @@ test("block halves a hit on a chance; it does not avoid one", () => {
   closeTo(capped.byElement.find((e) => e.element === "Fire")!.taken, 0.55);
 });
 
+test("the maximum hit assumes every avoidance roll failed", () => {
+  // The two figures answer different questions and a build can be comfortable on one and dead on
+  // the other. 100 dodge is a 50% chance, so the *average* physical hit is halved and the
+  // *largest survivable* one is not reduced at all — you cannot spend a dodge chance on the hit
+  // that kills you.
+  const dodged = character({ health: 1000, dodge: 100 });
+  const physical = dodged.byElement.find((e) => e.element === "Physical")!;
+
+  closeTo(physical.effectiveHealth, 2000);
+  closeTo(physical.takenUnavoided, 1);
+  closeTo(physical.maximumHit, 1000, "dodge buys nothing against a single hit");
+
+  // Block is the same rule and a different shape: it halves a hit rather than avoiding one, so a
+  // blocked hit is a real outcome and the worst case is simply the unblocked one.
+  const blocking = character({ health: 1000, block_chance: 40 });
+  const fire = blocking.byElement.find((e) => e.element === "Fire")!;
+  closeTo(fire.effectiveHealth, 1250);
+  closeTo(fire.maximumHit, 1000);
+
+  // Mitigation is not a roll, so it is in both. 50 fire resist halves the hit either way.
+  const resisted = character({ health: 1000, fire_resist: 50 });
+  const resistedFire = resisted.byElement.find((e) => e.element === "Fire")!;
+  closeTo(resistedFire.effectiveHealth, 2000);
+  closeTo(resistedFire.maximumHit, 2000, "a resist applies to every hit, including the big one");
+
+  // With neither avoidance stat the two figures are the same number, which is what makes the gap
+  // between them readable as "this much of my defence is luck".
+  assert.equal(resistedFire.maximumHit, resistedFire.effectiveHealth);
+});
+
+test("the most fragile element is picked on the maximum hit, not on effective HP", () => {
+  // Dodge is physical-only, so a character carrying their physical defence on it has their
+  // *average* softest spot somewhere else and their *one-shot* softest spot on physical. Fire
+  // resist is set high enough that fire wins on neither.
+  const result = character({ health: 1000, dodge: 300, fire_resist: 60 });
+
+  assert.equal(result.weakest.element, "Cold", "averaged, dodge carries physical past cold");
+  assert.equal(result.mostFragile.element, "Physical", "unavoided, dodge carries nothing");
+  assert.equal(
+    result.mostFragile.maximumHit,
+    Math.min(...result.byElement.map((e) => e.maximumHit)),
+  );
+});
+
 test("a flat reduction is worth less against a bigger hit, so the hit size is stated", () => {
   // `damage_shield` writes to `flat_damage_reduction`, an ADD layer. There is no single answer to
   // "how much of a hit do I take" when part of the mitigation is flat, so the size is an input and

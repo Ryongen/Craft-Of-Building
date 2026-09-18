@@ -598,17 +598,35 @@ test("a character has one mainhand, whichever kind of weapon fills it", () => {
 });
 
 test("a slot the mod says nothing about is not checked at all", () => {
-  // `elytra` and `head` are pack-added Jewelry slots matching no CurioBlock. Guessing a
-  // capacity of 1 for them would be inventing a rule, which is what phase 0.5 refused to do.
+  // `head` is a pack-added Jewelry slot matching no CurioBlock. Guessing a capacity of 1 for it
+  // would be inventing a rule, which is what phase 0.5 refused to do.
+  //
+  // This used to be written against `elytra`, which is no longer an example of the case: it has
+  // a capacity now, on the pack author's own report that the pack gives exactly one elytra slot.
+  // `SLOT_CAPACITY` records where that number came from, since the Java does not say it.
+  const snapshot = makeSnapshot({
+    mmorpg_gear_rarity: RARITIES,
+    mmorpg_gear_slot: { head: { id: "head", fam: "Jewelry" } },
+    mmorpg_base_gear_types: { head: baseGear("head", "head", ["head"]) },
+    mmorpg_game_balance: { original_balance: BALANCE },
+  });
+  const gear: Item[] = [1, 2, 3].map(() => ({ base: "head", rarity: "common", itemLevel: 1 }));
+  const diagnostics = validateBuild(build({ gear }), snapshot);
+  assert.ok(!codes(diagnostics).includes("slot-over-capacity"), JSON.stringify(diagnostics));
+});
+
+test("the elytra slot holds one, which is a stated fact rather than a derived one", () => {
   const snapshot = makeSnapshot({
     mmorpg_gear_rarity: RARITIES,
     mmorpg_gear_slot: { elytra: { id: "elytra", fam: "Jewelry" } },
     mmorpg_base_gear_types: { elytra: baseGear("elytra", "elytra", ["elytra"]) },
     mmorpg_game_balance: { original_balance: BALANCE },
   });
-  const gear: Item[] = [1, 2, 3].map(() => ({ base: "elytra", rarity: "common", itemLevel: 1 }));
-  const diagnostics = validateBuild(build({ gear }), snapshot);
-  assert.ok(!codes(diagnostics).includes("slot-over-capacity"), JSON.stringify(diagnostics));
+  const two: Item[] = [1, 2].map(() => ({ base: "elytra", rarity: "common", itemLevel: 1 }));
+  assert.ok(codes(validateBuild(build({ gear: two }), snapshot)).includes("slot-over-capacity"));
+
+  const one: Item[] = [{ base: "elytra", rarity: "common", itemLevel: 1 }];
+  assert.ok(!codes(validateBuild(build({ gear: one }), snapshot)).includes("slot-over-capacity"));
 });
 
 test("an offhand beside a two-handed weapon is an error, because it grants nothing", () => {
@@ -1044,4 +1062,48 @@ test("a gem with no rarity: negative is an error, above the bands is a warning",
   const stale = build({ auras: [{ id: "armor_aura", rollPercent: 108 }] });
   assert.deepEqual(codes(validateBuild(stale, gemSnapshot()), "error"), []);
   assert.ok(codes(validateBuild(stale, gemSnapshot()), "warning").includes("gem-percent-above-band"));
+});
+
+// ---------------------------------------------------------------------------
+// The item pool
+// ---------------------------------------------------------------------------
+
+test("a benched item is checked as an item, and reported under its own path", () => {
+  // An impossible roll is impossible whether or not you are wearing it, and a pool full of
+  // items the game cannot make is a pool of comparisons worth nothing.
+  const bad = legalBoots();
+  bad.prefixes = [
+    { affixId: "armor_prefix", tier: "rare", rollPercent: 40 },
+    { affixId: "leather_boots_prefix", tier: "common", rollPercent: 10 },
+    { affixId: "solo_prefix", tier: "common", rollPercent: 10 },
+  ];
+  const diagnostics = validateBuild(build({ itemPool: [bad] }), standardSnapshot());
+
+  assert.ok(codes(diagnostics).includes("too-many-prefixes"));
+  // Under `itemPool[0]`, not `gear[0]`: the editor filters diagnostics by path to decide which
+  // ones belong to the item on screen, and two lists sharing a path would cross the streams.
+  assert.ok(diagnostics.every((d) => !d.path.startsWith("gear[")));
+  assert.ok(diagnostics.some((d) => d.path.startsWith("itemPool[0]")));
+});
+
+test("the pool is not a loadout, so slot capacity ignores it", () => {
+  // Nine pairs of boots on the bench is what a bench is for. The same nine equipped is an
+  // error, and the two must not be the same check.
+  const nine = Array.from({ length: 9 }, () => legalBoots());
+
+  const benched = validateBuild(build({ itemPool: nine }), standardSnapshot());
+  assert.deepEqual(benched, []);
+  assert.equal(isLegal(benched), true);
+
+  const worn = validateBuild(build({ gear: nine }), standardSnapshot());
+  assert.ok(codes(worn, "error").length > 0);
+});
+
+test("a benched item contributes nothing, so it cannot complete anything either", () => {
+  // The engine reads `gear` and never `itemPool`; this pins the validator agreeing with it, so
+  // a jewel socket granted by a unique on the bench does not unlock a jewel.
+  const worn = validateBuild(build({ gear: [legalBoots()] }), standardSnapshot());
+  const benched = validateBuild(build({ itemPool: [legalBoots()] }), standardSnapshot());
+  assert.deepEqual(worn, []);
+  assert.deepEqual(benched, []);
 });

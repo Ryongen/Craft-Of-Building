@@ -32,6 +32,114 @@ import { gemRoll } from "./gem-roll.js";
 import { activeOn, type EffectOption, type EffectState } from "../damage/effect-state.js";
 import { multiplyExact, parseRolledMods, rollToExact, type ExactMod } from "../modifier.js";
 
+/**
+ * `AuraCapacity.base` — what the capacity falls back to when the sheet has not resolved one.
+ *
+ *     int num = (int) getCalculatedStat(AuraCapacity.getInstance()).getValue();
+ *     if (num < 1) { num = (int) AuraCapacity.getInstance().base; }
+ *
+ * — `GemInventoryHelper.getTotalSpirit`, read off the 6.4.13 jar. `spirit_cost` is a code-only
+ * stat (`database/data/stats/types/spirit/AuraCapacity.java`), which is why the number is here
+ * and not in the snapshot: no `mmorpg_stat` entry declares it, and `code-only-stats.generated.ts`
+ * carries the same 100 as its base.
+ */
+export const AURA_CAPACITY_BASE = 100;
+
+/** The stat that *is* Augment Capacity. `AuraCapacity.GUID()` is `spirit_cost`, confusingly. */
+export const AURA_CAPACITY_STAT = "spirit_cost";
+
+/** One Augment's share of the capacity, and what made it that. */
+export type AuraReservation = {
+  auraId: string;
+  /** `reservation * 100`, before the per-Augment cost stat. */
+  base: number;
+  /**
+   * `1 + <auraId>_aura_cost / 100`, or 1 where the pack declares no such stat for this Augment.
+   *
+   * Four of the pack's 28 Augments have none — `back_to_basics`, `critical_damage`,
+   * `critical_hit` and `guardian` — which is `SPECIFIC_AURA_COST.has(info)` returning false.
+   */
+  multiplier: number;
+  /** What this one actually reserves: `base * multiplier`. */
+  cost: number;
+};
+
+export type AuraCapacity = {
+  /** `getTotalSpirit` — the ceiling. */
+  capacity: number;
+  /** `getSpiritReserved` — the sum, truncated the way the Java's `int +=` truncates it. */
+  reserved: number;
+  /** `getRemainingSpirit`. Negative means the game would strip every Augment off. */
+  remaining: number;
+  /** Per Augment, in document order. Disabled Augments are left out, as unequipped ones are. */
+  entries: AuraReservation[];
+};
+
+/**
+ * How much Augment Capacity a set of Augments reserves, and how much there is.
+ *
+ * Ported from `GemInventoryHelper` in `Mine_and_Slash-1.20.1-6.4.13.jar` — the jar rather than
+ * the checkout, because the checkout is a fork and its copy of `getSpiritReserved` carries a
+ * `// this one is equals based on instance, so its never true lol` comment about the per-Augment
+ * cost lookup. That comment is wrong in 6.4.13: `AuraGems$AuraInfo.hashCode()` is
+ * `Objects.hash(id)` and `AutoHashClass.equals` compares hash codes, so the `HashMap.containsKey`
+ * behind `SPECIFIC_AURA_COST.has(info)` matches by id and the multiplier does apply.
+ *
+ *     int res = 0;
+ *     for (SkillGemData aura : getAurasGems()) {
+ *         float cost = aura.getAura().reservation * 100F;
+ *         var info = new AuraGems.AuraInfo(aura.getAura());
+ *         if (SPECIFIC_AURA_COST.has(info)) {
+ *             var stat = SPECIFIC_AURA_COST.get(info);
+ *             if (data.getCalculatedStat(stat).isNotZero()) cost *= data.getCalculatedStat(stat).getMultiplier();
+ *         }
+ *         res += cost;
+ *     }
+ *
+ * `res` is an `int` and `cost` a `float`, so `res += cost` is `res = (int) (res + cost)` — the
+ * running sum truncates after **every** Augment rather than once at the end. Two Augments at
+ * 39.6 each reserve 79, not 79.2 and not 80. That is reproduced rather than rounded, because it
+ * is the difference between fitting a third Augment and not.
+ *
+ * `getCalculatedStat` is read off the **player's** unit, not the gem's, so the cost reduction
+ * is a character stat like any other.
+ */
+export function auraCapacity(
+  env: Pick<Env, "snapshot">,
+  auras: readonly AuraSetup[],
+  sheet: ReadonlyMap<string, { value: number }>,
+): AuraCapacity {
+  const entries: AuraReservation[] = [];
+  let reserved = 0;
+
+  for (const aura of auras) {
+    if (!isAuraEnabled(aura)) continue;
+    const data = entry(env.snapshot, CATEGORY.aura, aura.id)?.data;
+    if (!data) continue;
+
+    const declared = data["reservation"];
+    const base = (typeof declared === "number" && Number.isFinite(declared) ? declared : 0) * 100;
+
+    // `SPECIFIC_AURA_COST` is keyed by `AuraInfo`, whose GUID is the Augment's own id, and the
+    // pack names the stats `<auraId>_aura_cost`. Asking the registry rather than assuming the
+    // stat exists is what reproduces `has(info)` for the four Augments that have none.
+    const costStat = `${aura.id}_aura_cost`;
+    const value = entry(env.snapshot, CATEGORY.stat, costStat) === undefined
+      ? 0
+      : (sheet.get(costStat)?.value ?? 0);
+    const multiplier = value === 0 ? 1 : 1 + value / 100;
+
+    const cost = base * multiplier;
+    entries.push({ auraId: aura.id, base, multiplier, cost });
+    reserved = Math.trunc(reserved + cost);
+  }
+
+  const resolved = Math.trunc(sheet.get(AURA_CAPACITY_STAT)?.value ?? 0);
+  const capacity = resolved < 1 ? AURA_CAPACITY_BASE : resolved;
+
+  return { capacity, reserved, remaining: capacity - reserved, entries };
+}
+
 export function collectAuras(env: Env, auras: readonly AuraSetup[]): StatContext[] {
   const out: StatContext[] = [];
 

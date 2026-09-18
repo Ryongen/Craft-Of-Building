@@ -38,9 +38,6 @@ export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
   return (
     <div className="card">
       <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          Self-damage
-        </span>
         <span className={net >= 0 ? "badge" : "badge warn"}>
           {net >= 0
             ? `regen covers it, +${smart(Math.round(net))}/s spare`
@@ -101,6 +98,8 @@ export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
         source.hit.hit.trace === undefined ? null : (
           <div key={source.source.id} className="mt-4">
             <div className="faint text-sm mb-2 mono">{source.source.valueCalcId}</div>
+            {/* No `target`: on a self-hit the target sheet *is* the character's, so there is
+                no enemy provenance to resolve against and `origins` is empty by construction. */}
             <TraceBlock trace={source.hit.hit.trace} />
           </div>
         ),

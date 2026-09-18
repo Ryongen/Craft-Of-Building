@@ -68,8 +68,23 @@ export function Outcome({
                     {smart(ailment.damagePerSecond)}/s for {num(ailment.durationSeconds, 1)}s ={" "}
                     {smart(ailment.totalDamage)}
                   </>
+                ) : ailment.procChance > 0 ? (
+                  // The pool is only worth something if something tips it. Naming the proc and
+                  // its chance on the same line is what turns "accumulates 11,305" from a
+                  // number with no consequence into the Shatter it is waiting for.
+                  <>
+                    accumulates {smart(ailment.accumulated)}, released by{" "}
+                    {PROC_NAME[ailment.ailment] ?? "a proc"} at{" "}
+                    {num(ailment.procChance * 100, 0)}% — the pool leaks{" "}
+                    {num(ailment.poolDecayPerSecond * 100, 0)}%/s while it waits
+                  </>
                 ) : (
-                  <>accumulates {smart(ailment.accumulated)}</>
+                  <>
+                    accumulates {smart(ailment.accumulated)}, and{" "}
+                    <strong>nothing releases it</strong>: without{" "}
+                    {PROC_NAME[ailment.ailment] ?? "a proc"} chance the pool only leaks away at{" "}
+                    {num(ailment.poolDecayPerSecond * 100, 0)}%/s
+                  </>
                 )}
               </div>
             </div>
@@ -79,3 +94,14 @@ export function Outcome({
     </div>
   );
 }
+
+/**
+ * What the game calls the proc that releases each pooled ailment.
+ *
+ * `AilmentProcStat.locNameForLangFile` is `ailment.procNameWord()`, and the two words are the
+ * ones on the player's own gear — nobody stacks "freeze proc chance", they stack Shatter.
+ */
+const PROC_NAME: Record<string, string> = {
+  freeze: "Shatter",
+  electrify: "Shock",
+};

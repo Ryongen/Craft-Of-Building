@@ -25,11 +25,21 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
           hint="Every damage source this cast produces, weighted by how much of each reaches the target, divided by the cast cycle"
         />
         <Figure label="Crit DPS" value={smart(dps.critDps)} hint="The same with crit pinned" />
-        {dps.ailmentDps > 0 && (
+        {/* The DoTs alone, so the label means what the sidebar's label means. Freeze and
+            Electrify are on the same clock and are a pool released in one spike rather than a
+            tick, which is a different thing to plan around — hence the figure beside it. */}
+        {dps.ailmentDps - dps.ailmentProcDps > 0.005 && (
           <Figure
             label="Ailment DPS"
-            value={smart(dps.ailmentDps)}
-            hint="Ailments tick on their own clock, so this is beside the hit rate rather than part of it"
+            value={smart(dps.ailmentDps - dps.ailmentProcDps)}
+            hint="Bleed, ignite and poison tick on their own clock, so this is beside the hit rate rather than part of it"
+          />
+        )}
+        {dps.ailmentProcDps > 0 && (
+          <Figure
+            label="Ailment hit DPS"
+            value={smart(dps.ailmentProcDps)}
+            hint={`Shatter and Shock releasing what your freezes and electrifies accumulated: a pool of ${smart(dps.ailmentHit)} per release, at the rate you set it off`}
           />
         )}
         <Figure

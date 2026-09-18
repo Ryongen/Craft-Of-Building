@@ -50,6 +50,7 @@ export function Figure({
   hint,
   size = "md",
   delta,
+  onClick,
 }: {
   label: string;
   value: string;
@@ -63,12 +64,15 @@ export function Figure({
    * which is the normal case.
    */
   delta?: ReactNode;
+  /** Opens where the number came from, where the caller can show that. */
+  onClick?: () => void;
 }): ReactNode {
   if (size === "sm") {
     return (
       <div
-        className="field"
+        className={`field${onClick ? " pick" : ""}`}
         title={hint}
+        onClick={onClick}
         style={{ display: "flex", flexDirection: "column", gap: 0, lineHeight: 1.15 }}
       >
         <label className="text-xs" style={{ opacity: 0.65, letterSpacing: 0.3 }}>{label}</label>

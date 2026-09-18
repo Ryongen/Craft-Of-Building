@@ -10,7 +10,7 @@
  */
 
 import type { CtxType } from "./context.js";
-import type { StatShape } from "./stat-shape.js";
+import type { StatShape } from "@cte2/schema";
 
 /**
  * Which stats hand themselves to others (`ITransferToOtherStats`, applied by `InCalc.modify`,

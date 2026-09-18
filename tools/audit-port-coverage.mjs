@@ -99,13 +99,26 @@ const ACCOUNTED = {
 
   // --- known gaps, tracked ------------------------------------------------------------
   "summon_health": ["gap", "a pet's hit points; the planner models what pets deal, not how long they live"],
-  "spell_dodge": ["gap", "defence.ts models dodge and block, not spell dodge"],
   "bleed_receive_chance": ["gap", "target-side ailment chance; 4 exile effects use it"],
   "burn_receive_chance": ["gap", "target-side ailment chance"],
   "electrify_receive_chance": ["gap", "target-side ailment chance"],
   "freeze_receive_chance": ["gap", "target-side ailment chance"],
   "poison_receive_chance": ["gap", "target-side ailment chance"],
-  "*_proc_chance": ["gap", "Shatter/Shock proc rate; nothing in this pack grants one"],
+  // The five `<ailment>_proc_chance` stats were one blanket entry whose stated reason — "nothing
+  // in this pack grants one" — was simply false: `mmorpg_base_stats/mob` grants every mob
+  // `electrify_proc_chance 10` and `freeze_proc_chance 5`, the mercenary block grants both, and
+  // 33 pack entries reference the pair. They split three ways rather than one.
+  //
+  // Shatter and Shock are implemented: `ailments.ts` reads the chance and the pool decay, and
+  // `dps.ts` turns the pool into a rate, exactly as `<ailment>_chance` above is read directly
+  // rather than through the in-code effect table.
+  "electrify_proc_chance": ["elsewhere", "Shock — ailments.ts reads it, dps.ts rates the pool"],
+  "freeze_proc_chance": ["elsewhere", "Shatter — ailments.ts reads it, dps.ts rates the pool"],
+  // The other three are the DoTs, which have no pool for a proc to release: `hasAccumulated`
+  // reads `dmgMap`, and only the two strength ailments ever write to it.
+  "bleed_proc_chance": ["dead", "a DoT has no accumulated pool for a proc to release"],
+  "burn_proc_chance": ["dead", "a DoT has no accumulated pool for a proc to release"],
+  "poison_proc_chance": ["dead", "a DoT has no accumulated pool for a proc to release"],
   "phys_to_all": ["gap", "converts to an `ALL`-element event; 2 perks"],
   "plus_phys_to_all": ["gap", "definition only in this pack"],
   "phys_taken_as_all": ["gap", "definition only in this pack"],
@@ -279,7 +292,7 @@ function main() {
  * table the port tool wrote, and this only has to ask whether that class sets a `statEffect`.
  */
 function statEffects(root, src, snapshot, record) {
-  const generated = readFileSync(join(root, "packages/engine/src/code-only-stats.generated.ts"), "utf8");
+  const generated = readFileSync(join(root, "packages/schema/src/code-only-stats.generated.ts"), "utf8");
   const rows = [...generated.matchAll(/"([^"]+)":\s*\{[^}]*\},\s*\/\/\s*(\S+\.java)/g)];
   if (rows.length === 0) fail("code-only-stats.generated.ts has no `// <path>.java` comments to join on");
 

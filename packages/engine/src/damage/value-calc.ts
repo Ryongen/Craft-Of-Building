@@ -23,7 +23,7 @@ import { CATEGORY, entry } from "@cte2/schema";
 
 import type { Balance } from "../balance.js";
 import type { Compat } from "../compat.js";
-import { isStatScaling, type StatScaling } from "../stat-shape.js";
+import { isStatScaling, type StatScaling } from "@cte2/schema";
 
 /** `LeveledValue` — a `{min, max}` band read at a spell level. */
 export type LeveledValue = { min: number; max: number };

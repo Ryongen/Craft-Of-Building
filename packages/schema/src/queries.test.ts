@@ -6,8 +6,11 @@ import {
   affixesFor,
   allowedAffixTiers,
   basesForSlot,
+  enchantCompats,
+  enchantName,
   gearRarity,
   maxOfOneAffixType,
+  maxQuality,
   meetsTagRequirement,
   perk,
   perksOfKind,
@@ -16,7 +19,7 @@ import {
   treeGrid,
   uniquesForBase,
 } from "./queries.js";
-import { RARITIES, grid, makeSnapshot, standardSnapshot } from "./test-support.js";
+import { RARITIES, grid, makeSnapshot, standardSnapshot, type Registries } from "./test-support.js";
 
 test("affix count is exact, not a floor", () => {
   const snapshot = standardSnapshot();
@@ -196,4 +199,228 @@ test("lookups by slot and by unique base", () => {
   assert.deepEqual(basesForSlot(snapshot, "bow").map((b) => b.id), ["bow"]);
   assert.deepEqual(uniquesForBase(snapshot, "bow").map((u) => u.id), ["windrunner"]);
   assert.deepEqual(uniquesForBase(snapshot, "boots"), []);
+});
+
+/**
+ * The three quality currencies Craft to Exile 2 `2.0.2` actually ships, with the `data` shapes
+ * copied off the pack rather than off `ItemMods` — the whole point of deriving the ceiling is
+ * that the two disagree. `add_1_to_5_gear_quality` is declared `MinMax(1, 5)` in the Java and
+ * is named for it; the pack overrides it to 1-10.
+ */
+function qualityRegistries(): Registries {
+  return {
+    library_of_exile_item_modification: {
+      add_gear_quality: { serializer: "add_quality", data: { add_quality: { min: 1, max: 1 } } },
+      add_1_to_5_gear_quality: { serializer: "add_quality", data: { add_quality: { min: 1, max: 10 } } },
+      corrupt_gear_no_affix: { serializer: "corrupt_gear" },
+      sharpening_stone_quality_0: { serializer: "add_quality", data: { add_quality: { min: 2, max: 2 } } },
+      sharpening_stone_quality_5: { serializer: "add_quality", data: { add_quality: { min: 12, max: 12 } } },
+      increment_uses_sharpening_stone: { serializer: "increment_uses" },
+    },
+    library_of_exile_item_requirement: {
+      is_gear: { serializer: "is_gear" },
+      is_under_20_quality: { serializer: "is_under_quality", data: { max_quality: 20 } },
+      is_under_21_quality: { serializer: "is_under_quality", data: { max_quality: 21 } },
+      max_uses_sharpening_stone: {
+        serializer: "max_uses",
+        data: { max_uses: 1, use_id: "sharpening_stone" },
+      },
+    },
+    library_of_exile_currency: {
+      orb_of_quality: {
+        req: ["is_not_corrupted", "is_under_20_quality"],
+        always_do_item_mods: [{ id: "add_gear_quality", weight: 1 }],
+        pick_one_item_mod: [],
+      },
+      entangled_quality: {
+        req: ["is_not_corrupted", "is_under_21_quality"],
+        always_do_item_mods: [],
+        pick_one_item_mod: [
+          { id: "add_1_to_5_gear_quality", weight: 75 },
+          { id: "corrupt_gear_no_affix", weight: 25 },
+        ],
+      },
+      sharpening_stone_0: {
+        req: ["is_not_corrupted", "max_uses_sharpening_stone"],
+        always_do_item_mods: [
+          { id: "sharpening_stone_quality_0", weight: 1 },
+          { id: "increment_uses_sharpening_stone", weight: 1 },
+        ],
+        pick_one_item_mod: [],
+      },
+      sharpening_stone_5: {
+        req: ["is_not_corrupted", "max_uses_sharpening_stone"],
+        always_do_item_mods: [
+          { id: "sharpening_stone_quality_5", weight: 1 },
+          { id: "increment_uses_sharpening_stone", weight: 1 },
+        ],
+        pick_one_item_mod: [],
+      },
+    },
+  };
+}
+
+test("the quality ceiling comes from the pack's currencies, not from the mod's defaults", () => {
+  const snapshot = makeSnapshot(qualityRegistries());
+
+  // Orb of Quality sits at 19 (`quality < 20`) and adds 1, so 20. The Entangled Orb is gated at
+  // 21 and adds up to 10, so 30 — and it is the better gate, so it is the one that binds. A
+  // Godly Sharpening Stone has no quality gate at all, only one use per item, so its 12 lands
+  // on top: 42.
+  assert.equal(maxQuality(snapshot), 42);
+});
+
+test("sharpening stones share one use budget rather than getting one each", () => {
+  // Every `sharpening_stone_N` names `use_id: "sharpening_stone"`, and `MaximumUsesReq` counts
+  // that id on the item. Summing the tiers instead would add 2 and 12 for a 14-point ceiling
+  // the game cannot reach, so the best add in a `use_id` group is taken once.
+  const registries = qualityRegistries();
+  delete registries["library_of_exile_currency"]!["orb_of_quality"];
+  delete registries["library_of_exile_currency"]!["entangled_quality"];
+  assert.equal(maxQuality(makeSnapshot(registries)), 12);
+});
+
+test("a quality currency with neither a gate nor a use budget has no ceiling", () => {
+  // Nothing would stop it being applied to the same item for ever, so there is no number to
+  // give and callers must not be handed a made-up one.
+  const registries = qualityRegistries();
+  registries["library_of_exile_currency"]!["endless_quality"] = {
+    req: ["is_gear"],
+    always_do_item_mods: [{ id: "add_gear_quality", weight: 1 }],
+    pick_one_item_mod: [],
+  };
+  assert.equal(maxQuality(makeSnapshot(registries)), undefined);
+});
+
+test("maxQuality returns undefined when currency registry is missing or has no quality currencies", () => {
+  // When a snapshot is on an older schema or missing Library of Exile registries,
+  // maxQuality must return undefined (unbounded / no maximum derived) rather than 0,
+  // so the UI does not clamp quality inputs to 0 and validation does not reject quality.
+  assert.equal(maxQuality(makeSnapshot({})), undefined);
+
+  const emptyCurrencies = qualityRegistries();
+  delete emptyCurrencies["library_of_exile_currency"];
+  assert.equal(maxQuality(makeSnapshot(emptyCurrencies)), undefined);
+
+  assert.equal(maxQuality(makeSnapshot({ library_of_exile_currency: {} })), undefined);
+
+  const nonQuality = {
+    library_of_exile_currency: {
+      chaos_orb: {
+        req: ["is_gear"],
+        always_do_item_mods: [],
+        pick_one_item_mod: [],
+      },
+    },
+  };
+  assert.equal(maxQuality(makeSnapshot(nonQuality)), undefined);
+});
+
+
+// ---------------------------------------------------------------------------
+// Vanilla enchantments
+// ---------------------------------------------------------------------------
+
+function compatRegistries(): Registries {
+  return {
+    mmorpg_stat_compat: {
+      // The enchantment half: `enchant_id` set, no attribute.
+      protection_compat: {
+        enchant_id: "minecraft:protection",
+        attribute_id: "",
+        mns_stat_id: "armor",
+        mod_type: "PERCENT",
+        conversion: 2,
+        per_item_min: 0,
+        per_item_max: 12,
+        minimum_cap: 0,
+        maximum_cap: 36,
+        scaling: "NONE",
+      },
+      looting_compat: {
+        enchant_id: "minecraft:looting",
+        attribute_id: "",
+        mns_stat_id: "increased_quantity",
+        mod_type: "FLAT",
+        conversion: 1,
+        per_item_min: 0,
+        per_item_max: 6,
+        minimum_cap: 0,
+        maximum_cap: 18,
+        scaling: "NONE",
+      },
+      wrd_reinforced_compat: {
+        enchant_id: "wrd:reinforced",
+        attribute_id: "",
+        mns_stat_id: "armor",
+        mod_type: "PERCENT",
+        conversion: 2,
+        per_item_min: 0,
+        per_item_max: 12,
+        minimum_cap: 0,
+        maximum_cap: 36,
+        scaling: "NONE",
+      },
+      // The attribute half, which belongs to a different stat context entirely.
+      max_health_compat: {
+        enchant_id: "",
+        attribute_id: "minecraft:generic.max_health",
+        mns_stat_id: "health",
+        mod_type: "FLAT",
+        conversion: 0.5,
+      },
+    },
+  };
+}
+
+test("only the enchantment half of mmorpg_stat_compat is an enchantment", () => {
+  // `getResult` and `getEnchantCompatResult` are two different methods feeding two different
+  // stat contexts (VANILLA_STAT_COMPAT against ENCHANT_COMPAT). An entry with an `attribute_id`
+  // and no `enchant_id` is a vanilla attribute — food diversity, the held weapon's damage — and
+  // offering it as something to put on an item would be offering a control that does nothing.
+  const compats = enchantCompats(makeSnapshot(compatRegistries()));
+  assert.deepEqual(
+    compats.map((c) => c.enchantId).sort(),
+    ["minecraft:looting", "minecraft:protection", "wrd:reinforced"],
+  );
+});
+
+test("an enchantment carries both of its clamps, which are different limits", () => {
+  const compats = enchantCompats(makeSnapshot(compatRegistries()));
+  const protection = compats.find((c) => c.enchantId === "minecraft:protection");
+
+  // The per-item clamp bounds what one piece contributes; the total clamp bounds the sum over
+  // every equipped piece. Collapsing them into one is how Protection IV on four pieces and
+  // Protection XVI on one become the same number, and they are not.
+  assert.equal(protection?.perItem.max, 12);
+  assert.equal(protection?.cap.max, 36);
+  assert.equal(protection?.conversion, 2);
+  assert.equal(protection?.modType, "PERCENT");
+  assert.equal(protection?.statId, "armor");
+});
+
+test("an enchantment entry falls back to the Java's own field defaults", () => {
+  // `StatCompat` declares `conversion = 0.5`, `minimum_cap = 0`, `maximum_cap = 100`,
+  // `per_item_min = 0`, `per_item_max = 100`. An entry that omits them must read as the Java
+  // reads it, not as zero — a conversion silently defaulting to 0 makes the enchantment inert.
+  const compats = enchantCompats(
+    makeSnapshot({
+      mmorpg_stat_compat: {
+        sparse: { enchant_id: "minecraft:sharpness", mns_stat_id: "all_physical_damage" },
+      },
+    }),
+  );
+  assert.equal(compats[0]?.conversion, 0.5);
+  assert.equal(compats[0]?.perItem.max, 100);
+  assert.equal(compats[0]?.cap.max, 100);
+  assert.equal(compats[0]?.modType, "PERCENT");
+});
+
+test("an enchantment's name keeps the namespace when it is not vanilla's", () => {
+  // Eleven of this pack's enchantment compats come from other mods, and two of them are called
+  // "Reinforced". Dropping the namespace makes those indistinguishable in a picker.
+  assert.equal(enchantName("minecraft:fire_protection"), "Fire Protection");
+  assert.equal(enchantName("wrd:reinforced"), "Reinforced (wrd)");
+  // An id with no namespace at all is vanilla's, which is how the registry spells some of them.
+  assert.equal(enchantName("looting"), "Looting");
 });

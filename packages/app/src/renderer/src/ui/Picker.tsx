@@ -4,6 +4,13 @@
  * A native `<select>` is unusable here: the affix pool for one base runs to a few hundred
  * entries, the spell list is 372, and the ids are not the labels. This filters on both the
  * display name and the id, because a fixture author who knows the id should be able to type it.
+ *
+ * **Searching on the id is not the same as showing it.** The registry id is the one part of a
+ * row a player has never seen: they know "Kobold Influence" and "of the Yeti", not
+ * `unique_necklace_kobold` and `suffix_cold_res_3`. Printed on every row it took the width the
+ * name and its value needed and made two lists of near-identical ids look like the thing to
+ * read. So it lives on the row's hover, where someone writing a fixture can still get at it,
+ * and {@link PickerOption.hint} carries what a *player* would use to tell two rows apart.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -15,6 +22,14 @@ export type PickerOption = {
   hint?: string;
   /** Extra text that should match a search without being displayed. */
   keywords?: string;
+  /**
+   * What this option would give you, for the row's hover.
+   *
+   * Several lines is normal and expected — an Augment's stat lines, a unique's mods. The id is
+   * appended below it, so a row's hover answers both "what does this do" and "what is it
+   * called in the data".
+   */
+  detail?: string;
 };
 
 /** How many rows the dropdown draws. Anything past this is counted, not dropped silently. */
@@ -137,12 +152,14 @@ export function Picker({
             <div
               key={option.id}
               className={`picker-option${index === active ? " active" : ""}`}
+              title={option.detail === undefined ? option.id : `${option.detail}
+
+${option.id}`}
               onMouseEnter={() => setActive(index)}
               onMouseDown={() => commit(option.id)}
             >
               <span className="ellipsis">{option.label}</span>
               {option.hint !== undefined && <span className="badge">{option.hint}</span>}
-              <span className="id">{option.id}</span>
             </div>
           ))}
         </div>

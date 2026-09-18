@@ -9,12 +9,26 @@
  * Colour is `good`, never the sign. 19 of this pack's stats are better when they go down —
  * cooldowns, costs, the `*_received` families — and `compare` has already resolved which way
  * each one points off `mmorpg_stat.minus_is_good`.
+ *
+ * A row that moved by less than {@link MINOR} is painted in a muted version of the same
+ * colour. The list is ranked, so those collect at the bottom, and a build is read by what
+ * moved *enough to matter* — a wall of ten equally bright rows makes the reader find that
+ * boundary themselves, every time.
  */
 
 import type { ReactNode } from "react";
 
 import type { Comparison, Delta } from "../state/compare.js";
-import { percent, round, signGlyph, smart } from "./format.js";
+import { USABLE_NOUN, num, percent, round, signGlyph, smart, usable } from "./format.js";
+
+/**
+ * Below this fraction a change is real but not worth looking at — a tenth of a percent.
+ *
+ * Absolute rather than relative to the biggest mover in the list: a threshold that floats with
+ * the largest row would dim a solid 3% gain simply because something else in the same click
+ * doubled, and "is this worth reading" is a question about the number itself.
+ */
+const MINOR = 0.001;
 
 export function DeltaTable({
   deltas,
@@ -45,19 +59,50 @@ export function DeltaTable({
 }
 
 function DeltaRow({ delta }: { delta: Delta }): ReactNode {
-  const tone = delta.good ? "up" : "down";
+  // A change from zero has no fraction and is never minor: it is a figure the build did not
+  // have at all, which is the largest kind of change there is.
+  const minor = delta.fraction !== undefined && Math.abs(delta.fraction) < MINOR;
+  const tone = `${delta.good ? "up" : "down"}${minor ? " minor" : ""}`;
   return (
     <>
       <span className="delta-label ellipsis" title={delta.key}>
         {delta.label}
       </span>
-      <span className={`delta-change ${tone}`} title={`${formatDelta(delta.before, delta.kind)} → ${formatDelta(delta.after, delta.kind)}`}>
-        {signed(delta.change, delta.kind)}
+      <span className={`delta-change ${tone}`} title={stateOf(delta)}>
+        {signedChange(delta)}
       </span>
       <span className={`delta-pct ${tone}`}>
         {delta.fraction === undefined ? "" : percent(delta.fraction)}
       </span>
     </>
+  );
+}
+
+/**
+ * The cell: what the change *is*.
+ *
+ * For the five `IUsableStat` families that is two numbers, and the useful one leads. `+120`
+ * armour is unpriceable on its own — the curve is hyperbolic, so the same 120 is four points
+ * of mitigation on a bare character and a tenth of one on a geared one — while
+ * `+1.35% (+120)` says both what you gained and where it came from.
+ */
+function signedChange(delta: Delta): string {
+  const flat = signed(delta.change, delta.kind);
+  if (delta.beforeUsable === undefined || delta.afterUsable === undefined) return flat;
+  const moved = delta.afterUsable - delta.beforeUsable;
+  // A rating that moved without moving the mitigation is worth saying plainly rather than
+  // dressing up as `+0.00%`: past the knee of the curve that is exactly what more armour buys.
+  if (Math.abs(moved) < 0.005) return `±0% (${flat})`;
+  return `${signGlyph(moved)}${num(Math.abs(moved), 2)}% (${flat})`;
+}
+
+/** The hover: what the figure *was*, and what it is now, in the same shape the sheet prints. */
+function stateOf(delta: Delta): string {
+  const plain = `${formatDelta(delta.before, delta.kind)} → ${formatDelta(delta.after, delta.kind)}`;
+  if (delta.beforeUsable === undefined || delta.afterUsable === undefined) return plain;
+  const noun = USABLE_NOUN[delta.key] ?? "effective";
+  return (
+    `${usable(delta.beforeUsable, delta.before)} → ${usable(delta.afterUsable, delta.after)} ${noun}`
   );
 }
 

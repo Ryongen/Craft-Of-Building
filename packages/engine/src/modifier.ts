@@ -16,7 +16,7 @@
  */
 
 import type { Balance } from "./balance.js";
-import type { StatShape } from "./stat-shape.js";
+import type { StatShape } from "@cte2/schema";
 
 /**
  * `ModType`. Note the resolution rule, which the pack leans on:

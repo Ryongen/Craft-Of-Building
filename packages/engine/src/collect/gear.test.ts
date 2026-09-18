@@ -419,3 +419,41 @@ test("a Watcher's Eye line scales to the jewel's own level, not the character's"
   // that the record's own `itemLevel` is the one that reaches `rollToExact` at all.
   closeTo(result.stats.get("armor")?.value, 6);
 });
+
+test("quality is added to the base stat roll, and to nothing else on the item", () => {
+  // `int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack));` — BaseStatsData.GetAllStats,
+  // confirmed against the 6.4.13 jar (a bare `iadd`, then straight into the per-stat lambda).
+  // `getQualityBaseStatsBonus` returns the stored int with no arithmetic on it, so 20 quality is
+  // 20 percentage points on the roll rather than a multiplier.
+  const result = calculate(
+    withGear([
+      {
+        base: "boots",
+        rarity: "common",
+        itemLevel: 1,
+        baseRolls: [50],
+        quality: 20,
+        suffixes: [{ affixId: "of_the_bear", tier: "common", rollPercent: 50 }],
+      },
+    ]),
+    SNAPSHOT,
+  );
+
+  // The base rolls at 70%, not 50: 4 + 4 * 0.7 = 6.8. The suffix stays at its own 50% — 15 —
+  // because nothing but `BaseStatsData` reads quality at all, and an implementation that
+  // applied it to the whole item would read 22.8 here.
+  closeTo(result.stats.get("armor")?.value, 21.8);
+});
+
+test("quality pushes the base roll past 100%, because nothing clamps the sum", () => {
+  // The band in `BaseStatsData.getMinMax` bounds the *stored* roll; quality is added after it
+  // and the sum is never re-clamped. A perfect item with quality on it is therefore worth more
+  // than the base type's declared maximum, which looks like a bug and is the mechanic.
+  const result = calculate(
+    withGear([{ base: "boots", rarity: "common", itemLevel: 1, baseRolls: [100], quality: 20 }]),
+    SNAPSHOT,
+  );
+
+  // 4 + 4 * 1.2 = 8.8, above the base's own max of 8.
+  closeTo(result.stats.get("armor")?.value, 8.8);
+});

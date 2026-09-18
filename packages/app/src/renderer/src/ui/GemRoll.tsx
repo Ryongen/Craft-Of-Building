@@ -35,20 +35,51 @@ export function gemBand(
  * and `runeword` is a gear conversion whose band is the whole range — neither is a gem, and
  * both are recognisable by their band carrying no information.
  */
-function gemRarities(world: ReturnType<typeof useWorld>): { id: string; min: number; max: number }[] {
+export function gemRarities(world: ReturnType<typeof useWorld>): { id: string; min: number; max: number }[] {
   return world.rarities
     .filter((r) => !r.isUniqueItem && r.statPercents.max - r.statPercents.min < 100)
     .map((r) => ({ id: r.id, min: r.statPercents.min, max: r.statPercents.max }));
 }
 
+/** The rarity and roll a gem is given when something creates one rather than reading one. */
+export type GemPreset = { rarity: string; rollPercent: number };
+
+/**
+ * The gem a shop would sell you at the top of the ladder: mythic, at the top of its band.
+ *
+ * The default for the Skills tab's preset, and the reason it is that rather than the bottom of
+ * the range: an unset gem computes at `band.min`, so every gem the ranked list priced was being
+ * priced as the worst copy of itself that exists. Ranking ninety gems by what the worst roll of
+ * each is worth answers a question nobody is asking — you are choosing which gem to go and get,
+ * and the one you go and get is the one you will eventually roll well.
+ *
+ * `undefined` only if a snapshot has no rollable rarity at all, which no pack does.
+ */
+export function bestGemPreset(world: ReturnType<typeof useWorld>): GemPreset | undefined {
+  // `world.rarities` is sorted by `item_tier`, so the last of the rollable ones is the top.
+  const top = gemRarities(world).at(-1);
+  return top === undefined ? undefined : { rarity: top.id, rollPercent: top.max };
+}
+
 export function GemRarityRoll({
   gem,
   onChange,
+  shownRoll,
+  onPreview,
 }: {
   gem: SupportLink | AuraSetup;
   // `undefined` is meaningful here — it clears the field rather than leaving it alone — so the
   // properties are explicitly nullable rather than merely optional.
   onChange: (next: { rarity?: string | undefined; rollPercent?: number | undefined }) => void;
+  /**
+   * The roll to draw the thumb at, where the caller is holding a drag in progress.
+   *
+   * See `useRollDraft`. A caller that renders this gem's *values* beside the slider has to own
+   * the draft, because both have to move together and only one of them can own it; a caller that
+   * renders the slider alone omits this and the gem's own `rollPercent` is used.
+   */
+  shownRoll?: number;
+  onPreview?: (rollPercent: number) => void;
 }): ReactNode {
   const world = useWorld();
   const band = gemBand(world, gem.rarity);
@@ -88,13 +119,14 @@ export function GemRarityRoll({
 
       <RollSlider
         label="roll"
-        value={gem.rollPercent ?? band.min}
+        value={shownRoll ?? gem.rollPercent ?? band.min}
         min={band.min}
         max={band.max}
         // Worth printing once a rarity narrows it. Without one the band is the whole range and
         // the label would only ever read "0-100%".
         showBand={gem.rarity !== undefined}
         onChange={(rollPercent) => onChange({ rollPercent })}
+        {...(onPreview === undefined ? {} : { onPreview })}
       />
 
       {gem.rollPercent === undefined && (

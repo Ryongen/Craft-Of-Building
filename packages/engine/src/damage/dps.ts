@@ -43,6 +43,7 @@ import { calculate, resolveEffects, type EngineResult } from "../calculate.js";
 import { spellRanks, withLearnedRank } from "../collect/spell.js";
 import { ORIGINAL_MODE } from "../compat.js";
 import { statIndex } from "../stat-def.js";
+import type { AilmentResult } from "./ailments.js";
 import { layerIndex } from "./layers.js";
 import {
   coverageOf,
@@ -371,6 +372,28 @@ export type DpsResult = {
   packDps: number;
   /** Ailment damage per second, summed. Not part of `dps` — it lands on its own clock. */
   ailmentDps: number;
+  /**
+   * The share of {@link ailmentDps} that is a Shatter or a Shock rather than a tick.
+   *
+   * Inside `ailmentDps`, not beside it: adding the two would double-count. It is broken out
+   * because the two halves behave nothing alike and a player choosing between them needs to see
+   * which is which. A bleed is a rate that is either up or it is not; a Shatter is a pool that
+   * fills off every freeze you land and empties in one spike, so the stats that move it are
+   * `freeze_chance` and `freeze_proc_chance` rather than `dot_speed` and `bleed_duration`.
+   */
+  ailmentProcDps: number;
+  /**
+   * How big that spike is: the pool one Shatter or Shock releases, at steady state.
+   *
+   * The hit that tips it lands as well, so the whole spike is `hit.average.total` plus this.
+   * They are two events — `EntityAilmentData.shatterAccumulated` fires an
+   * `EventBuilder.ofDamage` of its own — and are reported as two figures for that reason.
+   *
+   * Zero for a build with no proc chance, which is the honest answer rather than a floor:
+   * without one the pool only ever leaks, and nothing is released at all. {@link procPool} has
+   * the steady state, and why this depends on your cast rate.
+   */
+  ailmentHit: number;
   /** Exile effects this cast needs before it will do anything, from `caster_has_mns_effect`. */
   requires: string[];
   /**
@@ -490,6 +513,8 @@ export type FullDpsResult = {
   critDps: number;
   packDps: number;
   ailmentDps: number;
+  /** The Shatter and Shock share of {@link ailmentDps}, summed over the rotation. Inside it. */
+  ailmentProcDps: number;
   diagnostics: Diagnostic[];
 };
 
@@ -1199,6 +1224,12 @@ export function simulateDps(
     overlapping: rampSeconds > rate.cycleSeconds,
   };
 
+  // Zero when nothing this cast does lands on the enemy: a spell whose only damage act is its
+  // own recoil inflicts no ailments, and reporting the recoil's would put several hundred DPS on
+  // a pure buff. Hoisted because three figures below share the gate, and a gate applied to two
+  // of three is the kind of thing nothing notices.
+  const ailmentsLand = sources.length === 0 || headlineLands;
+
   return {
     spellId: skill.spellId,
     hit,
@@ -1238,13 +1269,19 @@ export function simulateDps(
     summonDps: summonDps(summons),
     packDps: perSecond(sustainedPerCast) * packSize,
     // Ailments are already a rate — they tick on their own clock, not the cast's — so they are
-    // reported beside the hit rather than folded into it. Zero when nothing this cast does lands
-    // on the enemy: a spell whose only damage act is its own recoil inflicts no ailments, and
-    // reporting the recoil's would put several hundred DPS on a pure buff.
-    ailmentDps:
-      sources.length > 0 && !headlineLands
-        ? 0
-        : hit.average.ailments.reduce((sum, a) => sum + a.damagePerSecond, 0),
+    // reported beside the hit rather than folded into it.
+    ailmentDps: ailmentsLand
+      ? hit.average.ailments.reduce(
+          (sum, a) => sum + a.damagePerSecond + procPerSecond(a, castsPerSecond),
+          0,
+        )
+      : 0,
+    ailmentProcDps: ailmentsLand
+      ? hit.average.ailments.reduce((sum, a) => sum + procPerSecond(a, castsPerSecond), 0)
+      : 0,
+    ailmentHit: ailmentsLand
+      ? hit.average.ailments.reduce((sum, a) => sum + procPool(a, castsPerSecond), 0)
+      : 0,
     requires: [...requires],
     ...(selfDamage === undefined ? {} : { selfDamage }),
     diagnostics: [...hit.diagnostics, ...diagnostics],
@@ -1473,6 +1510,7 @@ export function simulateFullDps(
     critDps: 0,
     packDps: 0,
     ailmentDps: 0,
+    ailmentProcDps: 0,
     diagnostics: [...diagnostics, ...extra],
   });
 
@@ -1650,6 +1688,7 @@ export function simulateFullDps(
     // Ailments run on their own clock and do not queue behind a cast, so they add rather than
     // divide.
     ailmentDps: entries.reduce((sum, e) => sum + e.result.ailmentDps * pressesOf(e), 0),
+    ailmentProcDps: entries.reduce((sum, e) => sum + e.result.ailmentProcDps * pressesOf(e), 0),
     diagnostics: [...diagnostics, ...entries.flatMap((e) => e.result.diagnostics)],
   };
 }
@@ -1695,3 +1734,73 @@ function upkeepOf(
 }
 
 export type { ElementName };
+
+/**
+ * What a Shatter or a Shock is worth per second.
+ *
+ * Freeze and electrify deal no damage when they land. They add to a pool on the target, and a
+ * later hit carrying `freeze_proc_chance` or `electrify_proc_chance` releases the whole of it as
+ * one `dot` event — `EntityAilmentData.shatterAccumulated`, which takes `dmgMap`'s entry, removes
+ * it, and fires `EventBuilder.ofDamage(source, target, (int) pool)`. Until now the pool was
+ * computed, reported on the Damage tab as "accumulates N", and then left out of the ailment DPS
+ * entirely, so a build stacking Shatter read as though its cold damage did nothing at all.
+ *
+ * The pool is a leaking bucket, so the figure is a steady state rather than a sum. Per second it
+ * gains what your hits put in, and loses two ways:
+ *
+ *     gain   = accumulated x chance x r          (r = hits per second)
+ *     decay  = poolDecayPerSecond x pool
+ *     procs  = (procChance x r) x pool
+ *
+ * Setting gain against the two losses and solving for the pool gives a proc rate of
+ *
+ *     accumulated x chance x r x  (procChance x r) / (procChance x r + poolDecayPerSecond)
+ *
+ * — the accumulation rate, times the share of the bucket that reaches a proc instead of leaking.
+ * The shape is worth reading: with no proc chance it is zero however much you accumulate, and
+ * with a fast rotation and a high proc chance it converges on the accumulation rate, because
+ * everything you put in eventually comes out. In between, the decay is what a point of proc
+ * chance is buying.
+ *
+ * `chance` is applied here where the DoT branch does not apply it, and the difference is real: a
+ * refreshed DoT is either up or not and is reported as its rate while up, whereas every inflicted
+ * freeze adds to the same pool, so a 40% freeze chance really does fill it at 40% of the rate.
+ *
+ * The rate used is casts per second rather than hits. A multi-hit cast fills the pool faster
+ * *and* tips it more often, and those pull in opposite directions in the ratio above, so the
+ * error is second-order — but it is an under-count for a multi-hit spell, and saying so is
+ * cheaper than implying a precision this does not have.
+ */
+function procPerSecond(ailment: AilmentResult, castsPerSecond: number): number {
+  return procPool(ailment, castsPerSecond) * ailment.procChance * castsPerSecond;
+}
+
+/**
+ * How big the pool is when a proc finds it — the size of one Shatter or one Shock.
+ *
+ * The steady state of the same leaking bucket {@link procPerSecond} describes, read for the
+ * level rather than for the flow. Setting the gain against the two losses:
+ *
+ *     accumulated x chance x r = pool x (procChance x r + poolDecayPerSecond)
+ *
+ * so
+ *
+ *     pool = accumulated x chance x r / (procChance x r + poolDecayPerSecond)
+ *
+ * and the proc rate above is this times how often it is tipped, `procChance x r`. Writing the
+ * two that way round rather than as two independent expressions is what stops the spike on
+ * screen from being a number the DPS beside it was not computed from.
+ *
+ * The shape is worth reading. With no decay it converges on `accumulated x chance / procChance`
+ * — exactly "one shatter's worth of hits, each contributing its average" — and the decay is what
+ * pulls it below that. So a slow rotation has a *smaller* spike as well as a rarer one, because
+ * 10% a second leaks off a pool that is kept waiting.
+ */
+function procPool(ailment: AilmentResult, castsPerSecond: number): number {
+  if (ailment.procChance <= 0 || ailment.accumulated <= 0 || castsPerSecond <= 0) return 0;
+  const procRate = ailment.procChance * castsPerSecond;
+  return (
+    (ailment.accumulated * ailment.chance * castsPerSecond) /
+    (procRate + ailment.poolDecayPerSecond)
+  );
+}

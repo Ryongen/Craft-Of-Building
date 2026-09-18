@@ -151,15 +151,126 @@ export type DerivedBuild = {
   elapsedMs: number;
   /** Per-stat provenance, built lazily — only the stat a user opened is assembled. */
   breakdown(statId: string): StatBreakdown;
+  /**
+   * The same, against the **main skill's own stat unit** rather than the character sheet.
+   *
+   * These are two different numbers and the difference is the thing a planner exists to show.
+   * The game keeps a separate stat unit per spell: a support gem writes into that unit and never
+   * into the sheet, so a skill linking `+70% critical hit chance` crits at a rate the character
+   * screen does not report and cannot. Asking the character sheet where that crit chance came
+   * from therefore answers with the gear and the tree and leaves out the one thing that actually
+   * moved it — which is exactly the complaint this exists to answer.
+   *
+   * `simulateHit` already returns both sheets it built (`DamageResult.sheets`), so this costs an
+   * index over contexts already in hand and no second engine pass.
+   *
+   * `undefined` when no skill is set, because then there is no spell unit to ask.
+   */
+  skillBreakdown(statId: string): StatBreakdown | undefined;
 };
+
+/**
+ * Turns an engine result into a `breakdown(statId)`.
+ *
+ * Shared by the character sheet and the spell unit, which is what keeps the two drill-downs
+ * honest about each other: the same rollup, the same reconstruction of the container's three
+ * running totals, the same handling of transfers. Anything that only made sense for one of them
+ * would be a place the two could quietly disagree.
+ *
+ * The index is built once per result rather than per stat, because a geared character carries a
+ * few thousand modifiers and the panel would otherwise rescan all of them every time a row is
+ * opened.
+ */
+function breakdownsOf(result: EngineResult, snapshot: Snapshot): (statId: string) => StatBreakdown {
+  const index = statIndex(snapshot);
+
+  const byStat = new Map<string, ModContribution[]>();
+  for (const ctx of result.contexts) {
+    for (const mod of ctx.stats) {
+      let list = byStat.get(mod.statId);
+      if (!list) {
+        list = [];
+        byStat.set(mod.statId, list);
+      }
+      list.push({
+        ctxType: ctx.type,
+        source: ctx.source,
+        path: ctx.path,
+        type: mod.type,
+        value: mod.value,
+        ...(mod.from === undefined ? {} : { from: mod.from }),
+      });
+    }
+  }
+
+  const derivedByStat = new Map<string, DerivedContribution[]>();
+  // Transfers are also indexed by their *source*, so a stat can explain why it reads 0.
+  const transferredTo = new Map<string, string[]>();
+  for (const entry of result.derived) {
+    let list = derivedByStat.get(entry.statId);
+    if (!list) {
+      list = [];
+      derivedByStat.set(entry.statId, list);
+    }
+    list.push(entry);
+
+    if (entry.kind === "transfer") {
+      let targets = transferredTo.get(entry.from);
+      if (!targets) {
+        targets = [];
+        transferredTo.set(entry.from, targets);
+      }
+      if (!targets.includes(entry.statId)) targets.push(entry.statId);
+    }
+  }
+
+  return (statId) => {
+    const contributions = byStat.get(statId) ?? [];
+    const derivedHere = derivedByStat.get(statId) ?? [];
+
+    let flat = 0;
+    let percent = 0;
+    let multi = 1;
+    let addedAfterCalc = 0;
+
+    for (const c of contributions) {
+      if (c.type === "FLAT") flat += c.value;
+      else if (c.type === "PERCENT") percent += c.value;
+      else multi *= 1 + c.value / 100;
+    }
+
+    // Transfers and the core-stat pass both re-enter the container, so they belong in these
+    // totals; the after-calc passes do not, because they write past it.
+    for (const d of derivedHere) {
+      if (d.type === "FLAT") flat += d.value;
+      else if (d.type === "PERCENT") percent += d.value;
+      else if (d.type === "MORE") multi *= 1 + d.value / 100;
+      // `addFullyTo` adds to the multiplier rather than multiplying by it — reproduced in
+      // the engine, so reproduced here.
+      else if (d.type === "MULTI_ADD") multi += d.value;
+      else addedAfterCalc += d.value;
+    }
+
+    return {
+      statId,
+      stat: result.stats.get(statId) ?? { value: 0, dmgMulti: 1, hardcap: 0, softcap: 0 },
+      contributions,
+      derived: derivedHere,
+      flat,
+      percent,
+      multi,
+      base: index.shapeOf(statId).base,
+      addedAfterCalc,
+      transferredTo: transferredTo.get(statId) ?? [],
+    };
+  };
+}
 
 function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
   const started = performance.now();
 
   const validation = validateBuild(doc, snapshot);
   const result: EngineResult = calculate(doc, snapshot);
-  // Cached per snapshot inside the engine, so this is a map lookup rather than a rebuild.
-  const index = statIndex(snapshot);
 
   // `simulateHit` throws nothing for a legal-but-odd build, but a document mid-edit can name a
   // spell that does not exist yet. A damage panel that disappears beats one that takes the app
@@ -207,47 +318,11 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
   const diagnostics = dedupe([...validation, ...result.diagnostics, ...damageDiagnostics]);
   const elapsedMs = performance.now() - started;
 
-  // Contributions are grouped once, not per stat: a geared character has a few thousand
-  // modifiers and the breakdown panel would otherwise rescan them all on every open.
-  const byStat = new Map<string, ModContribution[]>();
-  for (const ctx of result.contexts) {
-    for (const mod of ctx.stats) {
-      let list = byStat.get(mod.statId);
-      if (!list) {
-        list = [];
-        byStat.set(mod.statId, list);
-      }
-      list.push({
-        ctxType: ctx.type,
-        source: ctx.source,
-        path: ctx.path,
-        type: mod.type,
-        value: mod.value,
-        ...(mod.from === undefined ? {} : { from: mod.from }),
-      });
-    }
-  }
-
-  const derivedByStat = new Map<string, DerivedContribution[]>();
-  // Transfers are also indexed by their *source*, so a stat can explain why it reads 0.
-  const transferredTo = new Map<string, string[]>();
-  for (const entry of result.derived) {
-    let list = derivedByStat.get(entry.statId);
-    if (!list) {
-      list = [];
-      derivedByStat.set(entry.statId, list);
-    }
-    list.push(entry);
-
-    if (entry.kind === "transfer") {
-      let targets = transferredTo.get(entry.from);
-      if (!targets) {
-        targets = [];
-        transferredTo.set(entry.from, targets);
-      }
-      if (!targets.includes(entry.statId)) targets.push(entry.statId);
-    }
-  }
+  // One index per sheet, built once rather than per stat — see `breakdownsOf`. The spell unit is
+  // indexed only when there is one, so a build with no skill pays for nothing.
+  const characterBreakdown = breakdownsOf(result, snapshot);
+  const spellBreakdown =
+    damage === undefined ? undefined : breakdownsOf(damage.sheets.spell, snapshot);
 
   return {
     doc,
@@ -266,46 +341,8 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
     basic,
     elapsedMs,
 
-    breakdown(statId) {
-      const contributions = byStat.get(statId) ?? [];
-      const derivedHere = derivedByStat.get(statId) ?? [];
-
-      let flat = 0;
-      let percent = 0;
-      let multi = 1;
-      let addedAfterCalc = 0;
-
-      for (const c of contributions) {
-        if (c.type === "FLAT") flat += c.value;
-        else if (c.type === "PERCENT") percent += c.value;
-        else multi *= 1 + c.value / 100;
-      }
-
-      // Transfers and the core-stat pass both re-enter the container, so they belong in these
-      // totals; the after-calc passes do not, because they write past it.
-      for (const d of derivedHere) {
-        if (d.type === "FLAT") flat += d.value;
-        else if (d.type === "PERCENT") percent += d.value;
-        else if (d.type === "MORE") multi *= 1 + d.value / 100;
-        // `addFullyTo` adds to the multiplier rather than multiplying by it — reproduced in
-        // the engine, so reproduced here.
-        else if (d.type === "MULTI_ADD") multi += d.value;
-        else addedAfterCalc += d.value;
-      }
-
-      return {
-        statId,
-        stat: result.stats.get(statId) ?? { value: 0, dmgMulti: 1, hardcap: 0, softcap: 0 },
-        contributions,
-        derived: derivedHere,
-        flat,
-        percent,
-        multi,
-        base: index.shapeOf(statId).base,
-        addedAfterCalc,
-        transferredTo: transferredTo.get(statId) ?? [],
-      };
-    },
+    breakdown: characterBreakdown,
+    skillBreakdown: (statId) => spellBreakdown?.(statId),
   };
 }
 
@@ -326,13 +363,68 @@ function dedupe(diagnostics: Diagnostic[]): Diagnostic[] {
 }
 
 /**
+ * Which skill the damage figures are about, as an index into `doc.skills`.
+ *
+ * Read back off the run rather than re-derived, because the rule is not "the first skill" and a
+ * second copy of it silently disagrees. `simulateDps` takes the one marked `main`; failing that
+ * **the first enabled skill that declares a damage act**, because a capture whose bar starts
+ * with Protection would otherwise report 0 DPS for a build carrying Quake — and every what-if
+ * in the planner is a difference between two DPS numbers, so that zero propagated into the tree
+ * hover, the gem ranking and the Damage tab all reading "nothing changes".
+ *
+ * Two panels defaulted their skill selector to `findIndex(s => s.main)` and fell back to 0, and
+ * on exactly that document they opened on Protection while the sidebar beside them reported
+ * Quake's numbers.
+ *
+ * Falls back to 0 for a document with no damage figure at all, which is the only index that
+ * exists for it.
+ */
+export function mainSkillIndex(derived: DerivedBuild): number {
+  const skills = derived.doc.skills ?? [];
+  const spellId = derived.dps?.spellId;
+  if (spellId === undefined) return 0;
+  const at = skills.findIndex((skill) => skill.spellId === spellId);
+  return at < 0 ? 0 : at;
+}
+
+/**
+ * The last answer, shared by every component that asks for one.
+ *
+ * `useMemo` caches **per component instance**, which is the wrong granularity here and was
+ * quietly expensive: a panel that renders a row component per stat calls `useDerived` once per
+ * row, and each of those has its own memo cell, so `computeDerived` ran once per row on every
+ * edit. The new Stats tab has fourteen such boxes and the sidebar's vitals block a dozen rows —
+ * that tab took 284ms to open, almost all of it re-deriving the same document.
+ *
+ * The engine's own caches hide most of the cost of a second ask — `resolveEffects` memoises the
+ * exile-effect fixed point against the document — but not all of it: the validator runs, the
+ * damage pipeline runs, and the contribution index is rebuilt over a few thousand modifiers.
+ *
+ * One entry is the right size. Every component in a single render pass sees the same document
+ * object, because the store hands out one and nothing mutates it in place, so they all hit. A
+ * new document misses once and then hits for the rest of the pass.
+ */
+let lastDerived: { doc: BuildDoc; snapshot: Snapshot; value: DerivedBuild } | null = null;
+
+function derivedFor(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
+  if (lastDerived !== null && lastDerived.doc === doc && lastDerived.snapshot === snapshot) {
+    return lastDerived.value;
+  }
+  const value = computeDerived(doc, snapshot);
+  lastDerived = { doc, snapshot, value };
+  return value;
+}
+
+/**
  * The derived view of the current build.
  *
  * Keyed on document identity: every mutator in the store produces a new object, and nothing
- * mutates one in place, so reference equality is a sound cache key here.
+ * mutates one in place, so reference equality is a sound cache key here. The `useMemo` keeps the
+ * hook honest about its dependencies; {@link derivedFor} is what makes the *second* caller in the
+ * same render free.
  */
 export function useDerived(): DerivedBuild {
   const doc = useBuild((state) => state.doc);
   const { snapshot } = useWorld();
-  return useMemo(() => computeDerived(doc, snapshot), [doc, snapshot]);
+  return useMemo(() => derivedFor(doc, snapshot), [doc, snapshot]);
 }

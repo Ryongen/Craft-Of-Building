@@ -186,6 +186,43 @@ test("phys_taken_as_fire re-elements the hit you take, and keeps its attack-type
   );
 });
 
+test("a row says what the hit arrived as, which is how a converting attacker reads", () => {
+  // The complaint this answers: a Fire Lord mob lowers your *Physical* effective HP and leaves
+  // your Fire row alone, which reads as backwards until you see what the physical hit turned
+  // into. It is right — `phys_to_fire 75` and `plus_phys_to_fire 50` act on a hit that left the
+  // mob as physical, and a hit that left as fire is not something they have anything to say
+  // about — but nothing on screen said so, because the sweep followed the conversion children
+  // and then threw away which element each of them was.
+  //
+  // Asserted here with the conversion on the character's own sheet rather than the attacker's:
+  // `phys_taken_as_fire` reaches the same `bonusElements` by the same path, and it needs no mob
+  // affix registry to set up. `defence.test.ts` covers the affix half of the attacker.
+  const plain = character({ health: 1000 });
+  const before = plain.byElement.find((e) => e.element === "Physical")!;
+  assert.deepEqual(
+    before.arrivesAs.map((p) => p.element),
+    ["Physical"],
+    "with nothing converting, a physical hit arrives as physical and the column stays quiet",
+  );
+  closeTo(before.arrivesAs[0]!.share, 1);
+
+  const split = character({ health: 1000, phys_taken_as_fire: 50 });
+  const physical = split.byElement.find((e) => e.element === "Physical")!;
+  const fire = split.byElement.find((e) => e.element === "Fire")!;
+
+  assert.equal(physical.arrivesAs.length, 2, "half of it is fire by the time it lands");
+  assert.deepEqual(new Set(physical.arrivesAs.map((p) => p.element)), new Set(["Physical", "Fire"]));
+  closeTo(
+    physical.arrivesAs.reduce((sum, p) => sum + p.share, 0),
+    1,
+    "the shares are of what got through, so they add to one",
+  );
+
+  // The other half of the finding: the Fire row is untouched, because `phys_taken_as_*` is gated
+  // on the event's element being Physical.
+  assert.deepEqual(fire.arrivesAs.map((p) => p.element), ["Fire"]);
+});
+
 test("the weapon-slot multiplier reaches every converted element too", () => {
   // `buildBonusElementEvent` builds the child from the parent's own `attackInfo` and copies
   // `IS_BASIC_ATTACK`, then calls `bonus.initBeforeActivating()` for everything that is not a
@@ -226,4 +263,24 @@ test("three 33.4% conversions truncate to 99%, so the normaliser never fires", (
   closeTo(elementTotal(result.hit.byElement, "Nature"), 33);
   closeTo(elementTotal(result.hit.byElement, "Physical"), 1, "the truncated remainder stays put");
   closeTo(result.hit.total, 100, "and conversion still moves damage rather than making it");
+});
+
+test("converted damage is followed to the element it lands on, not written off", () => {
+  // Both conversion paths *subtract* what they moved from `EventData.NUMBER` and park it on
+  // `event.bonusElements`. `defence()` read `NUMBER` alone, so every point of converted damage
+  // was counted as a point prevented — `phys_taken_as_fire` looked like flat mitigation, and
+  // the more of it you had the less anything could hurt you.
+  //
+  // With no fire resistance the relabelled half is not reduced by anything, so a hit that is
+  // half taken as fire has to land in full. That is the assertion the old code could not pass:
+  // it read 0.5.
+  const naked = character({ health: 1000, phys_taken_as_fire: 50 });
+  const physical = naked.byElement.find((e) => e.element === "Physical")!;
+  closeTo(physical.taken, 1, "half taken as an unresisted element still arrives in full");
+
+  // And with the destination resisted, what lands is the two halves separately: 50% through
+  // armour-less physical, plus 50% through a 75% fire resist.
+  const resisted = character({ health: 1000, fire_resist: 75, phys_taken_as_fire: 50 });
+  const split = resisted.byElement.find((e) => e.element === "Physical")!;
+  closeTo(split.taken, 0.5 + 0.5 * 0.25, "0.5 physical + 0.5 fire at 75% resist");
 });

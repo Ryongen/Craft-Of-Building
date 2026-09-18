@@ -59,10 +59,14 @@ export type Vitals = {
   dps: number;
   critDps: number;
   /**
-   * The rotation across every skill ticked into Full DPS, procs included.
+   * The rotation across every skill ticked into Full DPS — procs and ailments included.
    *
    * A buff ticked into it is charged its upkeep rather than a cast per pass, so putting one on
    * the bar raises this figure instead of diluting it.
+   *
+   * Ailments are in it so that this, the sidebar's Full DPS row and the Damage tab's Full DPS
+   * figure are one number under one name. They were three compositions of it, and a Shatter
+   * build's whole cold output fell out of two of them.
    */
   fullDps: number;
   /**
@@ -110,6 +114,18 @@ export type Vitals = {
   ehpByElement: { element: string; effectiveHealth: number }[];
   /** The character sheet, for the "and everything else that moved" list. */
   stats: ReadonlyMap<string, number>;
+  /**
+   * `IUsableStat.getUsableValue` per stat that has one — armour, dodge, spell dodge, block and
+   * the resists.
+   *
+   * Beside {@link stats} rather than replacing the entry in it, because the two answer different
+   * questions and a diff wants both: `+120 armour` is what the item gave you and `+1.4%
+   * mitigation` is what it bought. Carried rather than recomputed at the point of rendering,
+   * because the curve needs the character's level, the balance file and the stat's scaling class
+   * — all of which are inside the engine run that produced these numbers and none of which a
+   * formatter has.
+   */
+  usable: ReadonlyMap<string, number>;
   /** Wall-clock milliseconds this candidate took, for the status line. */
   elapsedMs: number;
 };
@@ -128,11 +144,32 @@ export type Delta = {
   good: boolean;
   /** How to render it: a plain number, a percentage, or a fraction of 1 shown as a percent. */
   kind: "number" | "percent" | "ratio";
+  /**
+   * What this stat's rating converts to in play, before and after — see `Vitals.usable`.
+   *
+   * Only ever set for the five `IUsableStat` families. `+120 armour` is a number no player can
+   * price: the curve is hyperbolic, so the same 120 is worth four points of mitigation on a
+   * naked character and a tenth of one on a geared one. Both ends are carried rather than the
+   * difference alone, because the row prints the *state* on its hover and the *change* in its
+   * cell.
+   */
+  beforeUsable?: number;
+  afterUsable?: number;
 };
 
 export type Comparison = {
   /** DPS, effective HP and the rest of the headline figures, biggest mover first. */
   headline: Delta[];
+  /**
+   * Effective HP per element, kept out of {@link headline} rather than mixed into it.
+   *
+   * Six more rows is most of a tooltip, and the one a reader wants is already the headline's
+   * `ehp` — the weakest element is what actually kills you. The per-element figures still
+   * matter on a surface with room for them, because buying fire resistance on a character
+   * whose cold is worse moves no headline figure at all, so they are a separate list the
+   * Compare tab prints as its own table and the tooltips leave out.
+   */
+  ehpByElement: Delta[];
   /** Every sheet stat that moved. Empty for a support gem, which never touches the sheet. */
   stats: Delta[];
   /** True when nothing at all moved — a gem that does nothing for this skill. */
@@ -156,7 +193,9 @@ export const HEADLINE: {
   { key: "dps", label: "Skill DPS", good: "up", kind: "number" },
   { key: "fullDps", label: "Full DPS", good: "up", kind: "number" },
   { key: "procDps", label: "Proc DPS", good: "up", kind: "number" },
-  { key: "ailmentDps", label: "Ailment DPS", good: "up", kind: "number" },
+  // "Ailments" rather than "Ailment DPS": the sidebar's row of that name is the ticking half
+  // alone now, and this is the whole clock, Shatter and Shock included.
+  { key: "ailmentDps", label: "Ailments", good: "up", kind: "number" },
   { key: "basicDps", label: "Basic attack DPS", good: "up", kind: "number" },
   { key: "summonDps", label: "Summon DPS", good: "up", kind: "number" },
   { key: "critChance", label: "Crit chance", good: "up", kind: "ratio" },
@@ -364,12 +403,16 @@ function assembleVitals(parts: {
   const rates = damageRates({ dps, fullDps, basicDps: parts.basicDps });
 
   const stats = new Map<string, number>();
+  const usable = new Map<string, number>();
   for (const [id, stat] of parts.stats) {
     // `dmgMulti` is where every `MULTIPLICATIVE_DAMAGE` stat keeps its whole contribution while
     // its value stays at zero, so a diff that only read `value` would miss the entire family —
     // which is a quarter of a fire skill's damage on the reference build.
     const carried = stat.value !== 0 ? stat.value : (stat.dmgMulti - 1) * 100;
     if (carried !== 0) stats.set(id, carried);
+    // Kept even at zero, unlike the value above: a candidate that takes armour from 0 to 400 has
+    // no *before* entry in `stats` and the diff still has to print where the mitigation started.
+    if (stat.usableValue !== undefined) usable.set(id, stat.usableValue);
   }
 
   return {
@@ -377,7 +420,7 @@ function assembleVitals(parts: {
     // Skill DPS row means that skill, and the rotation has its own row beneath it.
     dps: dps?.dps ?? 0,
     critDps: dps?.critDps ?? 0,
-    fullDps: fullDps?.dps ?? 0,
+    fullDps: fullDps === undefined ? 0 : fullDps.dps + fullDps.ailmentDps,
     procDps: rates.procDps,
     ailmentDps: rates.ailmentDps,
     basicDps: rates.basicDps,
@@ -392,6 +435,7 @@ function assembleVitals(parts: {
       effectiveHealth: e.effectiveHealth,
     })),
     stats,
+    usable,
     elapsedMs: parts.elapsedMs,
   };
 }
@@ -438,18 +482,26 @@ export function compare(
     const a = before[row.key] as number;
     const b = after[row.key] as number;
     if (Math.abs(b - a) <= epsilon) continue;
-    headline.push(delta(row.key, row.label, a, b, row.good === "up", row.kind));
+    // `row.good` is which *direction* is an improvement for this figure, not whether this
+    // particular change was one. Passing it through as the verdict painted every headline row
+    // green whichever way it went, so a passive that cost DPS and a passive that bought it were
+    // the same colour — which is the one thing the block exists to tell apart.
+    headline.push(delta(row.key, row.label, a, b, row.good === "up" ? b > a : b < a, row.kind));
   }
 
   // Effective HP per element as well as the weakest, because the weakest one alone hides the
   // commonest defensive change there is: taking fire resistance on a character whose cold is
   // worse moves no headline figure at all, and reading "Effective HP +0" after buying a resist
-  // is worse than reading nothing.
+  // is worse than reading nothing. Its own list rather than six more headline rows — see
+  // `Comparison.ehpByElement`.
+  const ehpByElement: Delta[] = [];
   const beforeByElement = new Map(before.ehpByElement.map((e) => [e.element, e.effectiveHealth]));
   for (const { element, effectiveHealth } of after.ehpByElement) {
     const a = beforeByElement.get(element) ?? 0;
     if (Math.abs(effectiveHealth - a) <= epsilon) continue;
-    headline.push(delta(`ehp:${element}`, `EHP vs ${element}`, a, effectiveHealth, true, "number"));
+    ehpByElement.push(
+      delta(`ehp:${element}`, `EHP vs ${element}`, a, effectiveHealth, effectiveHealth > a, "number"),
+    );
   }
 
   const stats: Delta[] = [];
@@ -459,16 +511,37 @@ export function compare(
     if (Math.abs(b - a) <= epsilon) continue;
     const display: StatDisplay = statDisplay(snapshot, id);
     const improved = display.minusIsGood ? b < a : b > a;
-    stats.push(delta(id, display.name, a, b, improved, display.isPerc ? "percent" : "number"));
+    const row = delta(id, display.name, a, b, improved, display.isPerc ? "percent" : "number");
+    // Armour and dodge are the two rows a defensive comparison is actually read on, and the
+    // rating alone does not say what it bought. `before` may have no entry where the stat was
+    // absent altogether, which is a mitigation of 0 rather than an unknown.
+    const beforeUsable = before.usable.get(id);
+    const afterUsable = after.usable.get(id);
+    if (beforeUsable !== undefined || afterUsable !== undefined) {
+      row.beforeUsable = beforeUsable ?? 0;
+      row.afterUsable = afterUsable ?? 0;
+    }
+    stats.push(row);
   }
 
-  // The headline keeps its declared order. These are eight figures a reader already knows the
-  // names of, and a tooltip whose rows reshuffle between one node and the next cannot be
-  // compared against the last one — which is the whole activity. The stat list is the opposite
-  // case: it can run to sixty rows nobody has memorised, so it leads with what moved most.
+  // Both lists lead with what moved most.
+  //
+  // The headline used to keep its declared order, on the reasoning that a tooltip whose rows
+  // reshuffle between one node and the next cannot be compared against the last one. In
+  // practice the fixed order buried the answer: a node that moves Total DPS by a third and
+  // crit chance by a hundredth listed them in the same places as a node that does the reverse,
+  // and the reader had to scan ten rows to find which. Ranked, the top row *is* the answer.
+  // `ComparePanel` prints the full set in its declared order and is unaffected, because it
+  // walks `HEADLINE` itself rather than this list.
+  headline.sort(byMagnitude);
   stats.sort(byMagnitude);
 
-  return { headline, stats, unchanged: headline.length === 0 && stats.length === 0 };
+  return {
+    headline,
+    ehpByElement,
+    stats,
+    unchanged: headline.length === 0 && ehpByElement.length === 0 && stats.length === 0,
+  };
 }
 
 /**
@@ -703,7 +776,22 @@ export function useRanking<T>({
 }): Ranking<T> {
   const doc = useBuild((state) => state.doc);
   const { snapshot } = useWorld();
-  const base = useVitals(skillIndex);
+  /*
+   * The baseline is only computed while the list is open, and `enabled` is what says so.
+   *
+   * `useVitals(skillIndex)` with a stated index is a **full engine pass** — sheet, hit,
+   * rotation, swing and defence, 7 to 12 ms on a level-100 character — because it is asking
+   * about a skill the app has not computed. It used to be called unconditionally, which meant
+   * every closed `SupportGemPicker` on the Skills tab paid for one on every render. A Skill with
+   * five gems has five of those pickers mounted, so opening the tab cost five engine passes
+   * before anything was clicked, and every keystroke in the level box cost five more. That was
+   * the tab's whole stutter.
+   *
+   * Closed, the argument is dropped and `useVitals` returns the run `useDerived` already made
+   * for the open document, which is free. Opening re-runs this hook with the index, which is one
+   * pass, once, at the moment the answer is wanted.
+   */
+  const base = useVitals(enabled ? skillIndex : undefined);
   const invariant = useMemo(
     () => (reuseSheetFor !== undefined && enabled ? sheetInvariantOf(doc, snapshot) : undefined),
     [reuseSheetFor, enabled, doc, snapshot],

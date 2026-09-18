@@ -21,12 +21,10 @@ import { spellName } from "@cte2/schema";
 export function ProcTable({
   procs,
   total,
-  title,
   hint,
 }: {
   procs: readonly Proc[];
   total: number;
-  title: string;
   hint: string;
 }): ReactNode {
   const world = useWorld();
@@ -35,9 +33,6 @@ export function ProcTable({
   return (
     <div className="card">
       <div className="row wrap gap-7" style={{ alignItems: "baseline" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600 }}>
-          {title}
-        </span>
         <Figure label="Proc DPS" value={smart(total)} hint={hint} />
       </div>
 

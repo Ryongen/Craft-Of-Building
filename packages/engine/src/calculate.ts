@@ -226,7 +226,7 @@ function cacheKey(
     // Ids *and* rolls: two setups differing only in how well a support rolled are two different
     // stat sheets, and joining the raw array stringified every link to "[object Object]".
     (options.skill ? supportLinks(options.skill) : [])
-      .map((link) => `${link.id}@${link.rollPercent ?? ""}`)
+      .map((link) => `${link.id}@${link.rollPercent ?? ""}${link.enabled === false ? "!off" : ""}`)
       .join("+"),
     options.vanillaHealth === false ? "0" : "1",
     options.newbieResists === false ? "0" : "1",

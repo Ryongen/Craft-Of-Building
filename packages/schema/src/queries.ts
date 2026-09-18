@@ -14,6 +14,7 @@
 import type { RegistryEntry, Snapshot } from "@cte2/extractor";
 
 import type { AffixRoll, Item, OmenSetup, TreeKey } from "./build-doc.js";
+import { humanise } from "./display.js";
 
 export type MinMax = { min: number; max: number };
 
@@ -24,6 +25,16 @@ export type MinMax = { min: number; max: number };
  */
 export const DEFAULT_BALANCE_ID = "original_balance";
 export const DEFAULT_PLAYER_BASE_STATS_ID = "original_mode_player";
+
+/**
+ * `BaseStatsAdder.MOB` — the block every non-player entity gets.
+ *
+ * `CommonStatUtils.addBaseStats` is a three-way branch: a mercenary takes `mercenary`, a player
+ * takes `CompatConfig.baseStatsDatapack()`, and **everything else takes this one**. It is not a
+ * default or a fallback; a mob has it as surely as it has its rarity, and Craft to Exile 2
+ * overrides it with a block that carries armour, dodge, spell dodge and 10 of every resist.
+ */
+export const MOB_BASE_STATS_ID = "mob";
 
 /**
  * `UniqueStatsData.MAX_STATS` — how many roll slots a unique's NBT always carries, regardless
@@ -59,10 +70,13 @@ export const CATEGORY = {
   aura: "mmorpg_aura",
   baseGearType: "mmorpg_base_gear_types",
   baseStats: "mmorpg_base_stats",
+  currency: "library_of_exile_currency",
   exileEffect: "mmorpg_exile_effect",
   gameBalance: "mmorpg_game_balance",
   gearRarity: "mmorpg_gear_rarity",
   gearSlot: "mmorpg_gear_slot",
+  itemModification: "library_of_exile_item_modification",
+  itemRequirement: "library_of_exile_item_requirement",
   itemSet: "mmorpg_sets",
   gem: "mmorpg_gems",
   mobAffix: "mmorpg_mob_affix",
@@ -729,6 +743,206 @@ export function isTwoHanded(snapshot: Snapshot, baseId: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Vanilla enchantments
+// ---------------------------------------------------------------------------
+
+/**
+ * One vanilla enchantment the pack converts into a Mine and Slash stat.
+ *
+ * `mmorpg_stat_compat` is the bridge, and its enchantment half is the one a player can actually
+ * act on: Protection is `PERCENT 2 armor` per level, Looting is `FLAT 1 increased_quantity`,
+ * Sharpness is `FLAT 2 all_physical_damage`. 27 of this pack's 72 compat entries are
+ * enchantments, and eleven of those come from other mods — Better Archaeology's Penetrating
+ * Strike, Deeper Darker's Sculk Smite, Farmer's Delight's Backstabbing — which is why the list
+ * is read out of the registry rather than written down from vanilla's own.
+ *
+ * `perItem` and `cap` are both carried because they are different limits and the difference is
+ * the whole mechanic: `per_item_min/max` bounds what one piece may contribute and
+ * `minimum_cap/maximum_cap` bounds the total across every equipped piece, so Protection IV on
+ * four pieces and Protection XVI on one are not the same number.
+ */
+export type EnchantCompatView = {
+  /** The compat entry's own id, e.g. `protection_compat`. */
+  id: string;
+  /** The enchantment's registry id, which is the key on {@link Item.enchantments}. */
+  enchantId: string;
+  /** The Mine and Slash stat it converts into. */
+  statId: string;
+  /** Stat value per level of the enchantment, before either clamp. */
+  conversion: number;
+  modType: string;
+  perItem: { min: number; max: number };
+  cap: { min: number; max: number };
+};
+
+/**
+ * Every enchantment this pack converts, in registry order.
+ *
+ * An entry with no `enchant_id` is the *attribute* half of `mmorpg_stat_compat` — vanilla
+ * attributes rather than enchantments — and belongs to a different context (`VANILLA_STAT_COMPAT`
+ * against `ENCHANT_COMPAT`), so it is filtered out rather than shown as an enchantment nobody
+ * can apply.
+ */
+export function enchantCompats(snapshot: Snapshot): EnchantCompatView[] {
+  const out: EnchantCompatView[] = [];
+  for (const id of ids(snapshot, CATEGORY.statCompat)) {
+    const d = data(snapshot, CATEGORY.statCompat, id);
+    if (d === undefined) continue;
+    const enchantId = str(d, "enchant_id");
+    if (enchantId === undefined || enchantId.length === 0) continue;
+    out.push({
+      id,
+      enchantId,
+      statId: str(d, "mns_stat_id") ?? "",
+      // The Java field defaults, for an entry that omits them — the same ones `stat-compat.ts`
+      // reads, because a bound shown in the editor that the engine does not use is a lie.
+      conversion: num(d, "conversion", 0.5),
+      modType: str(d, "mod_type") ?? "PERCENT",
+      perItem: { min: num(d, "per_item_min", 0), max: num(d, "per_item_max", 100) },
+      cap: { min: num(d, "minimum_cap", 0), max: num(d, "maximum_cap", 100) },
+    });
+  }
+  return out;
+}
+
+/**
+ * A readable name for an enchantment id.
+ *
+ * There is no name for these anywhere in the snapshot: `mmorpg_stat_compat` carries the registry
+ * id and nothing else, and the enchantment itself belongs to Minecraft or to another mod, not to
+ * Mine and Slash. So the id is humanised — `minecraft:fire_protection` becomes "Fire Protection"
+ * — and the namespace is kept for anything that is not vanilla, because "Reinforced" appearing
+ * twice with no hint that one is WRD's is worse than a slightly longer label.
+ */
+export function enchantName(enchantId: string): string {
+  const [namespace, path] = enchantId.includes(":")
+    ? (enchantId.split(":", 2) as [string, string])
+    : ["minecraft", enchantId];
+  const name = humanise(path);
+  return namespace === "minecraft" ? name : `${name} (${namespace})`;
+}
+
+// ---------------------------------------------------------------------------
+// Item quality
+// ---------------------------------------------------------------------------
+
+/**
+ * How high `CustomItemData.KEYS.QUALITY` can go on one item in this pack.
+ *
+ * Quality itself is unclamped. `GearItemData.getQualityBaseStatsBonus` returns the stored int
+ * with no arithmetic on it at all, and `BaseStatsData.GetAllStats` adds it to the roll with a
+ * bare `iadd` and no bound (both read off the **6.4.13 jar**, not the fork). So the only thing
+ * that limits quality is which currencies exist and what they refuse to be used on — which is
+ * pack data, not code, and that distinction is the whole reason this is derived rather than
+ * written down.
+ *
+ * Reading the Java would have given the wrong number. `ItemMods.ADD_UP_TO_5_GEAR_QUALITY` is
+ * declared `new MinMax(1, 5)` and is even *named* for it, but Craft to Exile 2 overrides the
+ * entry: `add_1_to_5_gear_quality` in `library_of_exile_item_modification` says
+ * `{"min": 1, "max": 10}`. The pack wins, so the pack is what this counts.
+ *
+ * ## The arithmetic
+ *
+ * Two shapes of limit appear on a quality currency's `req` list:
+ *
+ *  - **a quality gate** — `is_under_quality`, which passes while `quality < max_quality`
+ *    (`IsUnderQualityReq.isGearValid`). A gate `g` with a largest add `a` therefore tops out at
+ *    `g - 1 + a`: sit one below the gate, then take the best roll.
+ *  - **a use budget** — `max_uses`, counted per `use_id` on the item itself
+ *    (`MaximumUsesReq.isValid`) and *shared* between every currency naming that id, which is
+ *    what stops the six sharpening stones from being six separate uses. Those have no quality
+ *    gate, so they add on top of whatever the gated ones reached.
+ *
+ * A currency's own best single application is every `always_do_item_mods` entry (they all fire)
+ * plus the best `pick_one_item_mod` entry (one fires).
+ *
+ * As of 2.0.2 that resolves to **42**: Orb of Quality reaches 20, the Entangled Orb of Quality
+ * is gated at 21 and adds up to 10 for 30, and a Godly Sharpening Stone adds 12 once more.
+ *
+ * ## It is an upper bound, deliberately
+ *
+ * `g - 1 + a` assumes you can land exactly on `g - 1`, which holds here because every
+ * `add_quality` range starts at 1 and so can step by one. Where a pack ships only coarse steps
+ * the true ceiling is lower and this over-estimates — which is the safe direction for a bound
+ * that gates an input and a validator, since it never refuses an item the game can make.
+ *
+ * `undefined` means no ceiling could be derived: some currency adds quality with neither a gate
+ * nor a use budget, so the answer is genuinely unbounded and callers must not invent one.
+ */
+export function maxQuality(snapshot: Snapshot): number | undefined {
+  /** The most quality one use of this currency can add. */
+  const addedBy = (currency: Record<string, unknown>): number => {
+    const addOf = (ref: unknown): number => {
+      if (ref === null || typeof ref !== "object") return 0;
+      const id = str(ref as Record<string, unknown>, "id");
+      if (id === undefined) return 0;
+      const mod = data(snapshot, CATEGORY.itemModification, id);
+      if (mod === undefined || str(mod, "serializer") !== "add_quality") return 0;
+      return minMax(obj(obj(mod, "data") ?? {}, "add_quality"), { min: 0, max: 0 }).max;
+    };
+    const always = arr(currency, "always_do_item_mods").reduce<number>((sum, ref) => sum + addOf(ref), 0);
+    const pick = arr(currency, "pick_one_item_mod").reduce<number>((best, ref) => Math.max(best, addOf(ref)), 0);
+    return always + pick;
+  };
+
+  let gatedCeiling = 0;
+  let hasQualityCurrencies = false;
+  /** `use_id` → the budget it allows and the best per-use add among the currencies sharing it. */
+  const budgets = new Map<string, { uses: number; add: number }>();
+
+  for (const id of ids(snapshot, CATEGORY.currency)) {
+    const currency = data(snapshot, CATEGORY.currency, id);
+    if (currency === undefined) continue;
+    const add = addedBy(currency);
+    if (add <= 0) continue;
+    hasQualityCurrencies = true;
+
+    // Every requirement must pass, so the tightest gate and the tightest budget are the ones
+    // that bind.
+    let gate: number | undefined;
+    let budget: { useId: string; uses: number } | undefined;
+    for (const ref of arr(currency, "req")) {
+      if (typeof ref !== "string") continue;
+      const req = data(snapshot, CATEGORY.itemRequirement, ref);
+      if (req === undefined) continue;
+      const reqData = obj(req, "data") ?? {};
+      if (str(req, "serializer") === "is_under_quality") {
+        // A gate whose number will not read is no gate: leaving it out drops this currency into
+        // the unbounded branch below, which is the honest answer for data we cannot parse.
+        // Defaulting it to infinity instead would silently make the ceiling infinite.
+        const max = num(reqData, "max_quality", Number.NaN);
+        if (Number.isFinite(max) && (gate === undefined || max < gate)) gate = max;
+      } else if (str(req, "serializer") === "max_uses") {
+        const uses = num(reqData, "max_uses", 0);
+        const useId = str(reqData, "use_id");
+        if (useId !== undefined && (budget === undefined || uses < budget.uses)) {
+          budget = { useId, uses };
+        }
+      }
+    }
+
+    if (gate !== undefined) {
+      gatedCeiling = Math.max(gatedCeiling, gate - 1 + add);
+    } else if (budget !== undefined) {
+      const seen = budgets.get(budget.useId);
+      budgets.set(budget.useId, {
+        uses: seen === undefined ? budget.uses : Math.min(seen.uses, budget.uses),
+        add: Math.max(seen?.add ?? 0, add),
+      });
+    } else {
+      // Neither gated nor rationed: this currency can be applied to the same item for ever.
+      return undefined;
+    }
+  }
+
+  if (!hasQualityCurrencies) return undefined;
+
+  let ceiling = gatedCeiling;
+  for (const { uses, add } of budgets.values()) ceiling += uses * add;
+  return ceiling;
+}
+
+// ---------------------------------------------------------------------------
 // Slot occupancy
 // ---------------------------------------------------------------------------
 
@@ -758,9 +972,16 @@ export function isTwoHanded(snapshot: Snapshot, baseId: string): boolean {
  *     slots through `CuriosApi.getCuriosHelper().getCurioTags(item)`.
  *
  * Keyed by `mmorpg_gear_slot` id. A slot absent from this map has **no known capacity** and is
- * deliberately not guessed: `elytra` and `head` are pack-added `Jewelry`-family slots matching
- * no block in `CURIO_BLOCKS`, so how many a character may wear is genuinely unanswered and
+ * deliberately not guessed: `head` is a pack-added `Jewelry`-family slot matching no block in
+ * `CURIO_BLOCKS`, so how many a character may wear is genuinely unanswered and
  * {@link slotCapacity} returns `undefined` rather than inventing a 1.
+ *
+ * **`elytra` is the one entry here that does not come from the Java.** It is a pack-added slot
+ * like `head`, so `CURIO_BLOCKS` says nothing about it, and it was left out for that reason.
+ * It is 1 on the pack author's own report: the pack gives a character exactly one elytra slot,
+ * and the slot holds a unique that always grants the same stats. Recorded as a stated fact
+ * rather than a derived one, because a future reader checking it against
+ * `CharacterEquipment.java` will not find it there.
  */
 export const SLOT_CAPACITY: Readonly<Record<string, number>> = {
   helmet: 1,
@@ -769,6 +990,7 @@ export const SLOT_CAPACITY: Readonly<Record<string, number>> = {
   boots: 1,
   necklace: 1,
   ring: 2,
+  elytra: 1,
 };
 
 /**

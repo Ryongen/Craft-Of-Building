@@ -24,14 +24,14 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, ElementName, EnemySetup, Severity, SkillSetup } from "@cte2/schema";
-import { CATEGORY, ELEMENTS, SINGLE_ELEMENTAL, SINGLE_ELEMENTS, entry } from "@cte2/schema";
+import { CATEGORY, CODE_ONLY_TRANSFERS, ELEMENTS, SINGLE_ELEMENTS, entry } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { calculate, type EngineResult, type EngineStat } from "../calculate.js";
 import { ORIGINAL_MODE, type Compat } from "../compat.js";
 import { maxSpellLevel, spellLevel } from "../collect/spell.js";
 import { statIndex, type EffectBlock, type StatIndex } from "../stat-def.js";
-import { applyAilments, type Ailment, type AilmentResult } from "./ailments.js";
+import { applyAilments, type Ailment, type AilmentEvent, type AilmentResult } from "./ailments.js";
 import { Recorder, type EventTrace, type LayerStep, type MoreStep } from "./breakdown.js";
 import { evaluateIfs } from "./conditions.js";
 import { applyStatEffect } from "./effects.js";
@@ -159,6 +159,18 @@ export type DamageResult = {
    */
   sheets: { character: EngineResult; spell: EngineResult };
   /**
+   * The enemy this hit landed on, as the mitigation layers saw it.
+   *
+   * Separate from `sheets` because it is not one of the character's: `sheets.character` is who
+   * you are and this is what you hit. A `[Target]` row in a breakdown resolves against this,
+   * and resolving it against the character instead is not a smaller mistake — it files the
+   * mob's armour under your chestplate.
+   *
+   * `origins` covers only the stats something aimed at: a mob affix or one of your debuffs. A
+   * stat the enemy simply declared has nothing to explain and is read off `sheet`.
+   */
+  target: { sheet: Sheet; origins: ReadonlyMap<string, TargetStatOrigin> };
+  /**
    * `proc_spell` blocks the sweep reached, per branch.
    *
    * Collected only when `options.procs` asks for them, because a spell with six damage sources
@@ -215,9 +227,12 @@ export function simulateHit(
   // not applied to it: `shred` and `elemental_weakness` are things you put on the mob, and
   // carrying them across would have your own recoil shredding you.
   const selfHit = options.selfHit === true;
+  // Collected unconditionally: it is one map of the stats a debuff or an affix touched, which
+  // is a handful of entries, and the Damage tab always wants to be able to explain one.
+  const targetOrigins = new Map<string, TargetStatOrigin>();
   const targetSheet = selfHit
     ? characterSheet
-    : targetSheetFor(build, effects, snapshot, index, bal, report);
+    : targetSheetFor(build, effects, snapshot, index, bal, report, targetOrigins);
 
   const act = damageAct(spell, options);
   if (!act) {
@@ -304,6 +319,7 @@ export function simulateHit(
     crit,
     average: blend(hit, crit, rolledCrit),
     sheets: { character: characterRun, spell: spellRun },
+    target: { sheet: targetSheet, origins: targetOrigins },
     ...(procs === undefined ? {} : { procs }),
     diagnostics,
   };
@@ -932,6 +948,10 @@ function enemySheet(enemy: EnemySetup | undefined): Sheet {
   if (enemy.armor !== undefined) put("armor", enemy.armor);
   if (enemy.blockChance !== undefined) put("block_chance", enemy.blockChance);
   if (enemy.dodge !== undefined) put("dodge", enemy.dodge);
+  // `spell_dodge` is its own stat and its own curve (`valueNeededAtLevelOne: 200`, against
+  // dodge's 100), so a spell is evaded by a different number than an attack is. The pack gives
+  // every mob both.
+  if (enemy.spellDodge !== undefined) put("spell_dodge", enemy.spellDodge);
   if (enemy.damageReduction !== undefined) put("damage_reduction", enemy.damageReduction);
   for (const [guid, value] of Object.entries(enemy.resists ?? {})) put(`${guid}_resist`, value);
   for (const [guid, value] of Object.entries(enemy.maxResists ?? {})) put(`max_${guid}_resist`, value);
@@ -969,7 +989,7 @@ function enemySheet(enemy: EnemySetup | undefined): Sheet {
 /**
  * The enemy's sheet with everything aimed at it folded in — its affixes and your debuffs.
  *
- * Both in one accumulator on purpose; see {@link applyTargetMods}.
+ * Both in one accumulator on purpose; see {@link applySheetMods}.
  */
 function targetSheetFor(
   build: BuildDoc,
@@ -978,6 +998,8 @@ function targetSheetFor(
   index: StatIndex,
   bal: ReturnType<typeof balance>,
   report: (severity: Severity, code: string, path: string, message: string) => void,
+  /** Filled in with where each modified stat came from, when a caller wants to explain one. */
+  origins?: Map<string, TargetStatOrigin>,
 ): Sheet {
   const sheet = enemySheet(build.config?.enemy);
   const affixIds = build.config?.enemy?.affixes ?? [];
@@ -990,7 +1012,7 @@ function targetSheetFor(
   // which no mitigation effect reads — the aggregate has to be handed to the elements it covers
   // or the affix moves nothing at all.
   const affixes = mobAffixMods(snapshot, index, bal, mobLevel, affixIds, report).flatMap((m) =>
-    targetStats(m.statId).map((statId) => ({
+    spreadsTo(m.statId).map((statId) => ({
       statId,
       type: m.type,
       value: m.value,
@@ -1000,12 +1022,33 @@ function targetSheetFor(
   );
   for (const d of mobAffixDiagnostics(snapshot, affixIds)) report(d.severity, d.code, d.path, d.message);
 
-  applyTargetMods(
-    sheet,
-    [...affixes, ...debuffMods(effects, snapshot, index, bal, build.character.level)],
-    index,
-    report,
-  );
+  const mods = [...affixes, ...debuffMods(effects, snapshot, index, bal, build.character.level)];
+
+  // Captured before the mods are folded in, because that is the only moment the enemy's own
+  // declared value still exists — `applySheetMods` overwrites it in place.
+  if (origins !== undefined) {
+    for (const mod of mods) {
+      let origin = origins.get(mod.statId);
+      if (origin === undefined) {
+        origin = {
+          statId: mod.statId,
+          declared: sheet.get(mod.statId)?.value ?? 0,
+          mods: [],
+          final: 0,
+        };
+        origins.set(mod.statId, origin);
+      }
+      origin.mods.push(mod);
+    }
+  }
+
+  applySheetMods(sheet, mods, index, report);
+
+  if (origins !== undefined) {
+    for (const origin of origins.values()) {
+      origin.final = sheet.get(origin.statId)?.value ?? 0;
+    }
+  }
   return sheet;
 }
 
@@ -1036,7 +1079,7 @@ function debuffMods(
       // shred harder, and until now that stat changed nothing.
       const scaled = option.strMulti === 1 ? stacked : multiplyExact(stacked, option.strMulti);
 
-      for (const statId of targetStats(scaled.statId)) {
+      for (const statId of spreadsTo(scaled.statId)) {
         out.push({ statId, type: scaled.type, value: scaled.value, source: option.id, path: "config.effects" });
       }
     }
@@ -1045,7 +1088,30 @@ function debuffMods(
 }
 
 /** One resolved modifier bound for the enemy's sheet, with what produced it. */
-type TargetMod = { statId: string; type: ModType; value: number; source: string; path: string };
+export type TargetMod = { statId: string; type: ModType; value: number; source: string; path: string };
+
+/**
+ * How one stat on the enemy arrived at the number a mitigation layer read.
+ *
+ * The enemy's sheet is not the character's, and until this existed there was no way to ask it
+ * anything. A breakdown could name the *stat* behind `Elemental Mitigation x1.20` and stop
+ * there — and stopping there is exactly where the question starts, because the number the layer
+ * used is rarely the number the target preset declared. A mythic mob's 30 cold resistance is
+ * 13.61 by the time a build carrying Banner of the Piercing Gale has hit it, and 30 − 33.61
+ * penetration does not equal what the panel showed.
+ *
+ * `declared` is what the preset or the document said; `mods` is everything aimed at it, in the
+ * order it was applied; `final` is what the sweep actually read.
+ */
+export type TargetStatOrigin = {
+  statId: string;
+  /** The enemy's own value before any affix or debuff — `config.enemy`, or 0. */
+  declared: number;
+  /** Mob affixes and your debuffs, each with the id that granted it. */
+  mods: TargetMod[];
+  /** What the mitigation layers saw. */
+  final: number;
+};
 
 /**
  * Everything aimed at the enemy, folded into its sheet in one pass.
@@ -1056,7 +1122,7 @@ type TargetMod = { statId: string; type: ModType; value: number; source: string;
  * granting `PERCENT -8 armor` have to meet in the same accumulator or the arithmetic is a
  * different one.
  */
-function applyTargetMods(
+export function applySheetMods(
   sheet: Sheet,
   mods: readonly TargetMod[],
   index: StatIndex,
@@ -1117,16 +1183,41 @@ function applyTargetMods(
 }
 
 /**
- * Which stats on the enemy's sheet a debuff's modifier really lands on.
+ * Which stats a modifier written against an aggregate really lands on.
  *
- * `code-only-effects.ts` registers one mitigation effect per single element and skips the two
- * aggregates, so a modifier written against `elemental_resist` or `all_resist` has to be handed
- * to the elements those names cover or it changes nothing at all.
+ * Every damage layer is registered per *single* element — `fire_resist`, `water_penetration` —
+ * and the aggregates are not layers at all. In a real calculation that is fine, because
+ * `ITransferToOtherStats` empties `elemental_resist` into its three elements before the first
+ * pass and clears itself (`applyTransfers` in `calculate.ts`). A sheet assembled by hand never
+ * ran that pass, so on those an aggregate is an id nothing reads and the modifier is silently
+ * worth nothing.
+ *
+ * Driven by `CODE_ONLY_TRANSFERS` rather than by a list written here, which is the fix for the
+ * bug that prompted this: the hand-written version covered `elemental_resist` and `all_resist`
+ * and nothing else, so the `penetrating` mob affix's `elemental_penetration 25` reached none of
+ * your three elemental resists — its `armor_penetration` and `chaos_penetration` were real ids
+ * and did apply, which is exactly the "physical and chaos move, the elements do not" shape it
+ * showed up as. The generated table is the game's own `ITransferToOtherStats` and covers the
+ * whole family: both penetrations, both conversions, `phys_taken_as_elemental` and the two
+ * resist aggregates.
+ *
+ * `all_resist` stays hardcoded because it is not an `ITransferToOtherStats` at all — the ALL
+ * element spreads through `Elements.multi`, a different mechanism — and dropping it here would
+ * silently un-fix a case that already worked.
  */
-function targetStats(statId: string): string[] {
-  if (statId === "elemental_resist") return SINGLE_ELEMENTAL.map((e) => `${e.guid}_resist`);
+function spreadsTo(statId: string): readonly string[] {
   if (statId === "all_resist") return SINGLE_ELEMENTS.map((e) => `${e.guid}_resist`);
-  return [statId];
+  return CODE_ONLY_TRANSFERS[statId] ?? [statId];
+}
+
+/**
+ * The same, for a sheet that is not the target's.
+ *
+ * Exported for `defence.ts`, which builds the *attacker's* sheet by hand from a mob's affixes
+ * and hit the identical problem from the other side.
+ */
+export function aggregateSpread(statId: string): readonly string[] {
+  return spreadsTo(statId);
 }
 
 /** The first `damage` act found anywhere in the spell's component tree. */
@@ -1228,7 +1319,8 @@ export function simulateBasicAttack(
   const characterRun = options.sheets?.character ?? calculate(build, snapshot, sheetOptions);
   const characterSheet = characterRun.stats;
   const effects = options.effects ?? characterRun.effects;
-  const targetSheet = targetSheetFor(build, effects, snapshot, index, bal, report);
+  const targetOrigins = new Map<string, TargetStatOrigin>();
+  const targetSheet = targetSheetFor(build, effects, snapshot, index, bal, report, targetOrigins);
 
   // `(int)` on the stat value, toward zero, exactly as the Java casts it.
   const baseValue = Math.trunc(sheetValue(characterSheet, "weapon_damage"));
@@ -1290,6 +1382,7 @@ export function simulateBasicAttack(
     // Both halves are the character sheet: a swing has no spell unit, and handing back a second
     // reference to the same run is more honest than inventing one.
     sheets: { character: characterRun, spell: characterRun },
+    target: { sheet: targetSheet, origins: targetOrigins },
     ...(procs === undefined ? {} : { procs }),
     diagnostics,
   };
@@ -1321,18 +1414,22 @@ export function simulateBasicAttack(
  * layers apply here, and `<ailment>_resistance` applies again afterwards in
  * `onAilmentCausingDamage`. Both, in that order, is what the game does.
  *
- * No trace is recorded. A breakdown of one ailment is a second tree the panel has nowhere to
- * put, and `AilmentResult` carries the before and after instead.
+ * A trace is recorded when one was asked for, because the game prints this event as its own
+ * block in the damage log and the rows are the whole point: the ailment's `additive_damage` is a
+ * different number from the hit's — `dot`/`int` against `hit`/the weapon's style — and only a
+ * row-by-row reading says which stats crossed over and which did not. It is still off by default,
+ * so the ordinary path allocates nothing.
  */
 function ailmentEventDamage(
   shared: Shared,
   ailment: Ailment,
   base: number,
   diagnostics: Diagnostic[],
-): number {
-  if (base <= 0) return 0;
+): AilmentEvent {
+  if (base <= 0) return { damage: 0 };
 
-  const event = new DamageEventState(shared.layers);
+  const recorder = shared.breakdown ? new Recorder() : undefined;
+  const event = new DamageEventState(shared.layers, undefined, recorder);
   event.data.setupNumber(EVENT.NUMBER, base);
   // A `value_calculation`'s field, and this event has no value calculation.
   event.data.setupNumber(EVENT.DMG_EFFECTIVENESS, 1);
@@ -1372,17 +1469,38 @@ function ailmentEventDamage(
     sourceIsTarget: shared.selfHit,
   };
 
+  const steps: LayerStep[] = [];
+  const moreMultis: MoreStep[] = [];
   sweep(
     ctx,
     [
       { side: "Source" as const, sheet: shared.sourceSheet },
       { side: "Target" as const, sheet: shared.targetSheet },
     ],
-    [],
-    [],
+    steps,
+    moreMultis,
   );
 
-  return Math.max(0, event.damage);
+  const damage = Math.max(0, event.damage);
+  if (recorder === undefined) return { damage };
+  return {
+    damage,
+    trace: {
+      element: ailment.element,
+      // Its own event, not a child of the hit's: `AilmentChance.activate` builds it from the
+      // source and target rather than from the hit, so nothing about it is nested.
+      depth: 0,
+      takenAs: false,
+      baseNumber: base,
+      steps,
+      moreMultis,
+      finalNumber: damage,
+      penetration: event.penetration,
+      // An ailment event cannot spawn bonus elements: `addBonusEleDmg` is reached only from
+      // effects gated on a direct hit, and this one is `dot`.
+      children: [],
+    },
+  };
 }
 
 /** `spell.config.style` — already `PlayStyle.id` in the snapshot, so lower case throughout. */

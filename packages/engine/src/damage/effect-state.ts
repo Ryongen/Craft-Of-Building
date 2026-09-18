@@ -58,7 +58,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, EffectSetup, ExileEffectSetup } from "@cte2/schema";
-import { CATEGORY, entry, isAuraEnabled, isSkillEnabled, learnedSpells, supportLinks } from "@cte2/schema";
+import { CATEGORY, activeSupportLinks, entry, isAuraEnabled, isSkillEnabled, learnedSpells } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { spellRanks, type SpellRanks } from "../collect/spell.js";
@@ -765,7 +765,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
   // positive at 0%, and availability only asks whether the stat is there at all.
   for (const skill of build.skills ?? []) {
     if (!isSkillEnabled(skill)) continue;
-    for (const link of supportLinks(skill)) {
+    for (const link of activeSupportLinks(skill)) {
       const gem = entry(snapshot, CATEGORY.supportGem, link.id)?.data;
       if (!gem) continue;
       for (const raw of asArray(gem["stats"])) {

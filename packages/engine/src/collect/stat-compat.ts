@@ -55,7 +55,7 @@ import { context, type Env, type StatContext } from "../context.js";
 import type { ExactMod } from "../modifier.js";
 import { clamp } from "../container.js";
 import { modTypeFromString, type ModType } from "../modifier.js";
-import { isStatScaling } from "../stat-shape.js";
+import { isStatScaling } from "@cte2/schema";
 
 type CompatEntry = {
   id: string;
@@ -234,13 +234,50 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
   const entries = readEntries(env);
   if (entries.length === 0) return [];
 
-  // A capture always wins: `character.attributes` is what the game reported, food diversity
-  // included. `foodDiversity` is the planning path, for a build with no capture behind it.
+  /*
+   * Food diversity, against whatever the capture managed to read.
+   *
+   * The old rule here was "a capture always wins, because `character.attributes` already
+   * includes food diversity". That is true of `minecraft:generic.max_health` and false of every
+   * other attribute the benefits grant: in the reference capture `kubejs:weapon_damage`,
+   * `kubejs:armor`, `kubejs:magic_shield`, `kubejs:dodge` and `kubejs:all_attributes` all read
+   * **0** while `max_health` reads 220 — they are server-derived and the exporter reads them
+   * client-side, so they come back empty. Under the old rule the box on screen was disabled and
+   * the stats were simply missing, with a warning saying they had been counted already.
+   *
+   * So the two are merged per attribute rather than one replacing the other, and the capture
+   * only wins where it actually recorded something. A captured 220 max health keeps its 220; a
+   * captured 0 dodge takes the number the stated diversity implies. Nothing is double-counted,
+   * because an attribute cannot be both non-zero and absent.
+   */
   let attributes = build.character.attributes;
   const diversity = build.character.foodDiversity;
-  if (attributes === undefined && diversity !== undefined && diversity > 0) {
+  if (diversity !== undefined && diversity > 0) {
     const derived = attributesFromFoodDiversity(env, diversity);
-    attributes = derived.attributes;
+    if (attributes === undefined) {
+      attributes = derived.attributes;
+    } else {
+      const filled: string[] = [];
+      const merged: Record<string, number> = { ...attributes };
+      for (const [id, value] of Object.entries(derived.attributes)) {
+        const captured = merged[id];
+        if (captured !== undefined && captured !== 0) continue;
+        merged[id] = value;
+        filled.push(id);
+      }
+      attributes = merged;
+      if (filled.length > 0) {
+        env.report(
+          "info",
+          "food-diversity-filled-gaps",
+          "character.foodDiversity",
+          `The capture reported no value for ${filled.join(", ")}, so \`foodDiversity: ` +
+            `${diversity}\` supplied ${filled.length === 1 ? "it" : "them"}. Every other ` +
+            `attribute is the captured one — a food benefit the game did report is not ` +
+            `counted twice.`,
+        );
+      }
+    }
     if (derived.unsupported > 0) {
       env.report(
         "warning",
@@ -250,14 +287,6 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
           `which is not modelled. Only ADDITION benefits are applied.`,
       );
     }
-  } else if (attributes !== undefined && diversity !== undefined) {
-    env.report(
-      "warning",
-      "food-diversity-ignored",
-      "character.foodDiversity",
-      `\`character.attributes\` was captured from the game, so it already includes food ` +
-        `diversity. \`foodDiversity: ${diversity}\` is ignored rather than counted twice.`,
-    );
   }
   const mods: ExactMod[] = [];
   const enchantMods: ExactMod[] = [];

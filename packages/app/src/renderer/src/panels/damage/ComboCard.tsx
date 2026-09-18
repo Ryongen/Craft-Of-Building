@@ -20,9 +20,6 @@ export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
   return (
     <div className="card">
       <div className="row wrap" style={{ gap: 18, alignItems: "flex-start" }}>
-        <span className="faint text-sm" style={{ fontWeight: 600, alignSelf: "center" }}>
-          Combo
-        </span>
         {combo.castsPerSecond !== undefined && (
           <Figure
             label="Casts/s"

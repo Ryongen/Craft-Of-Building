@@ -21,14 +21,14 @@ import {
   CODE_ONLY_CLASS_SHAPES,
   CODE_ONLY_STATS,
   CODE_ONLY_TRANSFERS,
-} from "./code-only-stats.generated.js";
+} from "@cte2/schema";
 import { parseSourceMods, type SourceMod } from "./modifier.js";
 import {
   isMultiUseType,
   isStatScaling,
   STAT_DEFAULTS,
   type StatShape,
-} from "./stat-shape.js";
+} from "@cte2/schema";
 
 export const STAT_CATEGORY = "mmorpg_stat";
 

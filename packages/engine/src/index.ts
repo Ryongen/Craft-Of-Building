@@ -35,8 +35,8 @@ export {
   STAT_SCALINGS,
   isMultiUseType,
   isStatScaling,
-} from "./stat-shape.js";
-export type { MultiUseType, StatScaling, StatShape } from "./stat-shape.js";
+} from "@cte2/schema";
+export type { MultiUseType, StatScaling, StatShape } from "@cte2/schema";
 
 export {
   MOD_TYPES,
@@ -59,7 +59,7 @@ export type { StatValue } from "./container.js";
 export { CTX_TYPES, context, makeEnv } from "./context.js";
 export type { CtxType, Env, StatContext } from "./context.js";
 
-export { CODE_ONLY_STATS, CODE_ONLY_TRANSFERS } from "./code-only-stats.generated.js";
+export { CODE_ONLY_STATS, CODE_ONLY_TRANSFERS } from "@cte2/schema";
 export {
   CTX_MODIFIERS,
   CTX_MODIFIER_STATS,
@@ -75,7 +75,13 @@ export type { Compat } from "./compat.js";
 // --- the damage pipeline (phase 2) ---------------------------------------------------
 
 export { simulateBasicAttack, simulateHit } from "./damage/simulate.js";
-export type { DamageOptions, DamageResult, HitOutcome } from "./damage/simulate.js";
+export type {
+  DamageOptions,
+  DamageResult,
+  HitOutcome,
+  TargetMod,
+  TargetStatOrigin,
+} from "./damage/simulate.js";
 
 export {
   ATTACK_SPEED_ATTRIBUTE,
@@ -228,7 +234,14 @@ export type { DamageCtx, ProcHit, RestoreRecord, Sheet } from "./damage/ctx.js";
 // The collectors, so an editor can preview one item or one perk through the exact code path
 // the sheet uses rather than a parallel reimplementation that can drift from it.
 export { collectBaseStats } from "./collect/base-stats.js";
-export { collectAuras, collectExileEffects } from "./collect/effects.js";
+export {
+  AURA_CAPACITY_BASE,
+  AURA_CAPACITY_STAT,
+  auraCapacity,
+  collectAuras,
+  collectExileEffects,
+} from "./collect/effects.js";
+export type { AuraCapacity, AuraReservation } from "./collect/effects.js";
 export { collectGear, collectJewels } from "./collect/gear.js";
 export { collectOmen } from "./collect/omen.js";
 export { collectPerks } from "./collect/perks.js";

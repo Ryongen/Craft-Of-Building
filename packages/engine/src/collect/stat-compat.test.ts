@@ -251,8 +251,8 @@ test("food diversity derives the attributes when none were captured", () => {
   assert.equal(at9.get("weapon_damage")?.value, 102);
 });
 
-test("a captured attribute set wins over a declared food diversity", () => {
-  // The capture already includes food diversity; counting both would double it.
+/** A pack whose only food benefit is `kubejs:weapon_damage`, for the capture-merge tests. */
+function foodSnapshot() {
   const snap = snapshot();
   snap.externalConfig = {
     ...snap.externalConfig,
@@ -263,10 +263,36 @@ test("a captured attribute set wins over a declared food diversity", () => {
       benefits: [{ threshold: 3, attributeId: "kubejs:weapon_damage", operation: 0, value: 1, raw: "" }],
     },
   };
+  return snap;
+}
+
+test("a captured attribute the game actually reported wins over food diversity", () => {
+  // The capture recorded 5, which already has whatever the character had eaten in it. Adding
+  // the stated diversity on top would count the same food twice.
   const result = calculate(
     { schemaVersion: 1, character: { level: 1, foodDiversity: 30, attributes: { "kubejs:weapon_damage": 5 } } },
-    snap,
+    foodSnapshot(),
   );
   assert.equal(result.stats.get("weapon_damage")?.value, 105);
-  assert.ok(result.diagnostics.some((d) => d.code === "food-diversity-ignored"));
+  assert.ok(!result.diagnostics.some((d) => d.code === "food-diversity-filled-gaps"));
+});
+
+test("food diversity fills an attribute the capture read as zero", () => {
+  // The real failure this exists for: the exporter reads the `kubejs:` attributes client-side
+  // and they come back 0 while `minecraft:generic.max_health` comes back right. Under the old
+  // rule the whole diversity was dropped on the grounds that the capture had it.
+  const result = calculate(
+    { schemaVersion: 1, character: { level: 1, foodDiversity: 30, attributes: { "kubejs:weapon_damage": 0 } } },
+    foodSnapshot(),
+  );
+  assert.equal(result.stats.get("weapon_damage")?.value, 101);
+  assert.ok(result.diagnostics.some((d) => d.code === "food-diversity-filled-gaps"));
+});
+
+test("food diversity fills an attribute the capture omitted entirely", () => {
+  const result = calculate(
+    { schemaVersion: 1, character: { level: 1, foodDiversity: 30, attributes: { "minecraft:generic.luck": 3 } } },
+    foodSnapshot(),
+  );
+  assert.equal(result.stats.get("weapon_damage")?.value, 101);
 });

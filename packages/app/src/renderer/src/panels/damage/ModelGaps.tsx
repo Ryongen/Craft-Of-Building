@@ -13,9 +13,6 @@ export function ModelGaps({ model }: { model: DpsResult["model"] }): ReactNode {
 
   return (
     <div className="card">
-      <div className="faint text-sm mb-3" style={{ fontWeight: 600 }}>
-        Not in this figure
-      </div>
       {unmodelledSummons.length > 0 && (
         <div className="text-sm mb-2">
           <span className="badge bad">summons</span> Puts a vanilla entity in the world (

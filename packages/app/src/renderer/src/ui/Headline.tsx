@@ -31,12 +31,13 @@
 
 import type { ReactNode } from "react";
 
+import type { SheetFocus } from "../panels/stats/SheetDetail.js";
 import { damageRates, useBaselineComparison, type Delta } from "../state/compare.js";
 import { useDerived } from "../state/derived.js";
 import { Figure } from "./Figure.js";
 import { compact, percent, signGlyph } from "./format.js";
 
-export function Headline(): ReactNode {
+export function Headline({ onFocus }: { onFocus?: (focus: SheetFocus) => void }): ReactNode {
   const derived = useDerived();
   const { dps, fullDps, basic, defence } = derived;
   const against = useBaselineComparison();
@@ -64,6 +65,9 @@ export function Headline(): ReactNode {
         label="TOTAL DPS"
         value={compact(totalDps)}
         delta={deltaFor("totalDps")}
+        {...(onFocus === undefined
+          ? {}
+          : { onClick: () => onFocus({ kind: "figure", id: "total-dps" }) })}
         hint={
           `Everything that lands on the target while you play this build: ` +
           `${inRotation ? "the rotation" : "your main skill"} at ${compact(primaryDps)}` +
@@ -79,6 +83,9 @@ export function Headline(): ReactNode {
         label="EHP"
         value={compact(weakest.effectiveHealth)}
         delta={deltaFor("ehp")}
+        {...(onFocus === undefined
+          ? {}
+          : { onClick: () => onFocus({ kind: "figure", id: "ehp" }) })}
         hint={
           `Effective HP against your weakest element (${weakest.element}): the pool divided by ` +
           `the share of a hit that gets through. It is the element that actually kills you.`
@@ -89,6 +96,9 @@ export function Headline(): ReactNode {
         label="POOL"
         value={compact(pool)}
         delta={deltaFor("pool")}
+        {...(onFocus === undefined
+          ? {}
+          : { onClick: () => onFocus({ kind: "stat", statId: "health" }) })}
         hint={
           `Life ${compact(defence.pools.health)}` +
           (defence.pools.magicShield > 0

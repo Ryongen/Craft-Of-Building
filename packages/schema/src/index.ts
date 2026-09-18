@@ -4,10 +4,12 @@ export {
   MAX_ACTIVE_SKILLS,
   TREE_KEYS,
   activeSkillCount,
+  activeSupportLinks,
   emptyBuild,
   isAuraEnabled,
   isFoodBuffEnabled,
   isSkillEnabled,
+  isSupportEnabled,
   supportLinks,
 } from "./build-doc.js";
 export type {
@@ -98,7 +100,10 @@ export {
   TWO_HANDED_TAG,
   allUniques,
   coreStatIds,
+  enchantCompats,
+  enchantName,
   isTwoHanded,
+  maxQuality,
   slotCapacity,
   slotFamilyCapacity,
   statPointBudget,
@@ -127,6 +132,7 @@ export type {
   AffixType,
   AffixView,
   BaseGearTypeView,
+  EnchantCompatView,
   GemView,
   RuneView,
   RunewordView,
@@ -269,6 +275,7 @@ export type {
   FixtureResult,
   Observation,
   ObservationSource,
+  ObservedAilmentEvent,
   ObservedDamage,
   ObservedDamageEvent,
   ObservedLayer,
@@ -280,3 +287,26 @@ export type {
   StatComparison,
   Tolerance,
 } from "./fixture.js";
+
+/**
+ * `Stat`'s own fields, and the table of the ones Mine and Slash registers only in Java.
+ *
+ * These live here rather than in `@cte2/engine` because `statDisplay` needs them: a code-only
+ * stat has no JSON, so its `is_perc` is reachable from nowhere else, and the Stats tab was
+ * printing Shatter Chance and Shock Chance as bare numbers. The engine re-exports both names,
+ * so nothing that imported them from there had to change.
+ */
+export {
+  MAX_FLOAT,
+  MULTI_USE_TYPES,
+  STAT_DEFAULTS,
+  STAT_SCALINGS,
+  isMultiUseType,
+  isStatScaling,
+} from "./stat-shape.js";
+export type { MultiUseType, StatScaling, StatShape } from "./stat-shape.js";
+export {
+  CODE_ONLY_CLASS_SHAPES,
+  CODE_ONLY_STATS,
+  CODE_ONLY_TRANSFERS,
+} from "./code-only-stats.generated.js";
