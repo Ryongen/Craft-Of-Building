@@ -270,9 +270,26 @@ function evaluateSerializer(
       if (id === undefined) return { kind: "unknown", reason: "the condition names no effect" };
       return atMaxStacks(ctx.effects, id) ? TRUE : FALSE;
     }
-    case "is_effect":
-    case "effect_has_tag":
-      return { kind: "unknown", reason: "depends on which exile effect triggered the event" };
+    // Both read `EventData.EXILE_EFFECT`, which only the `on_exile_effect` event carries:
+    //
+    //     if (event.data.hasExileEffect()) return event.data.getExileEffect().hasTag(tag);
+    //     return false;                     // EffectHasTagCondition.java:24-29
+    //
+    // So on a damage sweep this is genuinely unanswerable, and on an effect sweep it is simply
+    // read off the effect being applied — see `effect-duration.ts`.
+    case "is_effect": {
+      if (ctx.exileEffect === undefined) {
+        return { kind: "unknown", reason: "depends on which exile effect triggered the event" };
+      }
+      return stringAt(data, "effect") === ctx.exileEffect.id ? TRUE : FALSE;
+    }
+    case "effect_has_tag": {
+      if (ctx.exileEffect === undefined) {
+        return { kind: "unknown", reason: "depends on which exile effect triggered the event" };
+      }
+      const tag = stringAt(data, "tag");
+      return tag !== undefined && ctx.exileEffect.tags.has(tag) ? TRUE : FALSE;
+    }
     case "is_target_cursed":
       return hasCurse(ctx) ? TRUE : FALSE;
     case "is_in_combat":

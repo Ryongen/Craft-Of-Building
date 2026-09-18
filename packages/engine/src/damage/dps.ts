@@ -35,16 +35,21 @@
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import type { BuildDoc, Diagnostic, ElementName, SkillSetup } from "@cte2/schema";
+import type { BuildConfig, BuildDoc, Diagnostic, ElementName, SkillSetup } from "@cte2/schema";
 import { isSkillEnabled } from "@cte2/schema";
 
+import type { Balance } from "../balance.js";
 import { balance } from "../balance.js";
 import { calculate, resolveEffects, type EngineResult } from "../calculate.js";
 import { spellRanks, withLearnedRank } from "../collect/spell.js";
+import type { Compat } from "../compat.js";
 import { ORIGINAL_MODE } from "../compat.js";
+import type { StatIndex } from "../stat-def.js";
 import { statIndex } from "../stat-def.js";
 import type { AilmentResult } from "./ailments.js";
-import { layerIndex } from "./layers.js";
+import type { Sheet } from "./ctx.js";
+import { effectDurationTicks } from "./effect-duration.js";
+import { layerIndex, type LayerIndex } from "./layers.js";
 import {
   coverageOf,
   DEFAULT_PLACEMENT,
@@ -196,6 +201,23 @@ export type SourceResult = {
   concurrentCasts: number;
   /** `concurrentCasts × carriersPerCast` — carriers in the world at once, for a projectile. */
   concurrentCarriers: number;
+};
+
+/**
+ * How long a press of a buff keeps its effect on you.
+ *
+ * `infinite` is the `-1` every stance, aura and toggle in this pack writes: you press it once
+ * and it stays until you press it again, so there is nothing for a duration stat to lengthen and
+ * `durationSeconds` is `Infinity` rather than a large number.
+ */
+export type BuffDuration = {
+  /** The effect whose duration is the longest of the ones this press puts on you. */
+  effectId: string;
+  /** `potion_dur / 20`, after the `on_exile_effect` sweep. */
+  durationSeconds: number;
+  /** The same before it — what the pack's JSON declares, for the "what did that buy me" row. */
+  declaredSeconds: number;
+  infinite: boolean;
 };
 
 /**
@@ -394,6 +416,19 @@ export type DpsResult = {
    * the steady state, and why this depends on your cast rate.
    */
   ailmentHit: number;
+  /**
+   * The longest-lived effect one press puts on **you**, and how long it lasts.
+   *
+   * Undefined for a spell that buffs nobody. Set even when the skill also deals damage, because
+   * "how long does my buff last" is a question about the button and not about whether the button
+   * is also a rotation step — {@link simulateFullDps} is what decides the second question.
+   *
+   * `durationSeconds` is `potion_dur` **after** `eff_dur_u_cast` and its twelve typed twins have
+   * had their say; `declaredSeconds` is what the pack's JSON says. The pair is carried rather
+   * than the resolved figure alone so a UI can show what the Effect Duration support gem bought,
+   * which is the whole reason that gem is worth linking to a buff. See `effect-duration.ts`.
+   */
+  buff?: BuffDuration;
   /** Exile effects this cast needs before it will do anything, from `caster_has_mns_effect`. */
   requires: string[];
   /**
@@ -1230,6 +1265,25 @@ export function simulateDps(
   // of three is the kind of thing nothing notices.
   const ailmentsLand = sources.length === 0 || headlineLands;
 
+  // The spell sheet, deliberately: `ExileEffectAction` attaches the casting spell to the event,
+  // so the duration is resolved off the per-spell unit and a linked Effect Duration gem reaches
+  // it. See `effect-duration.ts`, which has the two lines of 6.4.13 that say so.
+  const buff = buffDurationOf({
+    snapshot,
+    index,
+    layers,
+    balance: bal,
+    compat,
+    sheet: spellRun.stats,
+    spell,
+    spellId: skill.spellId,
+    spellTags: new Set(declared.tags),
+    characterLevel: build.character.level,
+    config: build.config ?? {},
+    effects,
+    diagnostics,
+  });
+
   return {
     spellId: skill.spellId,
     hit,
@@ -1282,9 +1336,69 @@ export function simulateDps(
     ailmentHit: ailmentsLand
       ? hit.average.ailments.reduce((sum, a) => sum + procPool(a, castsPerSecond), 0)
       : 0,
+    ...(buff === undefined ? {} : { buff }),
     requires: [...requires],
     ...(selfDamage === undefined ? {} : { selfDamage }),
     diagnostics: [...hit.diagnostics, ...diagnostics],
+  };
+}
+
+/**
+ * {@link BuffDuration} for one cast, or undefined when the press buffs nobody.
+ *
+ * `casterBuffUpkeep` picks the effect — the longest-lived of the ones the press puts on you,
+ * which is the one whose expiry makes you press the button again — and this resolves what the
+ * pack declared for it against the sheet that will actually be carrying it.
+ */
+function buffDurationOf(input: {
+  snapshot: Snapshot;
+  index: StatIndex;
+  layers: LayerIndex;
+  balance: Balance;
+  compat: Compat;
+  sheet: Sheet;
+  spell: Record<string, unknown>;
+  spellId: string;
+  spellTags: ReadonlySet<string>;
+  characterLevel: number;
+  config: BuildConfig;
+  effects: EffectState;
+  diagnostics: Diagnostic[];
+}): BuffDuration | undefined {
+  const upkeep = casterBuffUpkeep(input.spell);
+  if (upkeep === undefined) return undefined;
+
+  if (!Number.isFinite(upkeep.durationTicks)) {
+    return {
+      effectId: upkeep.effectId,
+      durationSeconds: Number.POSITIVE_INFINITY,
+      declaredSeconds: Number.POSITIVE_INFINITY,
+      infinite: true,
+    };
+  }
+
+  const ticks = effectDurationTicks({
+    snapshot: input.snapshot,
+    index: input.index,
+    layers: input.layers,
+    balance: input.balance,
+    compat: input.compat,
+    sheet: input.sheet,
+    effectId: upkeep.effectId,
+    baseTicks: upkeep.durationTicks,
+    spellId: input.spellId,
+    spellTags: input.spellTags,
+    characterLevel: input.characterLevel,
+    config: input.config,
+    effects: input.effects,
+    diagnostics: input.diagnostics,
+  });
+
+  return {
+    effectId: upkeep.effectId,
+    durationSeconds: ticks / TICKS_PER_SECOND,
+    declaredSeconds: upkeep.durationTicks / TICKS_PER_SECOND,
+    infinite: false,
   };
 }
 
@@ -1545,7 +1659,7 @@ export function simulateFullDps(
     // What one press of this skill takes out of the pass: its cast, then the shared arm it puts
     // on everything else. A skill off the global cooldown contributes only its cast time.
     const pressSeconds = result.rate.castSeconds + result.rate.globalCooldownSeconds;
-    const buff = upkeepOf(snapshot, skill, result);
+    const buff = upkeepOf(result);
 
     if (buff === undefined) {
       entries.push({ skill, result, rotationSeconds: pressSeconds, pressSeconds, role: "rotation" });
@@ -1704,15 +1818,15 @@ export function simulateFullDps(
  *     the four that do (`power_surge`, `mirror_image`, `eighth_gate`,
  *     `banner_of_the_frozen_guard`) are tagged `damage` as well and are pressed for it. A buff
  *     that hits stays a rotation step;
- *   - **how long does one press last** -- {@link casterBuffUpkeep}, the longest-lived effect the
- *     press puts on you.
+ *   - **how long does one press last** -- {@link DpsResult.buff}, the longest-lived effect the
+ *     press puts on you, already scaled by the build's `eff_dur_u_cast` stats.
  *
  * The period is `max(duration, the spell's own cycle)`: you re-press when it falls off, and no
- * faster than the cooldown allows.
+ * faster than the cooldown allows. Both halves of that `max` move with the gems now — duration
+ * with Effect Duration, the cycle with Cooldown — which is what makes either one worth linking
+ * to a buff at all.
  */
 function upkeepOf(
-  snapshot: Snapshot,
-  skill: SkillSetup,
   result: DpsResult,
 ): { seconds: number; durationSeconds: number; effectId: string } | undefined {
   if (!result.declared.tags.includes("buff")) return undefined;
@@ -1720,12 +1834,14 @@ function upkeepOf(
   // `damage` act that reaches nothing where the target stands is not a reason to press it.
   if (result.damagePerCast > 0) return undefined;
 
-  const spell = snapshot.registries["mmorpg_spells"]?.[skill.spellId]?.data;
-  if (!spell) return undefined;
-  const buff = casterBuffUpkeep(spell);
+  // `result.buff` rather than a second walk of the spell: it is the same `casterBuffUpkeep`
+  // answer with the `eff_dur_u_cast` sweep already applied, and the rotation has to be paced by
+  // the duration the build really gets. Re-deriving it here is how the Effect Duration support
+  // gem would have gone on doing nothing to the pass length.
+  const buff = result.buff;
   if (buff === undefined) return undefined;
 
-  const durationSeconds = buff.durationTicks / TICKS_PER_SECOND;
+  const durationSeconds = buff.durationSeconds;
   return {
     seconds: Math.max(durationSeconds, result.rate.cycleSeconds),
     durationSeconds,

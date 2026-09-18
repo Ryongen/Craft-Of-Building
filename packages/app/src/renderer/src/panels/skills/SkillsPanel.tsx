@@ -29,12 +29,15 @@ import {
   MAX_ACTIVE_SKILLS,
   activeSkillCount,
   entry,
+  exileEffectName,
   isSkillEnabled,
   isSupportEnabled,
   modifierLine,
   modifierValue,
+  playerSpellFor,
   rarityName,
   spellDesc,
+  spellExclusion,
   spellName,
   statDisplay,
   supportLinks,
@@ -46,7 +49,7 @@ import {
 import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
 
 import type { Snapshot } from "@cte2/extractor";
-import { balance, parseRolledMod, rollToExact, spellRanks, statIndex } from "@cte2/engine";
+import { balance, parseRolledMod, rollToExact, simulateDps, spellRanks, statIndex } from "@cte2/engine";
 
 import { useBuild } from "../../state/build-store.js";
 import { mainSkillIndex, useDerived } from "../../state/derived.js";
@@ -344,6 +347,76 @@ function useSkillRanking(enabled: boolean): Map<number, number> | undefined {
   }, [enabled, deferred, snapshot]);
 }
 
+/**
+ * What this build turns the spell's declared numbers into.
+ *
+ * Two facts, and the pack's JSON answers neither of them:
+ *
+ *  - **cooldown.** `cooldown_ticks` is the floor a build works down from. `cdr`, `skill_speed`
+ *    and the global-cooldown arm all land on the `on_spell_stat_calc` event, and a Cooldown
+ *    support gem's do too — on the spell's own unit, where nothing else can see them. The
+ *    declared 12s on `protection` is 7.3s on a build carrying one.
+ *  - **buff duration.** `potion_dur` the same way, through `eff_dur_u_cast` and its twelve typed
+ *    twins. Nothing showed this at all before, which meant the Effect Duration gem was a gem
+ *    with no visible consequence anywhere in the planner.
+ *
+ * One engine pass for the one card on screen, deferred so that typing in the level box above it
+ * never waits for one. Rendered as nothing at all while the answer is stale rather than as a
+ * stale number, because a cooldown that lags a keystroke behind is worse than one that blinks.
+ */
+function ResolvedFacts({ index }: { index: number }): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const { snapshot } = useWorld();
+  const deferred = useDeferredValue(doc);
+
+  // The skill is read out of the *deferred* document rather than taken as a prop, so the whole
+  // input to the pass moves at once. Taking the live skill beside a deferred document would run
+  // the engine twice per keystroke — once on the half-updated pair, once on the settled one.
+  const skill = (deferred.skills ?? [])[index];
+
+  const result = useMemo(() => {
+    if (skill === undefined) return undefined;
+    try {
+      return simulateDps(deferred, snapshot, { skill });
+    } catch {
+      // A document the engine cannot evaluate still renders its card; the Diagnostics tab says
+      // why, and a missing row here is better than a broken panel.
+      return undefined;
+    }
+  }, [deferred, snapshot, skill]);
+
+  if (result === undefined) return null;
+
+  const rate = result.rate;
+  const buff = result.buff;
+
+  return (
+    <div className="row wrap gap-7 mb-4">
+      <Fact
+        layout="block"
+        label="your cooldown"
+        value={`${rate.cycleSeconds.toFixed(2)}s`}
+      />
+      {buff !== undefined && (
+        <Fact
+          layout="block"
+          label={`${exileEffectName(snapshot, buff.effectId)} lasts`}
+          // A toggle is not a duration and must not be printed as one — `-1` is the pack's
+          // "until you press it again", and there is nothing for a duration stat to lengthen.
+          value={
+            buff.infinite
+              ? "until re-cast"
+              : `${buff.durationSeconds.toFixed(1)}s` +
+                (Math.abs(buff.durationSeconds - buff.declaredSeconds) < 0.05
+                  ? ""
+                  : ` (declared ${buff.declaredSeconds.toFixed(1)}s)`)
+          }
+        />
+      )}
+    </div>
+  );
+}
+
 /** One row of the socket-group list: what it is, whether it is on, and what it does. */
 function SkillListRow({
   skill,
@@ -518,6 +591,35 @@ function SkillCard({
     skill.level !== undefined && resolvedRank !== undefined && resolvedRank !== skill.level;
   const description = spellDesc(world.snapshot, skill.spellId);
 
+  /**
+   * A skill this build already holds that the picker no longer offers — see
+   * `SnapshotWorld.spellIds`. Either the hired companion's, or one the pack has retired.
+   *
+   * Flagged and offered the swap rather than rewritten on load. Which of the two "Hunter's
+   * Focus" entries a build meant is the author's to say, and a planner that quietly changed a
+   * skill when you opened a file would be the worse bug of the two.
+   */
+  const excluded = spellExclusion(world.snapshot, skill.spellId);
+  const liveTwin = excluded === undefined ? undefined : playerSpellFor(world.snapshot, skill.spellId);
+
+  // The picker is otherwise a list this skill is not in, which renders as an empty box over a
+  // build that plainly has a skill in it.
+  const cardSpellOptions = useMemo<PickerOption[]>(
+    () =>
+      excluded === undefined
+        ? spellOptions
+        : [
+            {
+              id: skill.spellId,
+              label: spellName(world.snapshot, skill.spellId),
+              hint: excluded,
+              keywords: skill.spellId,
+            },
+            ...spellOptions,
+          ],
+    [excluded, skill.spellId, spellOptions, world.snapshot],
+  );
+
   // Always through `supportLinks`: a document written before the per-gem roll existed spells
   // its supports as bare ids, and this is what turns those into the same shape as a fresh one.
   const supports = supportLinks(skill);
@@ -564,9 +666,45 @@ function SkillCard({
     <div className="card" style={enabled ? undefined : { opacity: 0.55 }}>
       <div className="section-title mt-0">Active skill</div>
 
+      {excluded !== undefined && (
+        <div className="notice warn">
+          {excluded === "mercenary" ? (
+            <>
+              <strong>This is the mercenary&apos;s version of the skill.</strong>{" "}
+              <code>{skill.spellId}</code> is in the hired companion&apos;s tree
+              (<code>mmorpg_mercenary</code>), not yours — it caps at rank 1 and carries the
+              companion&apos;s cooldowns, so every number below is about a skill your character
+              cannot cast.
+            </>
+          ) : excluded === "wizard" ? (
+            <>
+              <strong>This is a wizard&apos;s version of the skill.</strong>{" "}
+              <code>{skill.spellId}</code> is one of the spells an <code>mmorpg_wizard</code>
+              {" "}casts at you — a hostile mob&apos;s copy, with the mob&apos;s numbers. No class
+              teaches it, so your character cannot cast it.
+            </>
+          ) : (
+            <>
+              <strong>This version of the skill has been retired.</strong>{" "}
+              <code>{skill.spellId}</code> is a spell the pack replaced: nothing in the game
+              reaches it any more — no class perk teaches it, nothing summons or procs it — so
+              the numbers below describe a skill you cannot obtain.
+            </>
+          )}{" "}
+          It shares its display name with the live one, which is how it ended up here.{" "}
+          {liveTwin === undefined ? (
+            <>There is no live equivalent, so this group is best removed.</>
+          ) : (
+            <button className="nudge word primary" onClick={() => patch({ spellId: liveTwin })}>
+              Use {spellName(world.snapshot, liveTwin)} instead
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="row wrap mb-3">
         <Picker
-          options={spellOptions}
+          options={cardSpellOptions}
           value={skill.spellId}
           onChange={(id) => id !== undefined && patch({ spellId: id })}
           width={260}
@@ -680,7 +818,13 @@ function SkillCard({
         )}
       </div>
 
-      <div className="row wrap gap-7 mb-4">
+      {/*
+        The pack's declared numbers. What the *build* turns them into is the row below, because
+        the two are different facts and collapsing them loses the one you are trying to change:
+        "this spell has a 12s cooldown" is a property of the spell, "yours comes back in 7.3s" is
+        the thing a Cooldown gem is for.
+      */}
+      <div className="row wrap gap-7 mb-2">
         <Fact layout="block" label="cast" value={ticks(config["cast_time_ticks"])} />
         <Fact layout="block" label="cooldown" value={ticks(config["cooldown_ticks"])} />
         <Fact layout="block" label="mana" value={range(config["mana_cost"])} />
@@ -688,6 +832,9 @@ function SkillCard({
         <Fact layout="block" label="weapon" value={stringAt(config, "castingWeapon")} />
         <Fact layout="block" label="charges" value={stringAt(config, "charges")} />
       </div>
+
+      <ResolvedFacts index={index} />
+
 
       {description !== undefined && (
         <p className="faint text-sm" style={{ margin: "0 0 10px", userSelect: "text" }}>
@@ -709,11 +856,13 @@ function SkillCard({
       </div>
 
       <div className="notice info">
-        A support gem changes this skill&apos;s damage, almost never the character sheet — the
-        game keeps a separate stat unit per spell and the sheet is the no-spell path, so expect
-        the sidebar to stay still when you link one. The four exceptions are the gems that grant
-        an exile effect (Fortify and the three charge-on-hit gems).{" "}
-        <strong>The gem list is ordered by what each one would add to this skill.</strong>
+        A support gem changes this skill, almost never the character sheet — the game keeps a
+        separate stat unit per spell and the sheet is the no-spell path, so expect the sidebar to
+        stay still when you link one. The four exceptions are the gems that grant an exile effect
+        (Fortify and the three charge-on-hit gems).{" "}
+        <strong>The gem list is ordered by what each one would add to this skill</strong> — its
+        damage where it has any, and otherwise its cooldown and the duration of the buff it
+        applies, which is what Cooldown and Effect Duration buy on a skill that hits nothing.
       </div>
 
       {/*

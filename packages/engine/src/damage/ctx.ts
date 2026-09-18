@@ -75,6 +75,16 @@ export type DamageCtx = {
   /** Which exile effects are up, for the conditions that ask. */
   effects: EffectState;
   /**
+   * The exile effect this event is *about* — set only on the `on_exile_effect` sweep.
+   *
+   * `EventData.EXILE_EFFECT`, in the shape the two conditions that read it need.
+   * `EffectHasTagCondition` and `IsEffectCondition` both open with
+   * `if (event.data.hasExileEffect())` and return `false` when there is none, so leaving this
+   * unset is not a gap — it is what every other event in the game reports, and it is why both
+   * conditions resolve to `unknown` on a damage sweep rather than to a guess.
+   */
+  exileEffect?: { id: string; tags: ReadonlySet<string> };
+  /**
    * Where `proc_spell` effects are recorded, when a caller wants them.
    *
    * The damage sweep already walks every stat effect block the character has and hands

@@ -131,6 +131,26 @@ const FINDER_FILTERS = [
 
 type FilterId = (typeof FINDER_FILTERS)[number]["id"];
 
+/**
+ * Whether the finder is showing named items, craftable bases, or both.
+ *
+ * Its own control beside the slot filter, and not a nicety. The list is 310 uniques and 43
+ * bases, and the dropdown draws at most 200 rows — so with an empty search box the bases were
+ * *all* past the cut, every time, and the only way to reach one was to know its name and type
+ * it. Nothing on screen said so: the list simply had no rares in it, and picking a unique and
+ * editing it into a rare was the only path anyone could find to a rare item.
+ *
+ * Both halves are still ordered uniques-first inside `All` — a unique is the thing searched for
+ * by name — but `Non-unique` makes the 43 bases a list you can read, which is what they are.
+ */
+const RARITY_FILTERS = [
+  { id: "any", label: "All" },
+  { id: "unique", label: "Unique" },
+  { id: "base", label: "Non-unique" },
+] as const;
+
+type RarityFilterId = (typeof RARITY_FILTERS)[number]["id"];
+
 /** The four armour rows, for the finder's filter. */
 const ARMOUR_SLOTS = new Set(["helmet", "chest", "pants", "boots"]);
 
@@ -495,6 +515,7 @@ function ItemFinder({
   const { snapshot } = world;
   const level = useBuild((s) => s.doc.character.level);
   const [filter, setFilter] = useState<FilterId>("all");
+  const [rarityFilter, setRarityFilter] = useState<RarityFilterId>("any");
 
   const uniques = useMemo(() => allUniques(snapshot), [snapshot]);
 
@@ -509,33 +530,50 @@ function ItemFinder({
       return !ARMOUR_SLOTS.has(row.id) && !HAND_SLOTS.has(row.id);
     };
 
-    const bases = world.slots
-      .flatMap((slot) => world.basesFor(slot.id))
-      .filter((base) => inFilter(base.id))
-      .map<PickerOption>((base) => ({
-        id: `base:${base.id}`,
-        label: gearTypeName(snapshot, base.id),
-        hint: "base",
-        keywords: `${base.id} ${base.tags.join(" ")}`,
-      }));
+    const bases =
+      rarityFilter === "unique"
+        ? []
+        : world.slots
+            .flatMap((slot) => world.basesFor(slot.id))
+            .filter((base) => inFilter(base.id))
+            .map<PickerOption>((base) => ({
+              id: `base:${base.id}`,
+              label: gearTypeName(snapshot, base.id),
+              hint: "base",
+              keywords: `${base.id} ${base.tags.join(" ")}`,
+            }));
 
-    const uniqueRows = uniques
-      .filter((u) => inFilter(u.baseGear))
-      .map<PickerOption>((u) => {
-        const detail = modDetail(snapshot, u.uniqueStats);
-        return {
-          id: `unique:${u.id}`,
-          label: uniqueName(snapshot, u.id),
-          hint: "unique",
-          keywords: `${u.id} ${u.baseGear ?? ""} ${modKeywords(snapshot, u.uniqueStats)}`,
-          ...(detail === undefined ? {} : { detail }),
-        };
-      });
+    const uniqueRows =
+      rarityFilter === "base"
+        ? []
+        : uniques
+            .filter((u) => inFilter(u.baseGear))
+            .map<PickerOption>((u) => {
+              const detail = modDetail(snapshot, u.uniqueStats);
+              return {
+                id: `unique:${u.id}`,
+                label: uniqueName(snapshot, u.id),
+                hint: "unique",
+                keywords: `${u.id} ${u.baseGear ?? ""} ${modKeywords(snapshot, u.uniqueStats)}`,
+                ...(detail === undefined ? {} : { detail }),
+              };
+            });
 
-    // Uniques first: those are the ones searched for by name, where a base list is a list of
-    // nouns you already know you want.
-    return [...uniqueRows, ...bases];
-  }, [world, snapshot, uniques, filter]);
+    /*
+     * Bases first, and this used to be the other way round.
+     *
+     * The old order was uniques first, on the reasoning that a unique is what you search for by
+     * name and a base list is a list of nouns you already know you want. Both halves of that are
+     * still true — and it made the bases unreachable. The dropdown draws 200 rows, this pack has
+     * 310 uniques and 43 bases, so on an empty search box *every* base was past the cut, every
+     * time. The list simply had no rares in it, and the only way anyone found to a rare was to
+     * pick a unique and edit it into one.
+     *
+     * 43 then 157 puts both kinds on screen, and costs the uniques nothing that matters: nobody
+     * scrolls to `Voidforge`, they type it.
+     */
+    return [...bases, ...uniqueRows];
+  }, [world, snapshot, uniques, filter, rarityFilter]);
 
   const pick = (id: string): void => {
     if (id.startsWith("base:")) {
@@ -559,9 +597,19 @@ function ItemFinder({
       <div className="section-title mt-0">Find an item</div>
       <div className="row wrap mb-3">
         <Picker
+          // Keyed on both filters so the input clears its typed query when either changes.
+          // Without it, narrowing to Non-unique while "kobold" is still in the box shows "No
+          // match" and reads as though the filter found nothing.
+          key={`${filter}-${rarityFilter}`}
           options={options}
           value={undefined}
-          placeholder="Search a base or a unique…"
+          placeholder={
+            rarityFilter === "unique"
+              ? "Search a unique…"
+              : rarityFilter === "base"
+                ? "Search a base…"
+                : "Search a base or a unique…"
+          }
           width={300}
           onChange={(id) => id !== undefined && pick(id)}
         />
@@ -576,13 +624,30 @@ function ItemFinder({
             </button>
           ))}
         </div>
+        <div className="row" style={{ gap: 2 }}>
+          {RARITY_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              className={rarityFilter === f.id ? "nudge word primary" : "nudge word"}
+              title={
+                f.id === "base"
+                  ? "Every gear base in the pack. One arrives as a rare you can roll affixes onto."
+                  : f.id === "unique"
+                    ? "Named items only."
+                    : "Uniques and bases together, uniques first."
+              }
+              onClick={() => setRarityFilter(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <div className="grow" />
         <button onClick={onImport}>Import item…</button>
       </div>
       <span className="faint text-sm">
-        Whatever you pick lands in the pool below, unequipped, and opens in the editor. Import
-        reads an in-game tooltip (hold Shift over the item first) or the output of{" "}
-        <code>/data get entity @s SelectedItem</code>.
+        Whatever you pick lands in the pool below, unequipped, and opens in the editor. A base
+        arrives as a rare with no affixes on it yet; a unique arrives with its own.
       </span>
     </div>
   );

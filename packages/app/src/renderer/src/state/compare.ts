@@ -100,6 +100,25 @@ export type Vitals = {
   totalDps: number;
   critChance: number;
   /**
+   * How often the asked-about skill's button comes back, in seconds.
+   *
+   * Here because a third of this pack's "skills" deal no damage at all, and for those every
+   * figure above is 0 — so a support gem linked to Protection moved nothing a comparison could
+   * see, and the ranked list reported all ninety gems as having no effect on it. Cooldown is
+   * what a Cooldown gem buys, and it is real whether or not the button also hurts anything.
+   */
+  skillCycleSeconds: number;
+  /**
+   * How long one press of the asked-about skill keeps its buff on you, in seconds.
+   *
+   * 0 when there is nothing to report, which covers both "this skill buffs nobody" and "this
+   * buff is a toggle" — a toggle's duration is the `-1` sentinel and no amount of Effect
+   * Duration lengthens it, so a row saying it moved would be a row saying something false. The
+   * two cases are 0 together because a comparison only ever reads the difference, and neither
+   * one can produce one.
+   */
+  buffSeconds: number;
+  /**
    * Life plus magic shield, before any mitigation.
    *
    * Beside {@link ehp} rather than folded into it, because the two move independently and which
@@ -199,6 +218,12 @@ export const HEADLINE: {
   { key: "basicDps", label: "Basic attack DPS", good: "up", kind: "number" },
   { key: "summonDps", label: "Summon DPS", good: "up", kind: "number" },
   { key: "critChance", label: "Crit chance", good: "up", kind: "ratio" },
+  // The two figures a buff skill is actually read on. Both are about the skill being asked
+  // about rather than about the build, which is why they sit below the damage rates rather than
+  // among them — but they belong in the headline, because for a buff they are the only rows
+  // that will ever move.
+  { key: "skillCycleSeconds", label: "Skill cooldown", good: "down", kind: "number" },
+  { key: "buffSeconds", label: "Buff duration", good: "up", kind: "number" },
   { key: "pool", label: "Life + magic shield", good: "up", kind: "number" },
   { key: "ehp", label: "Effective HP (weakest)", good: "up", kind: "number" },
 ];
@@ -427,6 +452,13 @@ function assembleVitals(parts: {
     summonDps: rates.summonDps,
     totalDps: rates.total,
     critChance: dps?.hit.critChance ?? 0,
+    skillCycleSeconds: dps?.rate.cycleSeconds ?? 0,
+    // `infinite` is the toggle sentinel and `Infinity` would make every delta `NaN`. See the
+    // field's own note for why both it and "no buff at all" report 0.
+    buffSeconds:
+      dps?.buff === undefined || !Number.isFinite(dps.buff.durationSeconds)
+        ? 0
+        : dps.buff.durationSeconds,
     pool: def.pools.health + def.pools.magicShield,
     ehp: def.weakest.effectiveHealth,
     weakestElement: def.weakest.element,
@@ -722,6 +754,14 @@ export type Ranked<T> = {
 export type Ranking<T> = {
   /** Rows resolved so far, best first. Grows as the work completes. */
   rows: Ranked<T>[];
+  /**
+   * What every row was measured against.
+   *
+   * Handed back rather than recomputed by the caller, because with a `skillIndex` it is a full
+   * engine pass — and a list that labelled itself from a second one could label itself with a
+   * different answer than the one it sorted by.
+   */
+  base: Vitals;
   /** How many candidates have been priced, out of how many there are. */
   done: number;
   total: number;
@@ -861,7 +901,7 @@ export function useRanking<T>({
     // previous document is stale the moment anything else changes.
   }, [candidates, apply, keyOf, enabled, snapshot, base, doc, invariant, reuseSheetFor, skillIndex]);
 
-  return { rows, done, total: candidates.length, pending: done < candidates.length };
+  return { rows, base, done, total: candidates.length, pending: done < candidates.length };
 }
 
 /**

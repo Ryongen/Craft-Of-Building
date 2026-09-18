@@ -228,6 +228,18 @@ export {
 export type { ImportIssue, ImportResult, ImportSeverity } from "./import-item.js";
 
 export {
+  isDeprecatedSpell,
+  isMercenarySpell,
+  isWizardSpell,
+  mercenarySpellIds,
+  playerSpellFor,
+  playerSpellIds,
+  spellExclusion,
+  wizardSpellIds,
+} from "./spell-roster.js";
+export type { SpellExclusion } from "./spell-roster.js";
+
+export {
   LEARN_STAT_PREFIX,
   MAX_SCHOOLS,
   SOLO_CLASS_DAMAGE_REDUCTION,

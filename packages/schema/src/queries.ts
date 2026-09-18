@@ -79,6 +79,7 @@ export const CATEGORY = {
   itemRequirement: "library_of_exile_item_requirement",
   itemSet: "mmorpg_sets",
   gem: "mmorpg_gems",
+  mercenary: "mmorpg_mercenary",
   mobAffix: "mmorpg_mob_affix",
   mobRarity: "mmorpg_mob_rarity",
   omen: "mmorpg_omen",
@@ -97,6 +98,7 @@ export const CATEGORY = {
   talentTree: "mmorpg_talent_tree",
   unique: "mmorpg_unique_gears",
   valueCalc: "mmorpg_value_calc",
+  wizard: "mmorpg_wizard",
 } as const;
 
 /** The ten `type` values seen across `mmorpg_affixes`. Anything else must fail loud. */

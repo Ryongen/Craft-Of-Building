@@ -7,16 +7,24 @@
  * gem in that socket, through the same engine the Damage tab uses — and the list is sorted by
  * the gain.
  *
- * Three things are deliberate about how it is presented.
+ * Four things are deliberate about how it is presented.
  *
  * **The ranking figure is the skill's own DPS, and the rotation's is shown beside it.** A support
  * gem only ever changes one skill, so ranking on the rotation would bury a 40% gain on your
  * second skill under the noise of the first. Full DPS is what tells you whether that gain is
  * worth anything to the build, so it is a column rather than the sort key.
  *
+ * **A skill that deals no damage is priced on what it does instead.** A third of this pack's
+ * skills are buffs and stances, and for those every damage figure is 0 whatever you link — so
+ * the list reported all ninety gems as having no effect, and the "compatible only" filter, which
+ * is the default, emptied it entirely. The two gems most worth linking to a buff are the two it
+ * hid: Effect Duration, which lengthens what the press puts on you, and Cooldown, which brings
+ * the press back sooner. Both are measured; neither is damage.
+ *
  * **A gem that changes nothing says so, rather than reading as a tiny gain.** Roughly half the
  * pack's support gems do nothing for any given skill — a projectile gem on a melee slam, a cold
  * gem on a physical hit — and showing them at "+0.0%" implies the engine measured something.
+ * "Nothing" now means nothing at all moved, not merely that the damage did not.
  *
  * **The list is usable before it is finished.** Pricing ninety candidates is over half a second;
  * `useRanking` slices it across frames and this renders what has landed, with the count. Sorting
@@ -33,7 +41,7 @@ import { supportGemAffectsSheet } from "@cte2/engine";
 import { useRanking, type Ranked, type Vitals } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
 import type { GemPreset } from "../../ui/GemRoll.js";
-import { percent, signGlyph, smart } from "../../ui/format.js";
+import { percent, round, signGlyph, smart } from "../../ui/format.js";
 
 /** Below this the two figures are the same number and the difference is float noise. */
 const NOISE = 1e-6;
@@ -123,9 +131,21 @@ export function SupportGemPicker({
   );
 
   const keyOf = useCallback((gemId: string) => gemId, []);
-  // A support gem never touches the character sheet, so ranking on anything but this skill's own
-  // damage would be ranking on a number the gem cannot move.
-  const rank = useCallback((vitals: Vitals) => vitals.dps, []);
+  /**
+   * A support gem never touches the character sheet, so ranking on anything but this skill's own
+   * damage would be ranking on a number the gem cannot move.
+   *
+   * Unless the skill has no damage — a third of this pack's skills are buffs and stances, and
+   * for those `dps` is 0 for every gem, so the list came back in whatever order the registry
+   * happened to be in and every row read "no effect". There the rotation's total is the figure
+   * that moves: a longer buff is fewer presses per pass, which is time the pass spends on
+   * something else. The baseline decides which question this is, so every row is priced against
+   * the same one.
+   */
+  const rank = useCallback(
+    (vitals: Vitals, base: Vitals) => (base.dps > 0 ? vitals.dps : vitals.totalDps),
+    [],
+  );
 
   // The whole reason this list is fast enough to be a list: a support gem's stats land on the
   // spell unit, never on the character sheet, so the sheet, the defence figure and the weapon
@@ -149,6 +169,10 @@ export function SupportGemPicker({
     skillIndex,
   });
 
+  // The same question `rank` asks, read off the same baseline, so the heading cannot name a sort
+  // key the list did not use.
+  const damageSkill = ranking.base.dps > 0;
+
   useEffect(() => {
     if (!open) return;
     const onDocumentDown = (event: MouseEvent): void => {
@@ -167,11 +191,10 @@ export function SupportGemPicker({
             `${supportGemName(world.snapshot, row.id)} ${row.id}`.toLowerCase().includes(needle),
           );
     if (!compatibleOnly) return matched;
-    return matched.filter((row) => {
-      if (row.id === value) return true;
-      const moved = row.comparison.headline.find((d) => d.key === "dps");
-      return moved !== undefined && Math.abs(moved.change) > NOISE;
-    });
+    // Anything that moved, not just damage. Filtering on `dps` alone hid the Effect Duration and
+    // Cooldown gems from every buff in the pack — the two gems most worth linking to one — and
+    // hid them behind a label that said they do nothing, which was not true.
+    return matched.filter((row) => row.id === value || !row.comparison.unchanged);
   }, [ranking.rows, query, world.snapshot, compatibleOnly, value]);
 
   /**
@@ -214,7 +237,9 @@ export function SupportGemPicker({
         <div className="picker-list gem-rank-list">
           <div className="gem-rank-head">
             <span className="faint">
-              Ranked by this skill&apos;s DPS
+              {/* Named for what the sort key actually is, which differs for a skill that deals
+                  no damage — see the `rank` callback. */}
+              {damageSkill ? "Ranked by this skill's DPS" : "Ranked by the rotation's total"}
               {/* The roll every row was priced at. Without it the list is ninety numbers whose
                   scale is set by a control on the other side of the panel. */}
               {preset !== undefined &&
@@ -228,7 +253,7 @@ export function SupportGemPicker({
               {ranking.pending
                 ? "Pricing gems…"
                 : compatibleOnly
-                  ? "Nothing in the pack changes this skill's damage. Switch the filter to All to see every gem."
+                  ? "Nothing in the pack changes this skill at all. Switch the filter to All to see every gem."
                   : "No match"}
             </div>
           )}
@@ -268,11 +293,23 @@ function GemRow({
   onPick: () => void;
 }): ReactNode {
   const world = useWorld();
-  const skill = row.comparison.headline.find((d) => d.key === "dps");
+  const dps = row.comparison.headline.find((d) => d.key === "dps");
   const full = row.comparison.headline.find((d) => d.key === "fullDps");
 
-  const nothing = skill === undefined || Math.abs(skill.change) <= NOISE;
-  const tone = nothing ? "" : skill.change > 0 ? "up" : "down";
+  /*
+   * What this row reports.
+   *
+   * The skill's own DPS where the gem moved it, which is every damage skill in the pack. Where it
+   * did not, the largest thing that *did* move — because for a buff nothing ever moves DPS, and
+   * a row that said "no effect" for Effect Duration on Protection was reporting the absence of a
+   * measurement as the absence of an effect. `headline` is already sorted by relative magnitude,
+   * so the first entry is the answer.
+   */
+  const moved =
+    dps !== undefined && Math.abs(dps.change) > NOISE ? dps : row.comparison.headline[0];
+  const nothing = moved === undefined || Math.abs(moved.change) <= NOISE;
+  const tone = nothing ? "" : moved.good ? "up" : "down";
+  const isDps = !nothing && moved === dps;
 
   return (
     <div
@@ -286,11 +323,14 @@ function GemRow({
             ? "The gem in this socket now — the figure every other row is measured against."
             : nothing
           ? "This gem's stats do not reach this skill: nothing it grants is read by any of " +
-            "the skill's damage sources."
-          : `${signGlyph(skill.change)}${smart(Math.round(Math.abs(skill.change)))} DPS on this skill` +
+            "the skill's damage sources, its cooldown or the buff it applies."
+          : isDps
+          ? `${signGlyph(moved.change)}${smart(Math.round(Math.abs(moved.change)))} DPS on this skill` +
             (full === undefined
               ? ""
               : `, ${signGlyph(full.change)}${smart(Math.round(Math.abs(full.change)))} on the rotation`)
+          : `${moved.label} ${signGlyph(moved.change)}${smart(round(Math.abs(moved.change)))}` +
+            " — this gem changes nothing about the hit"
       }
     >
       <span className="ellipsis gem-rank-name">{supportGemName(world.snapshot, row.id)}</span>
@@ -306,11 +346,15 @@ function GemRow({
       ) : (
         <>
           <span className={`gem-rank-pct ${tone}`}>
-            {skill.fraction === undefined ? "new" : percent(skill.fraction)}
+            {moved.fraction === undefined ? "new" : percent(moved.fraction)}
           </span>
           <span className={`gem-rank-abs ${tone}`}>
-            {signGlyph(skill.change)}
-            {smart(Math.round(Math.abs(skill.change)))}
+            {signGlyph(moved.change)}
+            {/* A DPS change is read in thousands and a cooldown in seconds, so the second kind
+                keeps its decimals rather than rounding 3.6s away to 4. */}
+            {isDps
+              ? smart(Math.round(Math.abs(moved.change)))
+              : smart(round(Math.abs(moved.change)))}
           </span>
         </>
       )}
