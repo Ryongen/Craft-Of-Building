@@ -86,6 +86,19 @@ function main(): void {
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, JSON.stringify(snapshot, null, 2), "utf8");
     console.log(`\nSnapshot written to ${outPath}`);
+
+    // A snapshot carries icon *references*; the PNGs those name live under `--assets`. Writing
+    // one without the other leaves the two halves of `data/` at different vintages, and the
+    // only symptom is that a perk the pack has added since renders as `unknown.png` — which
+    // looks exactly like the 56 icons this pack genuinely ships no texture for. Say so.
+    if (!args.assets) {
+      console.log(
+        "  note: --assets was not given, so the textures beside it are whatever an earlier run" +
+          " left there." +
+          "\n        Any icon this snapshot adds will render as the unknown-texture square" +
+          " until you re-run with --assets.",
+      );
+    }
   }
 
   if (args.assets) {

@@ -144,7 +144,28 @@ export type Carrier =
        */
       limit?: { group: string; maxAlive: number };
     }
-  | { kind: "summon_at_sight"; count: number; lifeTicks: number };
+  | { kind: "summon_at_sight"; count: number; lifeTicks: number }
+  /**
+   * An `mmorpg_exile_effect` sitting on the caster, ticking its own component group.
+   *
+   * Eighteen of this pack's effects declare `damage` acts inside `ExileEffect.spell`, and for
+   * four of them — Holy Fire, Sanguine Aura, Abyss Aura, Plague Aura — that is the *whole*
+   * skill. The spell you press only toggles the effect on; what runs the damage is the effect's
+   * own component group, every `tick_rate` ticks, for as long as the effect is up.
+   *
+   * It is not reached by walking `on_cast`, and never can be. The `exile_effect` act that grants
+   * it sits behind a `caster_has_mns_effect … is_false` gate — press the button while the aura
+   * is up and you turn it *off* — so on a build that runs the aura the granting branch is
+   * correctly blocked and the removing one is live. `auras.ts` therefore enters from the other
+   * end: from the effect the character is *holding*, which is a fact about the build rather than
+   * about the button.
+   *
+   * `lifeTicks` is how long one cast's worth of it is counted for: the effect's own duration
+   * when it has one, and the cast cycle when it is a permanent toggle — so that damage per cast
+   * divided by the cycle comes out as the damage per second the aura really deals, whatever the
+   * cycle happens to be.
+   */
+  | { kind: "effect"; effectId: string; count: 1; lifeTicks: number; permanent: boolean };
 
 export type Trigger =
   | { kind: "on_cast" }
@@ -443,6 +464,16 @@ export function skillModel(
   entryGroup = "on_cast",
   /** `build.config.conditions` — the only thing that can answer a `caster_has_potion` gate. */
   conditions: Record<string, boolean> | undefined = undefined,
+  /**
+   * The carrier the entry group is already riding, when it is not the cast itself.
+   *
+   * `DIRECT` is right for a button: the parts on `on_cast` run once, at the caster, with no
+   * entity behind them. An exile effect's group is the opposite — it is driven by something
+   * that persists, and its `x_ticks_condition` gates count against *that* thing's life rather
+   * than falling back to the caster's unsynchronised `tickCount`. Handing the carrier in is what
+   * lets `firesFor` answer "sixteen pulses over eight seconds" instead of "one tick in ten".
+   */
+  entryCarrier: Carrier = DIRECT,
 ): SkillModel {
   const attached = asObject(spell["attached"]) ?? {};
   const groups = readGroups(attached);
@@ -593,7 +624,7 @@ export function skillModel(
   };
 
   walk(groups.get(entryGroup) ?? [], entryGroup, {
-    carrier: DIRECT,
+    carrier: entryCarrier,
     chain: [],
     carriersPerCast: 1,
     path: [entryGroup === "on_cast" ? "on cast" : entryGroup],
@@ -1139,7 +1170,9 @@ export function sourceLabel(source: DamageSource): string {
         ? `${source.carriersPerCast}× projectile`
         : source.carrier.kind === "summon_block"
           ? `${source.carriersPerCast}× summoned block`
-          : `${source.carriersPerCast}× summoned entity`;
+          : source.carrier.kind === "summon_at_sight"
+            ? `${source.carriersPerCast}× summoned entity`
+            : "while the effect is up";
   const when =
     source.trigger.kind === "tick"
       ? `every ${source.trigger.rate} ticks`

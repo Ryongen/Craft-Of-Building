@@ -91,6 +91,21 @@ test("allowed affix tiers exclude uniques and anything above the item", () => {
   assert.equal(onMythic.length, 6);
 });
 
+test("allowed affix tiers come back in the ladder's order, not the registry's", () => {
+  // The registry is keyed alphabetically, so an unsorted list reads "common, epic, legendary,
+  // mythic, rare, uncommon" — an ordering that says nothing, over a value whose whole meaning is
+  // its rank. Every tier dropdown in the app renders this list in the order it arrives in.
+  const snapshot = standardSnapshot();
+  assert.deepEqual(allowedAffixTiers(snapshot, gearRarity(snapshot, "mythic")!), [
+    "common",
+    "uncommon",
+    "rare",
+    "epic",
+    "legendary",
+    "mythic",
+  ]);
+});
+
 test("rarity roll bands do not overlap", () => {
   // Non-overlapping bands are what make a roll percent identify its tier, and what makes an
   // out-of-band roll a hard error rather than a judgement call.

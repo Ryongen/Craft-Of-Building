@@ -19,6 +19,7 @@ import { useDerived } from "./state/derived.js";
 import { useCaptureCheck } from "./state/capture.js";
 import { useWorld } from "./state/snapshot.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.js";
+import { ItemDiffCard } from "./ui/ItemDiffCard.js";
 import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
@@ -430,6 +431,11 @@ export function App(): ReactNode {
           {/* The sheet and the breakdown read the same engine result the panels do, so they can
               fail on their own and must not take the panel with them. */}
           <ErrorBoundary what="the stat sheet">
+            {/* What the gear tab is looking at, priced against what it would replace. It sits
+                above the sheet because it is about a choice being made right now, and the sheet
+                is about the character as it stands; it renders nothing at all when no item is
+                selected, which is every tab but Items. */}
+            <ItemDiffCard />
             <div className="sheet">
               <VitalsBlock focus={focus} onFocus={setFocus} />
             </div>

@@ -82,6 +82,7 @@ import {
   smart,
   type BandEnd,
 } from "../../ui/fields.js";
+import { Accordion } from "../../ui/Accordion.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { modDetail, modKeywords } from "../../ui/mods.js";
@@ -154,27 +155,23 @@ function Requirements({ item }: { item: Item }): ReactNode {
 }
 
 type AffixGroup = {
-  key: "implicits" | "prefixes" | "suffixes" | "corruptions";
+  key: "prefixes" | "suffixes";
   type: AffixType;
   label: string;
 };
 
 /**
- * The affix lists every item carries, unique or not.
+ * Prefixes and suffixes, which a unique carries `unique_stats` instead of.
  *
- * A unique is not exempt from these. `GearCreationUtils.CreateData` rolls the unique's own
- * stats and then runs `gear.baseStats.RerollFully(gear)` and `gear.imp.RerollFully(gear)` on
- * the same item (GearCreationUtils.java:74-76), so a unique has base stats and an implicit
- * exactly like a rare does — in game, Honourhome shows "+135 Armor / +270 Magic Shield" and an
- * "Implicit Stats: +7% Health Regen" block. Hiding these on uniques made those stats
- * unreachable in a build, not merely unset.
+ * The other two lists — implicits and corruptions — are rendered one at a time rather than off a
+ * table like this, because the strict section order the editor now keeps puts them on either
+ * side of this pair. They are still offered on a unique: `GearCreationUtils.CreateData` rolls
+ * the unique's own stats and then runs `gear.baseStats.RerollFully(gear)` and
+ * `gear.imp.RerollFully(gear)` on the same item (GearCreationUtils.java:74-76), so a unique has
+ * base stats and an implicit exactly like a rare does — in game, Honourhome shows "+135 Armor /
+ * +270 Magic Shield" and an "Implicit Stats: +7% Health Regen" block. Hiding those on uniques
+ * made the stats unreachable in a build, not merely unset.
  */
-const COMMON_AFFIX_GROUPS: AffixGroup[] = [
-  { key: "implicits", type: "implicit", label: "Implicits" },
-  { key: "corruptions", type: "chaos_stat", label: "Corruptions" },
-];
-
-/** Prefixes and suffixes, which a unique carries `unique_stats` instead of. */
 const ROLLED_AFFIX_GROUPS: AffixGroup[] = [
   { key: "prefixes", type: "prefix", label: "Prefixes" },
   { key: "suffixes", type: "suffix", label: "Suffixes" },
@@ -295,46 +292,77 @@ export function ItemEditor({
     patch({ prefixes: next.prefix, suffixes: next.suffix });
   };
 
-  return (
-    <div className="card">
-      <div className="row wrap mb-4">
-        <Picker
-          options={baseOptions}
-          value={item.base}
-          onChange={(id) =>
-            id !== undefined &&
-            // Changing the base invalidates every roll: base stats, affix pools and tags all
-            // move. Clearing is honest; silently keeping impossible affixes is not. Quality
-            // rides along because it is not a roll and no pool bounds it — it is a number the
-            // currency put on the stack, legal on any base.
-            onChange({
-              base: id,
-              rarity: item.rarity,
-              itemLevel: item.itemLevel,
-              ...(item.quality === undefined ? {} : { quality: item.quality }),
-            })
-          }
-          width={200}
-        />
+  /**
+   * Whether the *rarity* is a unique one, which is not the same question as whether the item
+   * has a unique on it.
+   *
+   * The unique picker is offered on a unique rarity, because that is the choice the rarity has
+   * just committed to — and on an item that already carries one whatever its rarity says, which
+   * is the only way to take a wrong one back off.
+   */
+  const rarityIsUnique = rarity?.isUniqueItem === true;
+  const showUniquePicker = rarityIsUnique || item.unique !== undefined;
 
-        <select
-          value={item.rarity}
-          onChange={(event) => patch({ rarity: event.target.value })}
-        >
-          {world.rarities.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.id} ({r.minAffixes} affixes)
-            </option>
-          ))}
-        </select>
+  // Header counts, so a folded section still says what is inside it.
+  const socketCount = (item.sockets?.length ?? 0) + (item.runes?.length ?? 0);
+  const enchantmentCount = Object.keys(item.enchantments ?? {}).length;
+  const shortAffixes = !isUnique && rarity !== undefined && actualAffixes !== expectedAffixes;
+
+  return (
+    <div className="card item-editor">
+      {/*
+        1. Type, rarity, level, quality — the four properties every item has, on one line.
+        They come first because nothing below them means anything until they are set: the affix
+        pools come off the base, the affix count and the roll bands come off the rarity, and
+        every number on the item resolves at its level.
+      */}
+      <div className="row wrap gap-3 mb-2">
+        <div className="field">
+          <label>Type</label>
+          <Picker
+            options={baseOptions}
+            value={item.base}
+            onChange={(id) =>
+              id !== undefined &&
+              // Changing the base invalidates every roll: base stats, affix pools and tags all
+              // move. Clearing is honest; silently keeping impossible affixes is not. Quality
+              // rides along because it is not a roll and no pool bounds it — it is a number the
+              // currency put on the stack, legal on any base.
+              onChange({
+                base: id,
+                rarity: item.rarity,
+                itemLevel: item.itemLevel,
+                ...(item.quality === undefined ? {} : { quality: item.quality }),
+              })
+            }
+            width={176}
+          />
+        </div>
 
         <div className="field">
-          <label>ilvl</label>
+          <label>Rarity</label>
+          {/* Coloured by the rarity it is set to, the way `GemRoll`'s has always been — the
+              ladder is a colour in this game before it is a word. */}
+          <select
+            className={`rarity-${item.rarity}`}
+            value={item.rarity}
+            onChange={(event) => patch({ rarity: event.target.value })}
+          >
+            {world.rarities.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.id} ({r.minAffixes})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>iLvl</label>
           <NumberField
             value={item.itemLevel}
             min={1}
             max={world.maxLevel}
-            width={58}
+            width={52}
             onChange={(itemLevel) => patch({ itemLevel })}
           />
         </div>
@@ -347,114 +375,133 @@ export function ItemEditor({
           like the editor had no quality at all.
         */}
         <div className="field">
-          <label title={QUALITY_TITLE}>quality</label>
+          <label title={QUALITY_TITLE}>Quality</label>
           <NumberField
             value={item.quality ?? 0}
             min={0}
             max={world.maxQuality}
-            width={58}
+            width={52}
             onChange={(quality) => patch({ quality: quality === 0 ? undefined : quality })}
           />
           <span className="faint text-xs">%</span>
         </div>
 
-        {/*
-          Four bases in the pack have no `base_stats` at all — `ring`, `necklace`, `head` and
-          `elytra` — and quality is the only item property whose entire effect is on that list.
-          The currency applies happily and the tooltip prints "Quality: 12%", so an inert number
-          is a thing a real item can carry; it just buys nothing, and silence here would read as
-          the planner having missed it.
-        */}
-        {(item.quality ?? 0) > 0 && base !== undefined && base.baseStats.length === 0 && (
-          <span
-            className="badge warn"
-            title={`\`${item.base}\` declares no base stats, and quality is added to the base stat roll and nowhere else.`}
-          >
-            no base stats — quality does nothing here
-          </span>
-        )}
-
         <div className="grow" />
-        <button onClick={onRemove}>Remove</button>
+        <button onClick={onRemove} title="Delete this item from the build entirely">
+          Remove
+        </button>
       </div>
 
-      {base === undefined && (
-        <div className="notice">
-          <code>{item.base}</code> is not a base in this snapshot.
-        </div>
-      )}
-
-      {/* Everything on an item scales at the *item's* level, and an item above the character's
-          level contributes nothing at all — both are the mod's rules, and both surprise people. */}
-      {base !== undefined && (
-        <div className="row wrap mb-4">
-          {isTwoHanded(snapshot, base.id) && (
-            <span
-              className="badge warn"
-              title={
-                "Better Combat returns an empty offhand while a two-handed weapon is held " +
-                "(PlayerEntityMixin.getEquippedStack_Pre), so an offhand item grants nothing at all."
-              }
-            >
-              two-handed — no offhand
-            </span>
-          )}
-          <span className="faint text-sm">
-            {base.tags.join(", ")}
+      {/*
+        Everything that is a *fact* about the item rather than a control on it, on one line:
+        its tags, the two rules that surprise people, and the four bases quality does nothing on.
+      */}
+      <div className="row wrap gap-2 mb-2 item-editor-meta">
+        {base === undefined ? (
+          <span className="badge bad" title="No base gear type in this snapshot has this id">
+            {item.base} — not a base in this snapshot
           </span>
-        </div>
-      )}
-
-      <div className="row wrap mb-4">
-        <label className="faint">Unique</label>
-        <Picker
-          options={uniqueOptions}
-          value={item.unique}
-          allowClear
-          placeholder="any unique…"
-          onChange={(id) => {
-            if (id === undefined) {
-              patch({ unique: undefined, uniqueRolls: undefined });
-              return;
-            }
-            const view = uniqueView(snapshot, id);
-            if (view === undefined) return;
-            // A unique's base and rarity are not separate choices: `validateUnique` errors on
-            // `unique-base-mismatch` and `unique-on-non-unique-rarity`, so the only legal
-            // answer is to move the item wholesale. Affixes go because the base moved and the
-            // pools with it; prefixes and suffixes go because a unique carries `unique_stats`
-            // instead, and mixing the two describes an item the game cannot make.
-            onChange({
-              base: view.baseGear ?? item.base,
-              rarity: uniqueRarityId(snapshot, view) ?? item.rarity,
-              // `min_drop_lvl` is a floor, not the level — keep the item's own where it is
-              // already legal, and raise it to the floor where it is not.
-              itemLevel: Math.max(item.itemLevel, view.minDropLvl),
-              unique: id,
-              // Quality survives for the same reason it survives a base change: no rule ties it
-              // to the base or the rarity, and a unique has base stats for it to act on.
-              ...(item.quality === undefined ? {} : { quality: item.quality }),
-            });
-          }}
-          width={260}
-        />
-        {item.unique !== undefined && (
-          <span className="faint text-sm">
-            base and rarity follow the unique
-          </span>
+        ) : (
+          <>
+            {isTwoHanded(snapshot, base.id) && (
+              <span
+                className="badge warn"
+                title={
+                  "Better Combat returns an empty offhand while a two-handed weapon is held " +
+                  "(PlayerEntityMixin.getEquippedStack_Pre), so an offhand item grants nothing at all."
+                }
+              >
+                two-handed — no offhand
+              </span>
+            )}
+            {/*
+              Four bases in the pack have no `base_stats` at all — `ring`, `necklace`, `head`
+              and `elytra` — and quality is the only item property whose entire effect is on that
+              list. The currency applies happily and the tooltip prints "Quality: 12%", so an
+              inert number is a thing a real item can carry; it just buys nothing, and silence
+              here would read as the planner having missed it.
+            */}
+            {(item.quality ?? 0) > 0 && base.baseStats.length === 0 && (
+              <span
+                className="badge warn"
+                title={`\`${item.base}\` declares no base stats, and quality is added to the base stat roll and nowhere else.`}
+              >
+                quality does nothing on this base
+              </span>
+            )}
+            <span className="faint text-xs ellipsis">{base.tags.join(", ")}</span>
+          </>
         )}
       </div>
 
       <Requirements item={item} />
 
-      {isUnique && <UniqueRolls item={item} patch={patch} />}
+      {/*
+        2. The unique, when the rarity is one. A unique is the item rather than a property of
+        it — picking one moves the base and the level with it — so it sits directly under the
+        rarity that asked for it, and is not on screen at all for the rarities that cannot
+        carry one.
+      */}
+      {showUniquePicker && (
+        <div className="row wrap gap-2 mb-2">
+          <div className="field">
+            <label>Unique</label>
+            <Picker
+              options={uniqueOptions}
+              value={item.unique}
+              allowClear
+              placeholder="any unique…"
+              onChange={(id) => {
+                if (id === undefined) {
+                  patch({ unique: undefined, uniqueRolls: undefined });
+                  return;
+                }
+                const view = uniqueView(snapshot, id);
+                if (view === undefined) return;
+                // A unique's base and rarity are not separate choices: `validateUnique` errors
+                // on `unique-base-mismatch` and `unique-on-non-unique-rarity`, so the only legal
+                // answer is to move the item wholesale. Affixes go because the base moved and
+                // the pools with it; prefixes and suffixes go because a unique carries
+                // `unique_stats` instead, and mixing the two describes an item the game cannot
+                // make.
+                onChange({
+                  base: view.baseGear ?? item.base,
+                  rarity: uniqueRarityId(snapshot, view) ?? item.rarity,
+                  // `min_drop_lvl` is a floor, not the level — keep the item's own where it is
+                  // already legal, and raise it to the floor where it is not.
+                  itemLevel: Math.max(item.itemLevel, view.minDropLvl),
+                  unique: id,
+                  // Quality survives for the same reason it survives a base change: no rule ties
+                  // it to the base or the rarity, and a unique has base stats for it to act on.
+                  ...(item.quality === undefined ? {} : { quality: item.quality }),
+                });
+              }}
+              width={240}
+            />
+          </div>
+          {item.unique !== undefined && (
+            <span className="faint text-xs">base and rarity follow the unique</span>
+          )}
+        </div>
+      )}
 
+      {/* 3. The base stats, on one slider. */}
       <BaseRolls item={item} patch={patch} />
 
+      {/* Every roll on the item at once, beside the one that moves the base stats — the two
+          answer the same question at different scopes. */}
+      <RollEverything item={item} patch={patch} />
+
+      {/*
+        The affix budget, over the two lists it is a budget for. It is a line rather than a
+        badge on each header because it is a statement about the pair: five affixes on a
+        legendary is three prefixes *and* two suffixes, and neither list can tell you on its own
+        whether you are short.
+      */}
       {!isUnique && rarity !== undefined && (
-        <div className="row" style={{ margin: "10px 0 4px" }}>
+        <div className="row wrap gap-2 mt-2 text-sm">
           <span className="faint">
-            {actualAffixes} of {expectedAffixes} affixes
+            {actualAffixes} of {expectedAffixes} affixes · max {perTypeMax} of one type
           </span>
           {/*
             One message used to cover both directions. It fired on `!==` and read "{rarity} is
@@ -472,21 +519,14 @@ export function ItemEditor({
               {actualAffixes - expectedAffixes} too many — {expectedAffixes} is exact, not a minimum
             </span>
           )}
-          <span className="faint">· max {perTypeMax} of one type</span>
           {/*
             The editor already knew the number it wanted and already warned when you had not
             reached it; it just made you get there one picker at a time. Filling is the same
             arithmetic the warning is: prefixes first up to the per-type cap, then suffixes.
-
-            Each is added at its band *minimum*, deliberately — a filled item is a starting point
-            to roll from rather than a claim about what you own, and the `min`/`avg`/`max`
-            buttons on each list are one more click away.
           */}
           {actualAffixes < expectedAffixes && (
             <>
-              <span className="faint text-sm" style={{ marginLeft: 6 }}>
-                fill to {expectedAffixes} at
-              </span>
+              <span className="faint">fill at</span>
               {BAND_ENDS.map((end) => (
                 <button
                   key={end}
@@ -502,42 +542,127 @@ export function ItemEditor({
         </div>
       )}
 
-      <RollEverything item={item} patch={patch} />
-
-      {(isUnique ? COMMON_AFFIX_GROUPS : [...COMMON_AFFIX_GROUPS, ...ROLLED_AFFIX_GROUPS]).map(
-        (group) => (
-          <AffixList
-            key={group.key}
-            label={group.label}
-            type={group.type}
-            baseId={item.base}
-            itemLevel={item.itemLevel}
-            tiers={tierOptions}
-            rolls={item[group.key] ?? []}
-            max={group.key === "prefixes" || group.key === "suffixes" ? perTypeMax : undefined}
-            onChange={(rolls) => patch({ [group.key]: rolls } as Patch<Item>)}
-          />
-        ),
-      )}
-
-      {!isUnique && (
+      {/*
+        4-10. The lists, folded.
+        Prefixes and suffixes start open because they are what crafting an item *is*; everything
+        else starts folded, with its count on the header so folding never hides the fact that
+        there is something in there.
+      */}
+      <Accordion
+        title="Implicits"
+        count={item.implicits?.length ?? 0}
+        defaultOpen={(item.implicits?.length ?? 0) > 0 && isUnique}
+      >
         <AffixList
-          label="Enchant"
-          type="enchant"
+          label="Implicits"
+          type="implicit"
           baseId={item.base}
           itemLevel={item.itemLevel}
           tiers={tierOptions}
-          rolls={item.enchant === undefined ? [] : [item.enchant]}
-          max={1}
-          onChange={(rolls) => patch({ enchant: rolls[0] })}
+          rolls={item.implicits ?? []}
+          onChange={(rolls) => patch({ implicits: rolls })}
         />
+      </Accordion>
+
+      {/*
+        A unique carries `unique_stats` where a rare carries prefixes and suffixes, so this takes
+        their place in the order rather than sitting somewhere else — and it is open for the same
+        reason they are: it is the item.
+      */}
+      {isUnique ? (
+        <Accordion
+          title="Unique stats"
+          count={uniqueStatCount(snapshot, item)}
+          defaultOpen
+          summary={item.unique === undefined ? undefined : uniqueName(snapshot, item.unique)}
+        >
+          <UniqueRolls item={item} patch={patch} />
+        </Accordion>
+      ) : (
+        ROLLED_AFFIX_GROUPS.map((group) => (
+          <Accordion
+            key={group.key}
+            title={group.label}
+            count={item[group.key]?.length ?? 0}
+            defaultOpen
+            {...(shortAffixes ? { tone: "warn" as const } : {})}
+            summary={`max ${perTypeMax}`}
+          >
+            <AffixList
+              label={group.label}
+              type={group.type}
+              baseId={item.base}
+              itemLevel={item.itemLevel}
+              tiers={tierOptions}
+              rolls={item[group.key] ?? []}
+              max={perTypeMax}
+              onChange={(rolls) => patch({ [group.key]: rolls } as Patch<Item>)}
+            />
+          </Accordion>
+        ))
       )}
 
-      <Enchantments item={item} patch={patch} />
+      <Accordion title="Corruptions" count={item.corruptions?.length ?? 0}>
+        <AffixList
+          label="Corruptions"
+          type="chaos_stat"
+          baseId={item.base}
+          itemLevel={item.itemLevel}
+          tiers={tierOptions}
+          rolls={item.corruptions ?? []}
+          onChange={(rolls) => patch({ corruptions: rolls })}
+        />
+      </Accordion>
 
-      <Sockets item={item} patch={patch} />
+      <Accordion
+        title="Gems and runes"
+        count={socketCount}
+        summary={
+          rarity === undefined
+            ? undefined
+            : `${socketCount} of ${rarity.sockets.max} socket${rarity.sockets.max === 1 ? "" : "s"}` +
+              (item.runeword === undefined ? "" : ` · ${runewordName(snapshot, item.runeword)}`)
+        }
+      >
+        <Sockets item={item} patch={patch} />
+      </Accordion>
+
+      {/*
+        "Infusion" rather than "Enchant". The pack's `enchant` affix type and Minecraft's own
+        enchantments are two unrelated things that both used to be called an enchant here, one
+        directly above the other — so the editor had two sections with the same name granting
+        different stats by different rules. This one is the Mine and Slash affix.
+      */}
+      {!isUnique && (
+        <Accordion title="Infusions" count={item.enchant === undefined ? 0 : 1}>
+          <AffixList
+            label="Infusion"
+            type="enchant"
+            baseId={item.base}
+            itemLevel={item.itemLevel}
+            tiers={tierOptions}
+            rolls={item.enchant === undefined ? [] : [item.enchant]}
+            max={1}
+            onChange={(rolls) => patch({ enchant: rolls[0] })}
+          />
+        </Accordion>
+      )}
+
+      <Accordion
+        title="Enchantments"
+        count={enchantmentCount}
+        summary="Minecraft's own, converted by mmorpg_stat_compat"
+      >
+        <Enchantments item={item} patch={patch} />
+      </Accordion>
     </div>
   );
+}
+
+/** How many stat lines the item's unique grants, for its folded header. */
+function uniqueStatCount(snapshot: Snapshot, item: Item): number {
+  if (item.unique === undefined) return 0;
+  return uniqueView(snapshot, item.unique)?.uniqueStats.length ?? 0;
 }
 
 /**
@@ -605,15 +730,11 @@ function Enchantments({
 
   return (
     <>
-      <div className="section-title">
-        Enchantments <span className="faint">({on.length})</span>
-      </div>
-
       {on.map(([enchantId, level]) => {
         const compat = byEnchant.get(enchantId);
         return (
-          <div className="row mb-3" key={enchantId}>
-            <span style={{ width: 190 }} className="ellipsis" title={enchantId}>
+          <div className="row mb-2" key={enchantId}>
+            <span style={{ width: 170 }} className="ellipsis" title={enchantId}>
               {enchantName(enchantId)}
             </span>
             <NumberField
@@ -815,44 +936,69 @@ function BaseRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) => 
     patch({ baseRolls: next });
   };
 
+  /** Every base stat to the same roll, which is what one base stat roll means in game. */
+  const setAll = (value: number): void => {
+    patch({ baseRolls: base.baseStats.map(() => value) });
+  };
+
+  /**
+   * The one number the slider is showing.
+   *
+   * `BaseStatsData` holds a single percent for the whole part — `this.p` — and rolls every stat
+   * in `base_stats` off it, so a helmet's armour and its magic shield are always the same roll
+   * and there is no item in the game where they are not. The editor kept a slider per stat
+   * anyway, which made a four-stat weapon four rows of the same drag and let you build items
+   * the mod cannot produce.
+   *
+   * A document can still carry per-stat rolls — older builds have them, and typing a value into
+   * one line below still writes just that line — so the slider shows the first roll and says so
+   * when the rest disagree, rather than silently flattening them the moment the editor opens.
+   */
+  const shown = rolls[0] ?? band.min;
+  const uneven = rolls.slice(0, base.baseStats.length).some((roll) => roll !== shown);
+
   return (
-    <>
-      <div className="section-title">
-        Base stats <span className="faint">(band {band.min}–{band.max}%)</span>
+    <div className="base-rolls mt-2">
+      <div className="row wrap gap-2">
+        <span className="faint text-sm" title={`BaseStatsData.getMinMax — this rarity rolls ${band.min}–${band.max}%`}>
+          Base stats
+        </span>
+        <RollSlider value={shown} min={band.min} max={band.max} ends onChange={setAll} />
         {quality > 0 && (
-          <span className="faint" title={QUALITY_TITLE}>
-            {" "}
-            +{quality}% quality → {effective.min}–{effective.max}%
+          <span className="faint text-xs" title={QUALITY_TITLE}>
+            +{quality}% quality
           </span>
         )}
+        {uneven && (
+          <button
+            className="nudge word"
+            title="This document holds a different roll per base stat, which the game cannot produce. Level them to the roll on the slider."
+            onClick={() => setAll(shown)}
+          >
+            level rolls
+          </button>
+        )}
       </div>
+
       {base.baseStats.map((mod, index) => {
         const roll = rolls[index] ?? band.min;
         return (
-          <div key={index} className="mb-2">
-            <div className="row">
-              <RollSlider
-                value={roll}
-                min={band.min}
-                max={band.max}
-                ends
-                onChange={(value) => setRoll(index, value)}
-              />
-            </div>
-            <StatLines
-              mods={[mod]}
-              rollPercent={roll + quality}
-              band={effective}
-              itemLevel={item.itemLevel}
-              // `ValueField` solves the typed value back to a percent in the band it was given,
-              // which is the quality-inclusive one — so the stored roll is that answer less the
-              // quality the player did not roll for.
-              onRoll={(value) => setRoll(index, value - quality)}
-            />
-          </div>
+          <StatLines
+            key={index}
+            mods={[mod]}
+            rollPercent={roll + quality}
+            band={effective}
+            itemLevel={item.itemLevel}
+            // `ValueField` solves the typed value back to a percent in the band it was given,
+            // which is the quality-inclusive one — so the stored roll is that answer less the
+            // quality the player did not roll for. Typing into one line moves that line alone:
+            // the reason to type here is "my item says +147 Armor", which is a statement about
+            // one stat and not about the part's roll.
+            onRoll={(value) => setRoll(index, value - quality)}
+          />
         );
       })}
-    </>
+    </div>
   );
 }
 
@@ -877,13 +1023,10 @@ function UniqueRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) =
 
   return (
     <>
-      <div className="section-title">
-        {uniqueName(snapshot, view.id)} <span className="faint">— unique stats</span>
-      </div>
       {view.uniqueStats.map((mod, index) => {
         const roll = rolls[index] ?? 0;
         return (
-          <div key={index} className="mb-2">
+          <div key={index} className="mb-1">
             <div className="row">
               <RollSlider
                 value={roll}
@@ -955,13 +1098,12 @@ function AffixList({
   );
 
   const defaultTier = tiers[0] ?? "common";
+  // "Add prefix" from "Prefixes", "Add infusion" from "Infusion" — the list's own name, made
+  // singular, rather than the affix type, which is `chaos_stat` for a corruption.
+  const one = label.toLowerCase().replace(/e?s$/, "");
 
   return (
     <>
-      <div className="section-title">
-        {label} <span className="faint">({rolls.length}{max !== undefined ? ` / ${max}` : ""})</span>
-      </div>
-
       {rolls.map((roll, index) => (
         <AffixRow
           key={`${roll.affixId}-${index}`}
@@ -980,7 +1122,7 @@ function AffixList({
             silently. `ui/AddPicker` is the fix; the new roll still starts at the band floor, and
             the three buttons beside it are how you move it. */}
         <AddPicker
-          label={`Add ${label.toLowerCase().replace(/e?s$/, "")}`}
+          label={`Add ${one}`}
           placeholder={`Which ${type}?`}
           options={options}
           width={280}
@@ -1016,7 +1158,7 @@ function AffixList({
               <button
                 key={end}
                 className="nudge word"
-                title={`Set every ${label.toLowerCase().replace(/e?s$/, "")} on this item to the ${end} of its tier's band`}
+                title={`Set every ${one} on this item to the ${end} of its tier's band`}
                 onClick={() =>
                   onChange(
                     rolls.map((roll) => ({
@@ -1267,12 +1409,11 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
 
   return (
     <>
-      <div className="section-title">
-        Sockets{" "}
-        <span className="faint">
-          ({filled} of {rarity.sockets.max} filled
-          {gemsAllowed ? `, up to ${rarity.maxRunes} rune${rarity.maxRunes === 1 ? "" : "s"}` : ", runes only"})
-        </span>
+      <div className="faint text-xs mb-2">
+        {filled} of {rarity.sockets.max} filled
+        {gemsAllowed
+          ? `, up to ${rarity.maxRunes} rune${rarity.maxRunes === 1 ? "" : "s"}`
+          : ", runes only"}
       </div>
 
       <div
@@ -1437,8 +1578,8 @@ function Runewords({
 
   return (
     <>
-      <div className="section-title">
-        Runewords <span className="faint">({runewords.length} fit this slot)</span>
+      <div className="faint text-xs mt-2 mb-1">
+        Runewords — {runewords.length} fit this slot
       </div>
 
       {runewords.length === 0 ? (

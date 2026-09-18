@@ -47,6 +47,7 @@ import { ORIGINAL_MODE } from "../compat.js";
 import type { StatIndex } from "../stat-def.js";
 import { statIndex } from "../stat-def.js";
 import type { AilmentResult } from "./ailments.js";
+import { auraCutoffShare, auraSources } from "./auras.js";
 import type { Sheet } from "./ctx.js";
 import { effectDurationTicks } from "./effect-duration.js";
 import { layerIndex, type LayerIndex } from "./layers.js";
@@ -252,6 +253,15 @@ export type SelfDamage = {
   perSecond: number;
   /** `1 - perCast / rawPerCast`, the share your defences took off. 0 when there is nothing to take. */
   mitigated: number;
+  /**
+   * The share of your combined health and magic shield at which the effect responsible takes
+   * itself off, when one does.
+   *
+   * Holy Fire, Sanguine, Abyss and Plague all carry a `remove_<id>_when_very_low` stat, so their
+   * failure mode is the aura going out rather than the character dying. A sustain figure that
+   * only counted down to zero would be answering a question the game never asks.
+   */
+  cutoffShare?: number;
 };
 
 /** The counts a caller needs to understand a multi-projectile spell, none of them assumed. */
@@ -319,6 +329,15 @@ export type DpsResult = {
    * gets a sensible one. For `raging_dragon` that is one dragon pulse, not the whole cast.
    */
   hit: DamageResult;
+  /**
+   * Which of {@link sources} {@link hit} came from, when it came from one at all.
+   *
+   * A multi-hit skill has no single "the hit": `meteor_arrow` is an arrow and a meteor, and a
+   * breakdown of one of them is not a breakdown of the other. A caller offering the choice
+   * needs to know which one it is already showing, and deriving that by comparing damage a
+   * second time would be a second chance to disagree with this one.
+   */
+  headlineSourceId?: string;
   /** Every `damage` act this cast produces, in the order the tree declares them. */
   sources: SourceResult[];
   model: SkillModel;
@@ -692,7 +711,7 @@ export function simulateDps(
     });
   }
 
-  const model = skillModel(
+  const walked = skillModel(
     spell,
     declared,
     calc,
@@ -700,6 +719,39 @@ export function simulateDps(
     options.entryGroup ?? "on_cast",
     build.config?.conditions,
   );
+
+  // An aura's damage is not reachable from its own button — the branch that would grant the
+  // effect is gated on *not* already having it, so on a build that runs the aura that branch is
+  // correctly blocked. `auras.ts` enters from the effect the character is holding instead, and
+  // what it finds is appended here because it is damage this skill is responsible for and
+  // belongs in this skill's figure, not in a second one beside it.
+  const auras = auraSources({
+    snapshot,
+    effects,
+    spellId: skill.spellId,
+    spell,
+    declared,
+    calc,
+    cycleTicks: rate.cycleSeconds * TICKS_PER_SECOND,
+    conditions: build.config?.conditions,
+  });
+  const model: SkillModel =
+    auras.sources.length === 0
+      ? walked
+      : { ...walked, sources: [...walked.sources, ...auras.sources] };
+
+  for (const id of auras.gaps) {
+    diagnostics.push({
+      severity: "info",
+      code: "enemy-effect-damage-unmodelled",
+      path: "skills",
+      message:
+        `\`${skill.spellId}\` puts \`${id}\` on the enemy, and that effect damages whoever holds ` +
+        `it — the mob. Pricing it needs the mob's own sheet to tick against, which is stated ` +
+        `rather than derived, so it is listed and not counted.`,
+    });
+  }
+
   const placement = options.placement ?? build.config?.target ?? DEFAULT_PLACEMENT;
   const packSize = Math.max(1, options.packSize ?? build.config?.packSize ?? 1);
 
@@ -743,7 +795,10 @@ export function simulateDps(
     });
   }
 
-  const overrides = options.coverageOverrides ?? {};
+  // Read from the document as well as the options, exactly as `placement` and `packSize` are
+  // above. The Damage tab's per-source field writes `config.coverageOverrides` and nothing
+  // else, so an engine that only read `options` ignored every number typed into it.
+  const overrides = options.coverageOverrides ?? build.config?.coverageOverrides ?? {};
   const sources: SourceResult[] = [];
   const requires = new Set<string>();
   // Collected from the first source's sweep only: every source of a spell sweeps the same
@@ -886,12 +941,14 @@ export function simulateDps(
             (sum, s) => sum + s.hit.baseValue * s.source.instancesPerCast,
             0,
           );
+          const cutoff = auraCutoffShare(snapshot, auras.effectIds);
           return {
             sources: selfSources,
             perCast,
             rawPerCast,
             perSecond: perSecond(perCast),
             mitigated: rawPerCast > 0 ? 1 - perCast / rawPerCast : 0,
+            ...(cutoff === undefined ? {} : { cutoffShare: cutoff }),
           };
         })();
 
@@ -1287,6 +1344,7 @@ export function simulateDps(
   return {
     spellId: skill.spellId,
     hit,
+    ...(headline === undefined ? {} : { headlineSourceId: headline.source.id }),
     sources,
     overlap,
     model,

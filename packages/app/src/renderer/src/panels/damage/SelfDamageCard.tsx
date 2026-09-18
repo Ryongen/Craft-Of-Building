@@ -1,6 +1,7 @@
 import { type DpsResult } from "@cte2/engine";
 import { type ReactNode } from "react";
 
+import { useDerived } from "../../state/derived.js";
 import { num, smart } from "../../ui/fields.js";
 import { TraceBlock } from "./Trace.js";
 
@@ -20,8 +21,9 @@ import { TraceBlock } from "./Trace.js";
  * applies, which is exactly why the mitigated share is the headline here.
  */
 export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
+  const sustain = useDerived().selfSustain;
   const self = dps.selfDamage;
-  if (!self) return null;
+  if (!self || sustain === undefined) return null;
 
   // Both pools, because `asura_self` scales off both and a hit spends magic shield before health.
   const health = dps.cost.budget.find((row) => row.resource === "health");
@@ -29,20 +31,29 @@ export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
   const pool = (health?.max ?? 0) + (shield?.max ?? 0);
   const share = pool > 0 ? self.perCast / pool : 0;
 
-  // What the pools are already doing, before this drain is set against them. A cast you cannot
-  // out-heal is the finding; how far under is the detail.
-  const income = (health?.netPerSecond ?? 0) + (shield?.netPerSecond ?? 0);
-  const net = income - self.perSecond;
-  const castsToEmpty = self.perCast > 0 ? pool / self.perCast : Infinity;
-
+  // The verdict comes from the shared sustain pass rather than from `health.netPerSecond +
+  // shield.netPerSecond`, which is what this used to do and which pooled the two regenerations.
+  // They are not pooled: the shield absorbs first, so its regeneration pays first and health's
+  // only ever sees the overflow. A build whose shield regeneration is already saturated is
+  // losing health at a rate the added figure called covered. The Defence tab shows the split.
   return (
     <div className="card">
       <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
-        <span className={net >= 0 ? "badge" : "badge warn"}>
-          {net >= 0
-            ? `regen covers it, +${smart(Math.round(net))}/s spare`
-            : `${smart(Math.round(-net))}/s more than you regenerate`}
+        <span className={sustain.sustainable ? "badge" : "badge warn"}>
+          {sustain.sustainable
+            ? "regeneration covers it"
+            : `${smart(Math.round(sustain.netLossPerSecond))}/s more than you regenerate`}
         </span>
+        {!sustain.sustainable && (
+          <span
+            className="badge warn"
+            title="The shield is spent before the health is, so this counts down through both."
+          >
+            {sustain.secondsToCutoff === undefined
+              ? `dead in ${num(sustain.secondsToDeath, 1)}s`
+              : `aura drops in ${num(sustain.secondsToCutoff, 1)}s`}
+          </span>
+        )}
         {share > 0 && (
           <span
             className={share >= 0.5 ? "badge warn" : "badge"}
@@ -79,7 +90,7 @@ export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
             <td className="num">{smart(Math.round(self.perCast))}</td>
             <td className="num">{smart(Math.round(self.perSecond))}</td>
             <td className="num">
-              {Number.isFinite(castsToEmpty) ? num(castsToEmpty, 1) : "—"}
+              {Number.isFinite(sustain.castsToEmpty) ? num(sustain.castsToEmpty, 1) : "—"}
             </td>
           </tr>
         </tbody>

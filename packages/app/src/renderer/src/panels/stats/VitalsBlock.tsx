@@ -349,7 +349,7 @@ function Survival({
   focus: SheetFocus | null;
   pick: Pick;
 }): ReactNode {
-  const { defence, resources, dps } = derived;
+  const { defence, resources, dps, selfSustain } = derived;
   const [showElements, setShowElements] = useState(false);
 
   /**
@@ -374,6 +374,7 @@ function Survival({
     [...pools].sort((a, b) => b.max - a.max)[0];
 
   const magicShield = resources.byResource.find((r) => r.resource === "magic_shield");
+  const health = resources.byResource.find((r) => r.resource === "health");
 
   return (
     <div className="vitals-group">
@@ -450,6 +451,28 @@ function Survival({
         ))}
 
       <StatRowOf statId="health" focus={focus} pick={pick} />
+      {/*
+        Health regeneration, under Health, for the same reason the other two pools have one: it
+        is a term of the row above it. It was the one pool without it, and it is the pool that
+        pays for self-damage — so the block could show a 646/s drain on the Damage tab with
+        nothing anywhere to set it against.
+      */}
+      {health !== undefined && (
+        <Row
+          indent
+          label="Regeneration"
+          value={`${num(health.inCombatPerSecond, 2)}/s`}
+          hint={
+            `${num(health.perSecond, 2)}/s out of combat` +
+            (health.secondsToFull === undefined
+              ? ", and it never fills from empty"
+              : `, ${num(health.secondsToFull, 1)}s from empty to full`) +
+            (health.note === undefined ? "." : ` — ${health.note}`)
+          }
+          active={same(focus, { kind: "stat", statId: "health_regen" })}
+          onSelect={pick({ kind: "stat", statId: "health_regen" })}
+        />
+      )}
 
       {main !== undefined && (
         <>
@@ -486,6 +509,67 @@ function Survival({
           active={same(focus, { kind: "stat", statId: "magic_shield_regen" })}
           onSelect={pick({ kind: "stat", statId: "magic_shield_regen" })}
         />
+      )}
+
+      {/*
+        What your own skill is doing to you, set against the two regenerations in the order the
+        game spends them.
+
+        Only present for a build that takes self-damage — four auras and ten spells — and it sits
+        directly under the pools because that is what it is about. The shield pays first because
+        the shield is hit first; health regeneration only ever sees what the shield could not
+        cover, which is why the two are not simply added together.
+      */}
+      {selfSustain !== undefined && selfSustain.drainPerSecond > 0 && (
+        <>
+          <Row
+            label="Self-damage"
+            statId="health"
+            value={`${smart(selfSustain.drainPerSecond)}/s`}
+            strong
+            tone={selfSustain.sustainable ? undefined : "bad"}
+            hint={
+              `What this skill costs you per second, after your own mitigation. It is not netted ` +
+              `off your DPS — what you deal and what you pay are different questions.`
+            }
+            active={same(focus, { kind: "figure", id: "self-damage" })}
+            onSelect={pick({ kind: "figure", id: "self-damage" })}
+          />
+          <Row
+            indent
+            label={selfSustain.sustainable ? "Covered by regeneration" : "Not covered"}
+            value={
+              selfSustain.sustainable
+                ? `${smart(selfSustain.fromShieldRegen)} + ${smart(selfSustain.fromHealthRegen)}/s`
+                : `−${smart(selfSustain.netLossPerSecond)}/s`
+            }
+            tone={selfSustain.sustainable ? undefined : "bad"}
+            hint={
+              `Magic shield regeneration pays first because the shield is hit first: ` +
+              `${smart(selfSustain.fromShieldRegen)}/s of it. Health regeneration pays the ` +
+              `${smart(selfSustain.reachingHealth)}/s that reaches it, up to ` +
+              `${smart(selfSustain.fromHealthRegen)}/s.` +
+              (selfSustain.sustainable
+                ? " Between them they cover it, so you can hold this indefinitely."
+                : ` Neither covers the last ${smart(selfSustain.netLossPerSecond)}/s.`)
+            }
+          />
+          {!selfSustain.sustainable && (
+            <Row
+              indent
+              label={selfSustain.secondsToCutoff === undefined ? "Dead in" : "Aura drops in"}
+              value={`${num(selfSustain.secondsToCutoff ?? selfSustain.secondsToDeath, 1)}s`}
+              tone="bad"
+              hint={
+                selfSustain.secondsToCutoff === undefined
+                  ? "From full health and magic shield, with nothing else hitting you."
+                  : `This effect takes itself off at a quarter of your combined health and magic ` +
+                    `shield rather than killing you, so this is when it goes out. You would be ` +
+                    `dead in ${num(selfSustain.secondsToDeath, 1)}s if it did not.`
+              }
+            />
+          )}
+        </>
       )}
 
       <StatRowOf statId="armor" focus={focus} pick={pick} />

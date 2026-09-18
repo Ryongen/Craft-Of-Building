@@ -179,8 +179,27 @@ export function coverageOf(source: DamageSource, placement: TargetPlacement): Co
 function compute(source: DamageSource, placement: TargetPlacement): Coverage {
   const { carrier, target } = source;
 
-  // A selector that names the target outright does not care where it stands.
-  if (target.kind === "target") {
+  // A selector that names the target outright does not care where it stands — *unless* something
+  // had to reach the target for the act to run at all.
+  //
+  // `SpellCtx.onHit` is exactly that: the act resolves at the enemy the projectile touched, and
+  // whether the projectile touched it is the same flight question every other row on the table is
+  // answered by. `meteor_arrow` is the case that made it visible. One press with Hunter's Focus up
+  // throws five arrows and drops five meteors, and the meteors ride the arrows — so the table read
+  //
+  //     arrow   5 of 5 land   (assumed: the selector names the target)
+  //     meteor  3 of 5 land   (flown: three arrows got near enough)
+  //
+  // which is two answers to one question, and the wrong way round: the meteor is a 2.5-block area
+  // and the arrow is an arrow. Falling through to the `on_hit` branch below flies the arrows once
+  // and lets both rows agree about how many of them arrived.
+  //
+  // Everything else with a `target` selector keeps the short-circuit, because for those the
+  // reaching has already happened: an `on_cast` act aimed at your target, or a `per_entity_hit`
+  // sub-part whose outer selector already picked the mob.
+  const flownOnHit =
+    source.trigger.kind === "on_hit" && carrier.kind === "projectile" && !carrier.motion.tracksEnemies;
+  if (target.kind === "target" && !flownOnHit) {
     return {
       hitsPerCast: source.instancesPerCast,
       fraction: 1,
@@ -286,7 +305,29 @@ function coverageNote(
   if (method === "stationary" && source.trigger.kind === "tick") {
     return "assumes the target stays in the area for its whole duration";
   }
+  if (fallsToGround(source)) {
+    return "a gravity projectile that misses is flown to its full lifespan rather than stopped "
+      + "by the ground, so anything it drops on expiry lands further away than it really would "
+      + "— type over this if you know the near misses still cover the target";
+  }
   return undefined;
+}
+
+/**
+ * Whether this source rides, or is placed by, a projectile that gravity would bring down early.
+ *
+ * The one piece of the flight that is deliberately not simulated, because stopping a projectile
+ * at the floor needs the floor. `meteor_arrow` is where it shows: its arrows arc, and a shot that
+ * misses buries itself a few blocks past the mob and drops its meteor there — while this flies it
+ * for the full 80 ticks and drops the meteor two hundred blocks away. The count that comes back
+ * is therefore a **lower bound** for a spell of that shape, which is worth saying on the row
+ * rather than leaving the reader to wonder why the number is lower than the game feels.
+ */
+function fallsToGround(source: DamageSource): boolean {
+  if (source.carrier.kind === "projectile" && source.carrier.motion.gravity) return true;
+  return source.origin.chain.some(
+    (step) => step.carrier.kind === "projectile" && step.carrier.motion.gravity,
+  );
 }
 
 /** What kind of derivation the answer rests on, for `Coverage.method`. */
@@ -395,7 +436,12 @@ function resolveSites(
   placement: TargetPlacement,
 ): { sites: Site[]; note?: string } {
   const target = targetPosition(placement);
-  let sites: Site[] = [{ at: { x: 0, z: 0 }, bornAt: 0, endsAt: 0, weight: 1 }];
+  // The root site is the anchor — the caster — and with an empty chain it is also the thing the
+  // act itself rides. A `direct` act does not care: `firesOn` short-circuits it. An exile effect
+  // sitting on the caster very much does, because its `x_ticks_condition` counts against the
+  // effect’s own life, and a root seeded at 0 reports an aura that never pulses.
+  const rootLife = source.origin.chain.length === 0 ? source.carrier.lifeTicks : 0;
+  let sites: Site[] = [{ at: { x: 0, z: 0 }, bornAt: 0, endsAt: rootLife, weight: 1 }];
   let parent: Carrier = { kind: "direct", count: 1, lifeTicks: 0 };
   let note: string | undefined;
   let truncated = false;

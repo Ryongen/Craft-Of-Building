@@ -219,6 +219,10 @@ export { mobAffix, mobAffixDiagnostics, mobAffixIds, mobAffixMods } from "./dama
 export type { MobAffixMod, MobAffixView } from "./damage/mob-affixes.js";
 
 export { defence } from "./damage/defence.js";
+export { selfSustain } from "./damage/self-sustain.js";
+export type { Pool, SelfSustain, SelfSustainInput } from "./damage/self-sustain.js";
+export { auraSources } from "./damage/auras.js";
+export type { AuraInput, AuraResult } from "./damage/auras.js";
 export type { Defence, DefenceOptions, ElementDefence, Pools } from "./damage/defence.js";
 
 export type { BrokenLink, ComboChain, ComboStep } from "./damage/combo.js";

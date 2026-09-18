@@ -271,6 +271,11 @@ export function allowedAffixTiers(snapshot: Snapshot, itemRarity: GearRarityView
     .map((id) => gearRarity(snapshot, id))
     .filter((r): r is GearRarityView => r !== undefined)
     .filter((r) => !r.isUniqueItem && itemRarity.itemTier >= r.itemTier)
+    // In the ladder's order, not the registry's. `ids()` is alphabetical, so every tier dropdown
+    // in the app read "common, epic, legendary, mythic, rare, uncommon" — a list whose order
+    // says nothing, over a value whose whole meaning is its rank. `item_tier` is that rank, and
+    // no unique survives the filter above, so there is no tie here to break.
+    .sort((a, b) => a.itemTier - b.itemTier)
     .map((r) => r.id);
 }
 

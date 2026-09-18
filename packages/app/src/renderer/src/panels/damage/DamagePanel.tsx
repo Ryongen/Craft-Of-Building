@@ -19,6 +19,7 @@
  * mean of the two totals and says so.
  */
 
+import { sourceLabel, type DpsResult } from "@cte2/engine";
 import { ELEMENTS } from "@cte2/schema";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -56,6 +57,14 @@ export function DamagePanel(): ReactNode {
   const setTargetPlacement = useBuild((s) => s.setTargetPlacement);
   const setPackSize = useBuild((s) => s.setPackSize);
   const [branch, setBranch] = useState<"hit" | "crit">("hit");
+  /**
+   * Which damage act the breakdown below is about, or null for "whichever is the headline".
+   *
+   * Null rather than the headline's id so that the choice survives editing the build: a skill
+   * whose sources are renumbered by a support gem, or swapped out entirely by changing the main
+   * skill, would otherwise leave a stale id selected and silently fall back anyway.
+   */
+  const [sourceId, setSourceId] = useState<string | null>(null);
   const detail = useDetailPane(340);
 
   const skills = doc.skills ?? [];
@@ -84,7 +93,20 @@ export function DamagePanel(): ReactNode {
     0,
     skills.findIndex((s) => s.main === true),
   );
-  const trace = branch === "hit" ? damage.hit.trace : damage.crit.trace;
+  /**
+   * The source the breakdown is showing.
+   *
+   * `meteor_arrow` is why this is a choice at all: one press is an arrow that hits for physical
+   * and a meteor that lands for fire, with different value calculations, different elements and
+   * therefore different layers. A single trace describes one of them, and which one was never
+   * something the reader could pick — it was whichever `DpsResult.hit` had settled on.
+   */
+  const shown =
+    dps.sources.find((s) => s.source.id === sourceId) ??
+    dps.sources.find((s) => s.source.id === dps.headlineSourceId) ??
+    dps.sources[0];
+  const shownHit = shown?.hit ?? damage;
+  const trace = branch === "hit" ? shownHit.hit.trace : shownHit.crit.trace;
   const sustain = sustainVerdict(dps);
   const rotating = derived.fullDps !== undefined && derived.fullDps.skills.length > 0;
 
@@ -202,8 +224,27 @@ export function DamagePanel(): ReactNode {
             <SustainCard dps={dps} />
           </Panel>
 
+          {/*
+            What the button costs you, on the head of the card rather than inside it.
+
+            An aura that charges 646/s is not a detail you go looking for — it is the finding —
+            and the summary is the only part of a folded card that is read. The verdict comes with
+            it for the same reason: "646/s to yourself" is a number, "646/s, covered" is an answer.
+          */}
           {dps.selfDamage !== undefined && (
-            <Panel id="damage.self" title="Self-damage" summary={`${smart(dps.selfDamage.perSecond)}/s to yourself`}>
+            <Panel
+              id="damage.self"
+              title="Self-damage"
+              tone={derived.selfSustain?.sustainable === false ? "warn" : undefined}
+              summary={
+                `${smart(dps.selfDamage.perSecond)}/s to yourself` +
+                (derived.selfSustain === undefined
+                  ? ""
+                  : derived.selfSustain.sustainable
+                    ? " · covered"
+                    : ` · ${smart(derived.selfSustain.netLossPerSecond)}/s uncovered`)
+              }
+            >
               <SelfDamageCard dps={dps} />
             </Panel>
           )}
@@ -329,6 +370,33 @@ export function DamagePanel(): ReactNode {
           </span>
         </div>
 
+        {/*
+          Which act, then which branch of it.
+
+          The act comes first because it is the bigger question: Hit and Crit are two readings of
+          one number, while the arrow and the meteor are two different numbers that happen to
+          leave the bow together.
+        */}
+        {dps.sources.length > 1 && (
+          <div className="row wrap mb-3">
+            <label className="muted">Hit</label>
+            <select
+              value={shown?.source.id ?? ""}
+              onChange={(event) => setSourceId(event.target.value)}
+            >
+              {dps.sources.map((entry) => (
+                <option key={entry.source.id} value={entry.source.id}>
+                  {sourceChoice(entry)}
+                </option>
+              ))}
+            </select>
+            <span className="muted text-sm">
+              One cast produces {dps.sources.length} damage acts. Each has its own value
+              calculation and element, so each has its own breakdown.
+            </span>
+          </div>
+        )}
+
         <div className="row mb-4">
           <button className={branch === "hit" ? "primary" : ""} onClick={() => setBranch("hit")}>
             Hit
@@ -345,13 +413,27 @@ export function DamagePanel(): ReactNode {
         {trace === undefined ? (
           <div className="notice">No trace was recorded for this branch.</div>
         ) : (
-          <TraceBlock trace={trace} target={damage.target} />
+          <TraceBlock trace={trace} target={shownHit.target} />
         )}
       </div>
 
       {detail.pane}
     </div>
   );
+}
+
+/**
+ * One line naming a damage act, for the breakdown's picker.
+ *
+ * The value calculation is the name a player would recognise from the spell tooltip, and the
+ * carrier is what disambiguates two acts that share one — `meteor_arrow` uses the `meteor` calc
+ * for both the arrow and the meteor, so the calc alone would print the same row twice.
+ */
+function sourceChoice(entry: DpsResult["sources"][number]): string {
+  const element = ELEMENTS[entry.source.element]?.displayName ?? entry.source.element;
+  const name = entry.source.valueCalcId || entry.source.id;
+  const self = entry.source.target?.kind === "self" ? " — to yourself" : "";
+  return `${name} · ${element} · ${sourceLabel(entry.source)}${self}`;
 }
 
 /** How many exile effects the pipeline settled on as up, for the card's head. */

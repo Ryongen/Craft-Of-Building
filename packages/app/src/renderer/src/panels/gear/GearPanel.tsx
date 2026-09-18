@@ -25,7 +25,6 @@
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import { balance, collectGear, makeEnv, statIndex } from "@cte2/engine";
 import {
   SLOT_CAPACITY,
   allUniques,
@@ -39,7 +38,6 @@ import {
   isTwoHanded,
   slotFamily,
   slotName,
-  statName,
   unique as uniqueView,
   uniqueName,
   uniqueRarityId,
@@ -50,8 +48,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
+import { useItemCompare } from "../../state/item-compare.js";
 import { useWorld } from "../../state/snapshot.js";
-import { signed, smart } from "../../ui/format.js";
+import { itemLines } from "../../ui/item-stats.js";
+import { useItemTooltip } from "../../ui/ItemTooltip.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { AugmentList } from "../../ui/Augments.js";
@@ -280,6 +280,52 @@ export function GearPanel(): ReactNode {
       })),
     ];
   }, [items, pool, world.snapshot, placement]);
+
+  /**
+   * Publish the selected item to the sidebar, with whatever it would take the place of.
+   *
+   * Which piece comes off is not a guess: `equip` displaces `occupying.length - (capacity - 1)`
+   * items oldest-first, so for a full slot that is `occupying[0]` and for a slot with room it is
+   * nothing at all. Reading the same rule here is what keeps the diff a statement about the
+   * click you are about to make rather than about a swap the panel would not perform.
+   *
+   * A worn item has nothing to compare against — selecting your own boots is not a swap — and
+   * the sidebar shows what they contribute instead.
+   */
+  const showCompare = useItemCompare((s) => s.show);
+  const clearCompare = useItemCompare((s) => s.clear);
+
+  useEffect(() => {
+    if (editing === null || target === undefined) {
+      clearCompare();
+      return;
+    }
+    const entry = poolEntries.find((e) => sameRef(editing, e.ref));
+    const row = rowFor(world.snapshot, target);
+    const occupying = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
+    const capacity = row?.capacity ?? 1;
+    const displaced =
+      editing.where === "gear"
+        ? undefined
+        : occupying.slice(0, Math.max(0, occupying.length - (capacity - 1)))[0];
+
+    showCompare({
+      item: target,
+      against: displaced === undefined ? undefined : items[displaced],
+      where: editing.where,
+      slotLabel:
+        entry?.slot ??
+        (row === undefined
+          ? undefined
+          : row.kind === "slot"
+            ? slotName(world.snapshot, row.id)
+            : row.family),
+    });
+  }, [editing, target, poolEntries, placement, items, world.snapshot, showCompare, clearCompare]);
+
+  // Leaving the tab takes the card with it: it is about a choice being made in this panel, and
+  // a diff left standing over the Tree tab is a diff about nothing on screen.
+  useEffect(() => clearCompare, [clearCompare]);
 
   return (
     <div className="panel items-panel">
@@ -680,7 +726,6 @@ function ItemPool({
   onUnequip: (gearIndex: number) => void;
   onRemove: (ref: ItemRef) => void;
 }): ReactNode {
-  const world = useWorld();
   const worn = entries.filter((e) => e.slot !== undefined).length;
 
   return (
@@ -714,58 +759,99 @@ function ItemPool({
          */
         <div className="item-pool" style={{ maxHeight: entries.length > POOL_ROWS ? POOL_MAX : undefined }}>
         {entries.map((entry) => (
-          <div
+          <PoolRow
             key={`${entry.ref.where}-${entry.ref.index}`}
-            className={`slot-row${sameRef(editing, entry.ref) ? " selected" : ""}`}
-            style={{ cursor: "pointer" }}
-            onClick={() => onSelect(entry.ref)}
-          >
-            <GearIcon baseId={entry.item.base} />
-            <strong className="ellipsis">{itemLabel(world.snapshot, entry.item)}</strong>
-            <RarityBadge rarity={entry.item.rarity} />
-            <span className="badge">ilvl {entry.item.itemLevel}</span>
-            {isTwoHanded(world.snapshot, entry.item.base) && <span className="badge warn">2H</span>}
-            {entry.slot !== undefined && (
-              <span className="badge good" title="Worn — this one is on the character">
-                {entry.slot}
-              </span>
-            )}
-            <span className="grow" />
-            <CopyItemButton item={entry.item} />
-            {entry.slot === undefined ? (
-              <button
-                title="Wear this. Anything the slot has no room for comes off, back into the pool."
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEquip(entry.ref.index);
-                }}
-              >
-                equip
-              </button>
-            ) : (
-              <button
-                title="Take this off. It stays in the pool."
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onUnequip(entry.ref.index);
-                }}
-              >
-                take off
-              </button>
-            )}
-            <button
-              title="Delete this item from the build entirely"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRemove(entry.ref);
-              }}
-            >
-              ✕
-            </button>
-          </div>
+            entry={entry}
+            selected={sameRef(editing, entry.ref)}
+            onSelect={() => onSelect(entry.ref)}
+            onEquip={() => onEquip(entry.ref.index)}
+            onUnequip={() => onUnequip(entry.ref.index)}
+            onRemove={() => onRemove(entry.ref)}
+          />
         ))}
         </div>
       )}
+    </>
+  );
+}
+
+/**
+ * One row of the pool.
+ *
+ * Its own component rather than a block inside the list's `map`, because it hovers: the tooltip
+ * is a hook and a hook cannot be called in a loop. The row is otherwise what it was — the badges
+ * are what tell two rings apart at a glance, and the tooltip is what tells them apart properly.
+ */
+function PoolRow({
+  entry,
+  selected,
+  onSelect,
+  onEquip,
+  onUnequip,
+  onRemove,
+}: {
+  entry: PoolEntry;
+  selected: boolean;
+  onSelect: () => void;
+  onEquip: () => void;
+  onUnequip: () => void;
+  onRemove: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const tooltip = useItemTooltip(entry.item);
+
+  return (
+    <>
+      <div
+        className={`slot-row${selected ? " selected" : ""}`}
+        style={{ cursor: "pointer" }}
+        onClick={onSelect}
+        {...tooltip.props}
+      >
+        <GearIcon baseId={entry.item.base} />
+        <strong className="ellipsis">{itemLabel(world.snapshot, entry.item)}</strong>
+        <RarityBadge rarity={entry.item.rarity} />
+        <span className="badge">ilvl {entry.item.itemLevel}</span>
+        {isTwoHanded(world.snapshot, entry.item.base) && <span className="badge warn">2H</span>}
+        {entry.slot !== undefined && (
+          <span className="badge good" title="Worn — this one is on the character">
+            {entry.slot}
+          </span>
+        )}
+        <span className="grow" />
+        <CopyItemButton item={entry.item} />
+        {entry.slot === undefined ? (
+          <button
+            title="Wear this. Anything the slot has no room for comes off, back into the pool."
+            onClick={(event) => {
+              event.stopPropagation();
+              onEquip();
+            }}
+          >
+            equip
+          </button>
+        ) : (
+          <button
+            title="Take this off. It stays in the pool."
+            onClick={(event) => {
+              event.stopPropagation();
+              onUnequip();
+            }}
+          >
+            take off
+          </button>
+        )}
+        <button
+          title="Delete this item from the build entirely"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      {tooltip.node}
     </>
   );
 }
@@ -884,6 +970,8 @@ function ItemRow({
   const errors = diagnostics.filter((d) => d.severity === "error").length;
   const warnings = diagnostics.length - errors;
   const aboveLevel = item.itemLevel > level;
+  // What the piece is actually doing, without having to open it — see `ui/ItemTooltip`.
+  const tooltip = useItemTooltip(item);
 
   return (
     <div>
@@ -892,9 +980,10 @@ function ItemRow({
         style={{
           cursor: "pointer",
           borderColor: errors > 0 ? "#5c3131" : undefined,
-          opacity: suppressed ? 0.6 : 1,
+          opacity: suppressed ? 0.78 : 1,
         }}
         onClick={onSelect}
+        {...tooltip.props}
       >
         <span className="slot-name">{slotLabel}</span>
         <GearIcon baseId={item.base} />
@@ -939,6 +1028,7 @@ function ItemRow({
           off
         </button>
       </div>
+      {tooltip.node}
     </div>
   );
 }
@@ -1091,9 +1181,10 @@ function omenMinLevelFor(snapshot: Snapshot, id: string): number {
 /**
  * The item's resolved contribution, through the engine's own collector.
  *
- * `collectGear` applies the item-level scaling and the roll interpolation exactly as the sheet
- * does, so this preview and the sidebar cannot disagree. It also means the "above your level
- * contributes nothing" rule shows up here for free rather than needing a special case.
+ * The summation itself is `ui/item-stats`, because three things now ask this question — this
+ * preview, the hover tooltip and the sidebar's swap diff — and three copies of it would be three
+ * opinions about what an item grants. What stays here is the memo: the preview is on the render
+ * path of a list, and `collectGear` is not free.
  */
 function useItemPreview(
   snapshot: Snapshot,
@@ -1101,42 +1192,11 @@ function useItemPreview(
   index: number,
   characterLevel: number,
 ): { lines: string[] } {
-  return useMemo(() => {
-    const env = makeEnv(snapshot, statIndex(snapshot), balance(snapshot), characterLevel);
-    const contexts = collectGear(env, [item]);
-
-    // Several contexts (base, each affix, gems, runes) all feed one item; the preview wants
-    // the totals per stat, not one line per source.
-    const totals = new Map<string, { flat: number; percent: number; more: number }>();
-    for (const context of contexts) {
-      for (const mod of context.stats) {
-        let bucket = totals.get(mod.statId);
-        if (!bucket) {
-          bucket = { flat: 0, percent: 0, more: 0 };
-          totals.set(mod.statId, bucket);
-        }
-        if (mod.type === "FLAT") bucket.flat += mod.value;
-        else if (mod.type === "PERCENT") bucket.percent += mod.value;
-        else bucket.more += mod.value;
-      }
-    }
-
-    const lines: string[] = [];
-    for (const [statId, bucket] of totals) {
-      const name = statName(snapshot, statId);
-      if (bucket.flat !== 0) lines.push(`${signed(bucket.flat)} ${name}`);
-      if (bucket.percent !== 0) lines.push(`${signed(bucket.percent)}% Increased ${name}`);
-      if (bucket.more !== 0) {
-        lines.push(
-          bucket.more < 0
-            ? `${smart(-bucket.more)}% Less ${name}`
-            : `${smart(bucket.more)}% More ${name}`,
-        );
-      }
-    }
-    return { lines };
+  return useMemo(
+    () => ({ lines: itemLines(snapshot, item, characterLevel) }),
     // `index` is in the deps so a reordered list rebuilds its previews.
-  }, [snapshot, item, index, characterLevel]);
+    [snapshot, item, index, characterLevel],
+  );
 }
 
 /**

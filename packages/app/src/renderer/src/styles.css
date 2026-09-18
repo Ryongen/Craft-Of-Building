@@ -21,13 +21,21 @@
    * `--bg-raised`. That is below the 4.5:1 body-text floor and well below it, and the class that
    * carries it is used 248 times in this app — on table captions, on the notes under every card,
    * on the hint that explains what a number means. The explanation of a figure is not decoration,
-   * so it is now #98a1b4 (5.1:1) and `--text-dim` moved with it to keep the three ranks apart.
+   * so it was lifted, and `--text-dim` moved with it to keep the three ranks apart.
+   *
+   * That fixed the token and not the screen, because almost nowhere in this app is faint text
+   * drawn at full strength. A dimmed row, an off gem, a disabled button and an unselected tab
+   * all carry an `opacity` as well, and opacity multiplies: faint at 6.6:1 drawn inside an
+   * `opacity: 0.45` card composites to **2.6:1** against the panel behind it, which is the
+   * unreadable number the lift was supposed to have removed. So the tokens go up one more step
+   * and every dimming `opacity` in this file was raised to at least 0.6, which puts the worst
+   * case back above 4:1 and the ordinary ones above 5:1.
    *
    * What faint still means: subordinate, read second. What it no longer means: squint.
    */
-  --text: #d9dde6;
-  --text-dim: #aab2c2;
-  --text-faint: #98a1b4;
+  --text: #dfe3ea;
+  --text-dim: #b9c0cd;
+  --text-faint: #a7afbf;
 
   --accent: #5b9dd9;
   --accent-dim: #2f5578;
@@ -143,7 +151,7 @@ button:hover:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.6;
   cursor: default;
 }
 
@@ -277,12 +285,31 @@ a {
   min-height: 0;
 }
 
+/*
+ * The sheet, the breakdown under it, and — on the Items tab — the swap being priced above both.
+ *
+ * This was a two-row grid, `1fr auto`, which named its children by *position*: the sheet took
+ * the fraction and the breakdown took what it needed. Adding a third child broke that silently,
+ * because the item diff arrived first and took the fraction, leaving the whole stat sheet
+ * squeezed into `auto`. A column that sizes its children by what they are rather than by the
+ * order they appear in cannot be broken by adding another one.
+ */
 .sidebar {
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
   min-height: 0;
-  display: grid;
-  grid-template-rows: 1fr auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The sheet is the part that takes the slack; everything else is sized by its content. */
+.sidebar .sheet {
+  flex: 1 1 auto;
+}
+
+.sidebar .breakdown-pane,
+.sidebar .splitter {
+  flex: 0 0 auto;
 }
 
 .tabs {
@@ -310,7 +337,7 @@ a {
 /* The unselected tabs are dimmed by opacity as well as by colour, so the icons dim with the
    words — an icon at full saturation beside a grey label reads as the selected one. */
 .tabs button:not(.active) .stat-icon {
-  opacity: 0.6;
+  opacity: 0.78;
 }
 
 .tabs button:hover {
@@ -1566,7 +1593,7 @@ button.nudge.word {
 
 .slot-row.empty {
   border-style: dashed;
-  opacity: 0.65;
+  opacity: 0.8;
 }
 
 /*
@@ -1591,7 +1618,7 @@ button.nudge.word {
  * paint over the cards that follow it whatever its `z-index` says.
  */
 .card.dimmed {
-  opacity: 0.55;
+  opacity: 0.75;
 }
 
 .card.dimmed:has(.picker-list) {
@@ -1739,7 +1766,7 @@ textarea.paste:focus {
 }
 
 .school-row-req.locked {
-  opacity: 0.45;
+  opacity: 0.65;
 }
 
 .school-cell {
@@ -1777,7 +1804,7 @@ textarea.paste:focus {
 }
 
 .school-cell.blocked {
-  opacity: 0.45;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -1919,7 +1946,7 @@ textarea.paste:focus {
 
 .delta-table .delta-pct {
   font-size: var(--text-sm);
-  opacity: 0.85;
+  opacity: 0.92;
 }
 
 .delta-section {
@@ -1953,7 +1980,7 @@ textarea.paste:focus {
 
 /* A gem already in another socket of the same skill: shown, priced, and not clickable. */
 .gem-rank-row.linked {
-  opacity: 0.45;
+  opacity: 0.65;
   cursor: default;
 }
 
@@ -1990,7 +2017,7 @@ textarea.paste:focus {
 
 .collapsible.off,
 .collapsible.dimmed {
-  opacity: 0.72;
+  opacity: 0.82;
 }
 
 /*
@@ -2241,7 +2268,7 @@ textarea.paste:focus {
 }
 
 .skill-row.off {
-  opacity: 0.55;
+  opacity: 0.75;
 }
 
 .skill-row.off .ellipsis {
@@ -2264,7 +2291,7 @@ textarea.paste:focus {
 }
 
 .gem-card.off {
-  opacity: 0.55;
+  opacity: 0.75;
 }
 
 /*
@@ -2520,4 +2547,166 @@ textarea.paste:focus {
 .preset-preview-row .mono {
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* ---------------------------------------------------------------------------
+ * The item editor, folded.
+ *
+ * The middle column holds a finder, a pool and an editor, and the editor was eleven sections
+ * drawn in full whether or not the item had anything in them. The summary of what the item was
+ * actually worth sat under all of them, which on a 1080p window meant it was never on screen at
+ * the same time as the controls that change it.
+ *
+ * So the lists fold (`ui/Accordion`), and everything that stays open is tightened: a section is
+ * a header row and its rows, not a header row with a margin above it the size of a row.
+ * ------------------------------------------------------------------------- */
+
+.accordion {
+  margin-bottom: var(--space-1);
+}
+
+/* A folded list is a single line, so its header is sized like a row rather than like a card. */
+.accordion .collapsible-head {
+  padding: 3px var(--space-3);
+  gap: var(--space-2);
+}
+
+.accordion .collapsible-head strong {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+/* The count beside the title, which is what makes a folded row still worth reading. */
+.accordion .collapsible-head .badge {
+  min-width: 18px;
+  text-align: center;
+}
+
+.accordion .collapsible-body {
+  padding: var(--space-3) var(--space-3) var(--space-3);
+}
+
+/*
+ * A section's own note about its state, on the right of the header. It is the first thing to go
+ * when the column is narrow: the title and the count are the row, this is the gloss on it.
+ */
+.accordion-summary {
+  text-align: right;
+}
+
+/* Sections inside a folded body have no card of their own to separate them, so the first one
+   does not get the margin `.section-title` would otherwise put above it. */
+.accordion .collapsible-body > .section-title:first-child {
+  margin-top: 0;
+}
+
+/*
+ * The editor's own card, tightened.
+ *
+ * Every row inside it is a control row, and a control row does not need the breathing space a
+ * page of prose does. This is where the "less scrolling" actually comes from — the accordions
+ * hide what you are not using, and this shortens what is left.
+ */
+.item-editor {
+  padding: var(--space-3);
+}
+
+.item-editor .row {
+  row-gap: var(--space-2);
+}
+
+/* The facts line under the controls: tags, and the two rules that surprise people. */
+.item-editor-meta {
+  min-height: 0;
+}
+
+.item-editor-meta .ellipsis {
+  max-width: 100%;
+}
+
+/*
+ * One slider for the whole base-stats part, with its lines under it.
+ *
+ * The 20px row height these carry elsewhere is right where a stat line is the content of a
+ * panel. Here it is the read-out under a control, and a mythic weapon has fourteen of them.
+ */
+.base-rolls .stat-line,
+.item-editor .stat-line {
+  min-height: 17px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Hovering an item.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * `fixed`, not `absolute`: the pool scrolls inside itself and the column scrolls inside the tab,
+ * so a tooltip positioned against either is clipped by it — which is exactly the case it exists
+ * for, the tenth row of a scrolled list. Rendered into `document.body` for the same reason.
+ */
+.item-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: 340px;
+  background: rgba(14, 16, 21, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 7px 9px;
+  /* It must never swallow the click on its way to the row underneath. */
+  pointer-events: none;
+  font-size: var(--text-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+}
+
+.item-tooltip .tt-name {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.item-tooltip .tt-line {
+  color: var(--good);
+  font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * What a swap would change.
+ * ------------------------------------------------------------------------- */
+
+.item-diff {
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-panel);
+  flex: 0 0 auto;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.item-diff .tt-line {
+  color: var(--good);
+  font-size: var(--text-sm);
+}
+
+.item-diff-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1px var(--space-4);
+  align-items: baseline;
+}
+
+.item-diff-row {
+  display: contents;
+}
+
+.item-diff-row .delta-label {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.item-diff-row .delta-change {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-size: var(--text-sm);
 }

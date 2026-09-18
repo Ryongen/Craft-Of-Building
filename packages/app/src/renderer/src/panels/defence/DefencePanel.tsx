@@ -11,10 +11,17 @@
  * a chaos hit walks past your magic shield.
  */
 
-import type { Defence, ElementDefence, LayerStep, Resources } from "@cte2/engine";
+import type {
+  Defence,
+  DpsResult,
+  ElementDefence,
+  LayerStep,
+  Resources,
+  SelfSustain,
+} from "@cte2/engine";
 import { useMemo, type ReactNode } from "react";
 
-import { statName, statLayerName } from "@cte2/schema";
+import { spellName, statName, statLayerName } from "@cte2/schema";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
@@ -36,6 +43,7 @@ import { TraceStatList, defenceStats } from "../stats/TraceStats.js";
 const DEFENCE_PANELS = [
   "defence.elements",
   "defence.regen",
+  "defence.self",
   "defence.layers",
   "defence.layers-unavoided",
   "defence.stats",
@@ -43,7 +51,7 @@ const DEFENCE_PANELS = [
 
 export function DefencePanel(): ReactNode {
   const derived = useDerived();
-  const { defence, resources } = derived;
+  const { defence, resources, dps, selfSustain } = derived;
   const detail = useDetailPane(340);
 
   /**
@@ -91,6 +99,35 @@ export function DefencePanel(): ReactNode {
             <RegenTable resources={resources} />
           </Panel>
 
+          {/*
+            The damage this build does to itself, which is a defensive question and was only ever
+            asked on the Damage tab.
+
+            Present only when there is any — four auras and ten spells — and open by default when
+            the build cannot cover it, because a drain your regeneration does not meet is the
+            single most important thing on this tab for the character it applies to.
+          */}
+          {dps?.selfDamage !== undefined && selfSustain !== undefined && (
+            <Panel
+              id="defence.self"
+              title="Your own damage"
+              tone={selfSustain.sustainable ? undefined : "warn"}
+              summary={
+                selfSustain.sustainable
+                  ? `${smart(selfSustain.drainPerSecond)}/s, covered`
+                  : `${smart(selfSustain.netLossPerSecond)}/s more than you regenerate`
+              }
+              defaultOpen={!selfSustain.sustainable}
+            >
+              <SelfDamageSustain
+                sustain={selfSustain}
+                self={dps.selfDamage}
+                spellId={dps.spellId}
+                onSelect={detail.open}
+              />
+            </Panel>
+          )}
+
           <Panel
             id="defence.layers"
             title={`${elementLabel(defence.weakest.element)} hit, layer by layer`}
@@ -133,6 +170,126 @@ export function DefencePanel(): ReactNode {
 
       {detail.pane}
     </div>
+  );
+}
+
+/**
+ * Your own skill’s damage, set against the regenerations that have to pay for it.
+ *
+ * The order is the game’s and it is the whole point of the table: `MagicShield` absorbs before
+ * health does, so magic shield regeneration pays first and health regeneration only ever sees
+ * the overflow. Adding the two together would call a build fine that is quietly losing health
+ * every second because its shield regeneration is already saturated.
+ *
+ * The failure mode is usually not death. Holy Fire, Sanguine, Abyss and Plague each carry a
+ * `remove_<id>_when_very_low` stat whose gate is `is_target_very_low` — 25% of health *and*
+ * magic shield combined — so a build that cannot sustain the drain loses the aura rather than
+ * the character, and the row says which.
+ */
+function SelfDamageSustain({
+  sustain,
+  self,
+  spellId,
+  onSelect,
+}: {
+  sustain: SelfSustain;
+  self: NonNullable<DpsResult["selfDamage"]>;
+  spellId: string;
+  onSelect: (focus: SheetFocus) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+
+  return (
+    <>
+      <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
+        <span className={sustain.sustainable ? "badge" : "badge warn"}>
+          {sustain.sustainable
+            ? `covered, ${smart(sustain.drainPerSecond)}/s`
+            : `−${smart(sustain.netLossPerSecond)}/s net`}
+        </span>
+        <span className="badge mono" title="DamageEvent.canAvoidHit() is source != target">
+          no dodge or block
+        </span>
+        <span className="badge mono" title="no_attacker_stats_on_selfdmg disables the attacker half of the sweep">
+          cannot crit
+        </span>
+      </div>
+
+      <table className="grid">
+        <tbody>
+          <tr>
+            <td>Raw, per cast</td>
+            <td className="num">{smart(self.rawPerCast)}</td>
+            <td className="faint text-sm">
+              {spellName(snapshot, spellId)}&apos;s own value calculation, untouched.
+            </td>
+          </tr>
+          <tr>
+            <td>Your mitigation takes</td>
+            <td className="num">{num(self.mitigated * 100, 1)}%</td>
+            <td className="faint text-sm">
+              Armour, resists and <code>dmg_received</code>. Increases to damage and crit do not
+              apply to a hit you inflict on yourself; mitigation does.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <strong>You take</strong>
+            </td>
+            <td className="num">
+              <strong>{smart(sustain.drainPerSecond)}/s</strong>
+            </td>
+            <td className="faint text-sm">{smart(self.perCast)} per cast, at your cast rate.</td>
+          </tr>
+          <tr>
+            <td>Magic shield regeneration pays</td>
+            <td className="num">{smart(sustain.fromShieldRegen)}/s</td>
+            <td className="faint text-sm">
+              First, because the shield is hit first.{" "}
+              {sustain.fromShieldRegen === 0 &&
+                "Nothing here: this build has no magic shield for the stat to refill."}
+            </td>
+          </tr>
+          <tr>
+            <td>Reaching health</td>
+            <td className="num">{smart(sustain.reachingHealth)}/s</td>
+            <td className="faint text-sm">What the shield&apos;s regeneration could not cover.</td>
+          </tr>
+          <tr>
+            <td>Health regeneration pays</td>
+            <td className="num">{smart(sustain.fromHealthRegen)}/s</td>
+            <td className="faint text-sm">In combat, which is when this is happening.</td>
+          </tr>
+          <tr>
+            <td>
+              <strong>Net</strong>
+            </td>
+            <td className={`num${sustain.sustainable ? "" : " bad"}`}>
+              <strong>
+                {sustain.sustainable ? "covered" : `−${smart(sustain.netLossPerSecond)}/s`}
+              </strong>
+            </td>
+            <td className="faint text-sm">
+              {sustain.sustainable
+                ? "You can hold this indefinitely."
+                : sustain.secondsToCutoff === undefined
+                  ? `Dead in ${num(sustain.secondsToDeath, 1)}s from full.`
+                  : `The effect takes itself off after ${num(sustain.secondsToCutoff, 1)}s rather ` +
+                    `than killing you — it would otherwise be ${num(sustain.secondsToDeath, 1)}s.`}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="faint text-sm mt-3 prose">
+        Not netted off your DPS, and your DPS is not netted off it: what you deal and what you pay
+        are different questions. Click{" "}
+        <button className="link" onClick={() => onSelect({ kind: "figure", id: "self-damage" })}>
+          the arithmetic
+        </button>{" "}
+        for the same rows with every stat behind them.
+      </div>
+    </>
   );
 }
 

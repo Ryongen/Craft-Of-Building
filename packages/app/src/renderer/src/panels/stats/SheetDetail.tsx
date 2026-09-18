@@ -54,6 +54,8 @@ export type FigureId =
   | "full-dps"
   | "cost"
   | "cost-rate"
+  /** What your own skill charges you, against the two regenerations that pay for it. */
+  | "self-damage"
   | "ehp"
   /** The largest single hit survived, with every avoidance roll assumed to fail. */
   | "max-hit"
@@ -519,6 +521,71 @@ function FigureDetail({
           </div>
         </Detail>
       );
+
+    case "self-damage": {
+      const self = dps.selfDamage;
+      const sustain = derived.selfSustain;
+      if (self === undefined || sustain === undefined) {
+        return <Detail title="No self-damage" lead="This skill charges you nothing to cast." />;
+      }
+      return (
+        <Detail
+          title={`Self-damage — ${spell}`}
+          lead="A hit you inflict on yourself. It carries none of your own offence and cannot crit, and it cannot be dodged or blocked — but your mitigation still applies. It is never netted off your DPS."
+        >
+          <div className="steps">
+            <Term
+              label="Raw, per cast"
+              value={smart(self.rawPerCast)}
+              hint="The value calculation's own number, before anything of yours touches it."
+            />
+            <Term
+              label="Mitigated"
+              value={`${num(self.mitigated * 100, 1)}%`}
+              hint="Your armour, your resists and your dmg_received. Increases to damage and crit do not apply — no_attacker_stats_on_selfdmg switches the attacker half of the sweep off — but mitigation does."
+            />
+            <Term label="You take, per cast" value={smart(self.perCast)} />
+            <Term label="Drain" value={`${smart(sustain.drainPerSecond)}/s`} strong />
+            <Term
+              label="Magic shield regeneration pays"
+              value={`${smart(sustain.fromShieldRegen)}/s`}
+              hint="First, because the shield absorbs before health does. A build with no magic shield pays nothing from here, however much magic_shield_regen its gear rolls."
+              onSelect={stat("magic_shield_regen")}
+            />
+            <Term
+              label="Reaching health"
+              value={`${smart(sustain.reachingHealth)}/s`}
+              hint="The part of the drain the shield's regeneration could not cover."
+            />
+            <Term
+              label="Health regeneration pays"
+              value={`${smart(sustain.fromHealthRegen)}/s`}
+              onSelect={stat("health_regen")}
+            />
+            <Term
+              label="Net"
+              value={sustain.sustainable ? "covered" : `−${smart(sustain.netLossPerSecond)}/s`}
+              strong
+              hint={
+                sustain.sustainable
+                  ? "The two regenerations between them cover it, so you can hold this indefinitely."
+                  : "Your bar falls at this rate with nothing else hitting you."
+              }
+            />
+          </div>
+          {!sustain.sustainable && (
+            <div className="notice">
+              {sustain.secondsToCutoff === undefined
+                ? `Dead in ${num(sustain.secondsToDeath, 1)}s from full, with nothing else hitting you.`
+                : `This effect takes itself off at a quarter of your combined health and magic ` +
+                  `shield rather than killing you, so it goes out after ` +
+                  `${num(sustain.secondsToCutoff, 1)}s. Without that it would kill you in ` +
+                  `${num(sustain.secondsToDeath, 1)}s.`}
+            </div>
+          )}
+        </Detail>
+      );
+    }
 
     case "cost":
     case "cost-rate": {

@@ -26,6 +26,7 @@ import {
   calculate,
   defence,
   resources,
+  selfSustain,
   simulateDps,
   simulateFullDps,
   statIndex,
@@ -35,6 +36,7 @@ import {
   type DpsResult,
   type EffectState,
   type Resources,
+  type SelfSustain,
   type FullDpsResult,
   type DerivedContribution,
   type EngineResult,
@@ -131,6 +133,15 @@ export type DerivedBuild = {
    * restore event through the same sweep a hit goes through rather than adding stats up.
    */
   resources: Resources;
+  /**
+   * Whether the character can stand in its own self-damage, when there is any.
+   *
+   * Here rather than in whichever panel wants it because three surfaces ask the same question —
+   * the sidebar, the Damage tab and the Defence tab — and three answers that disagreed by a
+   * rounding step would read as three different mechanics. `undefined` for a skill that charges
+   * you nothing, which is all but ten spells and four auras.
+   */
+  selfSustain: SelfSustain | undefined;
   /** Single-hit damage for the main skill, or undefined when no skill is set. */
   damage: DamageResult | undefined;
   /** The same hit plus the cast rate around it. `damage` is `dps.hit`. */
@@ -324,13 +335,16 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
   const spellBreakdown =
     damage === undefined ? undefined : breakdownsOf(damage.sheets.spell, snapshot);
 
+  // Handed the sheet that was already computed, so this is the layer sweep and nothing else.
+  const pools = resources(doc, snapshot, { sheet: result });
+
   return {
     doc,
     stats: result.stats,
     effects: dps?.effects ?? result.effects,
-    // Handed the sheet that was already computed, so this is the layer sweep and nothing else.
     defence: defence(doc, snapshot, { sheet: result }),
-    resources: resources(doc, snapshot, { sheet: result }),
+    resources: pools,
+    selfSustain: sustainOf(dps, pools),
     contexts: result.contexts,
     derived: result.derived,
     diagnostics,
@@ -344,6 +358,29 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
     breakdown: characterBreakdown,
     skillBreakdown: (statId) => spellBreakdown?.(statId),
   };
+}
+
+/**
+ * The self-damage sustain question, asked of the pools the resource pass just reported.
+ *
+ * The in-combat column, deliberately: this is a drain you take while fighting, and setting it
+ * against the standing-still regeneration would flatter every build on a server that runs the
+ * mod's own 0.5 multiplier rather than this pack's 1.0.
+ */
+function sustainOf(dps: DpsResult | undefined, pools: Resources): SelfSustain | undefined {
+  const self = dps?.selfDamage;
+  if (self === undefined) return undefined;
+  const of = (id: string) => {
+    const row = pools.byResource.find((r) => r.resource === id);
+    return { max: row?.max ?? 0, perSecond: row?.inCombatPerSecond ?? 0 };
+  };
+  return selfSustain({
+    perSecond: self.perSecond,
+    perCast: self.perCast,
+    magicShield: of("magic_shield"),
+    health: of("health"),
+    cutoffShare: self.cutoffShare,
+  });
 }
 
 /**
