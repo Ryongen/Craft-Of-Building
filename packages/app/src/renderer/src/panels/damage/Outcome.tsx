@@ -1,45 +1,50 @@
+/**
+ * What one branch of the hit came to, above the rows that got it there.
+ *
+ * Three of these used to sit across the top of the tab — Hit, Crit and Average, side by side,
+ * each repeating the element split and the ailment block underneath it. That arrangement pushed
+ * the breakdown, which is what the tab is for, below the fold; and two thirds of it was answering
+ * a question the reader had not asked yet, because only one branch can be traced at a time.
+ *
+ * So the branch is a choice now and this is the head of it: the total, what it is made of by
+ * element, and nothing else. The ailments moved to their own column, where they get the whole of
+ * their own event instead of two lines.
+ */
+
 import { type HitOutcome } from "@cte2/engine";
 import { ELEMENTS, type ElementName } from "@cte2/schema";
 import { type ReactNode } from "react";
 
-import { num, smart } from "../../ui/fields.js";
+import { smart } from "../../ui/fields.js";
 
 import { COLOURS } from "./colours.js";
 
 export function Outcome({
-  title,
   outcome,
   accent,
   note,
 }: {
-  title: string;
   outcome: HitOutcome;
   accent: string;
-  note?: string;
+  note?: ReactNode;
 }): ReactNode {
   const elements = [...outcome.byElement.entries()]
     .filter(([, value]) => value !== 0)
     .sort((a, b) => b[1] - a[1]);
 
-  const ailments = outcome.ailments.filter(
-    (a) => a.chance > 0 && (a.totalDamage > 0 || a.accumulated > 0),
-  );
-
   return (
-    <div className="card">
-      <div className="section-title mt-0">
-        {title}
-      </div>
+    <>
       <div className="dmg-total" style={{ color: accent }}>
         {smart(outcome.total)}
       </div>
-      {note !== undefined && (
-        <div className="faint text-sm mb-3">
-          {note}
-        </div>
-      )}
+      {note !== undefined && <div className="faint text-sm">{note}</div>}
 
-      <div className="mt-4">
+      {/*
+        The split is kept even when there is only one element in it, and that is deliberate: a
+        single row saying "Cold 25,960.11" under a physical skill is the fastest way to see that
+        every point of it converted, which is a thing about the build rather than about the hit.
+      */}
+      <div className="mt-3 mb-4">
         {elements.length === 0 && <div className="faint">No damage.</div>}
         {elements.map(([element, value]) => (
           <div key={element} className="ele-row">
@@ -50,58 +55,6 @@ export function Outcome({
           </div>
         ))}
       </div>
-
-      {ailments.length > 0 && (
-        <>
-          <div className="section-title">Ailments</div>
-          {ailments.map((ailment) => (
-            <div key={ailment.ailment} style={{ marginBottom: 5 }}>
-              <div className="ele-row">
-                <span style={{ color: COLOURS[ailment.element] ?? "var(--text)" }}>
-                  {ailment.ailment}
-                </span>
-                <span className="badge">{num(ailment.chance * 100, 0)}%</span>
-              </div>
-              <div className="faint text-sm">
-                {ailment.damagePerSecond > 0 ? (
-                  <>
-                    {smart(ailment.damagePerSecond)}/s for {num(ailment.durationSeconds, 1)}s ={" "}
-                    {smart(ailment.totalDamage)}
-                  </>
-                ) : ailment.procChance > 0 ? (
-                  // The pool is only worth something if something tips it. Naming the proc and
-                  // its chance on the same line is what turns "accumulates 11,305" from a
-                  // number with no consequence into the Shatter it is waiting for.
-                  <>
-                    accumulates {smart(ailment.accumulated)}, released by{" "}
-                    {PROC_NAME[ailment.ailment] ?? "a proc"} at{" "}
-                    {num(ailment.procChance * 100, 0)}% — the pool leaks{" "}
-                    {num(ailment.poolDecayPerSecond * 100, 0)}%/s while it waits
-                  </>
-                ) : (
-                  <>
-                    accumulates {smart(ailment.accumulated)}, and{" "}
-                    <strong>nothing releases it</strong>: without{" "}
-                    {PROC_NAME[ailment.ailment] ?? "a proc"} chance the pool only leaks away at{" "}
-                    {num(ailment.poolDecayPerSecond * 100, 0)}%/s
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </>
-      )}
-    </div>
+    </>
   );
 }
-
-/**
- * What the game calls the proc that releases each pooled ailment.
- *
- * `AilmentProcStat.locNameForLangFile` is `ailment.procNameWord()`, and the two words are the
- * ones on the player's own gear — nobody stacks "freeze proc chance", they stack Shatter.
- */
-const PROC_NAME: Record<string, string> = {
-  freeze: "Shatter",
-  electrify: "Shock",
-};

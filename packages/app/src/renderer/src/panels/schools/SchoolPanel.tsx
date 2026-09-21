@@ -45,7 +45,6 @@ import {
   learnedSpells,
   levelNeededForNextPerkLevel,
   perk,
-  perkName,
   perkPointType,
   pointsAvailable,
   pointsPerLevel,
@@ -55,7 +54,6 @@ import {
   spellOfPerk,
   spellSchool,
   spellSchoolIds,
-  statName,
   text,
   unknownSchoolPerks,
   type SpellSchoolView,
@@ -64,6 +62,9 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useWorld } from "../../state/snapshot.js";
+import { GemWindow, SpellWindow } from "../../ui/SpellTooltip.js";
+import { useHoverCard, type At } from "../../ui/HoverCard.js";
+import { perkCard, spellCard } from "../../ui/spell-stats.js";
 
 /** `SpellSchool.MAX_X_ROWS` / `MAX_Y_ROWS` — the grid the screen draws into. */
 const COLUMNS = 10;
@@ -412,17 +413,26 @@ function PerkCell({
           ? `No ${pool === "SPELLS" ? "spell" : "passive"} points left`
           : `Spend one ${pool === "SPELLS" ? "spell" : "passive"} point`;
 
-  const title = [
-    perkName(snapshot, perkId) ?? perkId,
-    spellId === undefined
-      ? `Passive · ${perkLevel}/${maxLevels}`
-      : `Spell: ${spellName(snapshot, spellId) ?? spellId} · rank ${perkLevel}/${maxLevels}`,
-    statLines(snapshot, perkId, perkLevel),
-    why,
-    `Click to add, right-click to remove · shift for ${SHIFT_STEP} at a time`,
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n");
+  /*
+    The real card, rather than the browser `title` this screen kept until now.
+
+    Built inside the render function rather than above it, which is the whole reason
+    `useHoverCard` takes one: a school is seventy cells and `spellCard` resolves a description's
+    `[calc:]` placeholders and a cost curve to produce one. Seventy of those on every keystroke,
+    all but one of them thrown away unhovered, is what the laziness is for.
+  */
+  const note = `${why}. Click to add, right-click to remove — shift for ${SHIFT_STEP} at a time.`;
+  const hover = useHoverCard((at) => (
+    <CellCard
+      perkId={perkId}
+      spellId={spellId}
+      perkLevel={perkLevel}
+      maxLevels={maxLevels}
+      characterLevel={level}
+      note={note}
+      at={at}
+    />
+  ));
 
   /**
    * How many levels one click actually moves this perk.
@@ -451,7 +461,7 @@ function PerkCell({
   return (
     <button
       className={`school-cell${perkLevel > 0 ? " taken" : ""}${isSpellPerk(snapshot, perkId) ? " spell" : " passive"}${canAdd ? "" : " blocked"}`}
-      title={title}
+      {...hover.props}
       onClick={(event) => {
         const step = addStep(event.shiftKey ? SHIFT_STEP : 1);
         if (step > 0) onChange(perkId, perkLevel + step);
@@ -464,6 +474,7 @@ function PerkCell({
         if (step > 0) onChange(perkId, perkLevel - step);
       }}
     >
+      {hover.node}
       <img className="school-cell-icon" src={icon(data?.icon) ?? undefined} alt="" />
       {perkLevel > 0 && (
         <span className="school-cell-level">
@@ -476,30 +487,52 @@ function PerkCell({
 }
 
 /**
- * What the perk grants at its current level, for the tooltip.
+ * One grid cell's tooltip: the skill it is a rank of, or the passive it is.
  *
- * A perk at level N grants N times its listed stats, so showing the multiplied value is what
- * the screen should say — the stat sheet will agree with it.
+ * Two cards because the grid holds two different things, and each already has one drawn the way
+ * the game draws it. A spell perk is a rank of a skill, so it raises `SpellWindow` — the
+ * description with its damage figure filled in, the cost at your level, the cooldown, the tags.
+ * A passive is a stat node and raises the small card, with what it grants at the level it is
+ * taken to.
+ *
+ * **Previewed at rank 1 when the perk is untaken**, because rank 0 is not a rank: the numbers on
+ * the card are what taking the cell would buy, which is the question an empty cell raises.
+ *
+ * `ceiling` is the perk's own `max_lvls` rather than the spell's `max_lvl`. On this screen a
+ * skill is bought one perk rank at a time and the perk is what caps it; the bonus ranks gear can
+ * add are a property of the Skills tab, where the skill is equipped.
  */
-function statLines(snapshot: ReturnType<typeof useWorld>["snapshot"], perkId: string, perkLevel: number): string {
-  const data = perk(snapshot, perkId);
-  if (!data) return "";
-  const raw = (snapshot.registries["mmorpg_perk"]?.[perkId]?.data as Record<string, unknown> | undefined)?.[
-    "stats"
-  ];
-  if (!Array.isArray(raw)) return "";
+function CellCard({
+  perkId,
+  spellId,
+  perkLevel,
+  maxLevels,
+  characterLevel,
+  note,
+  at,
+}: {
+  perkId: string;
+  spellId: string | undefined;
+  perkLevel: number;
+  maxLevels: number;
+  characterLevel: number;
+  /** The planner's own remark — what this click would do — at the foot of either card. */
+  note: string;
+  at: At;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const shown = Math.max(perkLevel, 1);
 
-  const multiplier = Math.max(perkLevel, 1);
-  return raw
-    .filter((s): s is Record<string, unknown> => s !== null && typeof s === "object")
-    .map((mod) => {
-      const statId = typeof mod["stat"] === "string" ? mod["stat"] : "";
-      const v1 = typeof mod["v1"] === "number" ? mod["v1"] : 0;
-      const type = typeof mod["type"] === "string" ? mod["type"] : "FLAT";
-      if (statId.startsWith("learn_")) return "";
-      const value = v1 * multiplier;
-      return `${type === "PERCENT" ? `${value}%` : value} ${statName(snapshot, statId) ?? statId}`;
-    })
-    .filter((line) => line.length > 0)
-    .join("\n");
+  if (spellId !== undefined) {
+    const card = spellCard(snapshot, spellId, {
+      level: shown,
+      natural: maxLevels,
+      ceiling: maxLevels,
+      characterLevel,
+    });
+    return card === undefined ? null : <SpellWindow card={{ ...card, note }} floating at={at} />;
+  }
+
+  const card = perkCard(snapshot, perkId, { perkLevel: shown, characterLevel });
+  return card === undefined ? null : <GemWindow card={{ ...card, note }} floating at={at} />;
 }

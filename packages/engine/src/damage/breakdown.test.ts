@@ -167,6 +167,10 @@ test("a MORE multiplier is its own row, after every layer, and names its stat", 
   assert.equal(trace.moreMultis.length, 1);
   assert.equal(trace.moreMultis[0]!.statId, "increased_damage");
   closeTo(trace.moreMultis[0]!.multi, 1.2);
+  // Which block recorded it. One stat can write several `MULTIPLICATIVE_DAMAGE` blocks behind
+  // different gates and the game prints one row per block, so a breakdown legitimately shows the
+  // same name twice — and without this there is nothing on the row that says which is which.
+  assert.equal(trace.moreMultis[0]!.effectId, "add_additive");
   // The same stat contributed to a layer *and* a multiplier, with its MORE held out of the
   // layer's value the whole way. Both rows name it, which is what makes that visible.
   closeTo(trace.steps.find((s) => s.layerId === "additive_damage")!.multiplier!, 1.5);

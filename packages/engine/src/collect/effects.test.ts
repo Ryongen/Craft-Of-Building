@@ -322,6 +322,24 @@ test("a build with no aura_effect is untouched by the pass", () => {
   closeTo(result.stats.get("all_water_damage")?.dmgMulti, 1.2);
 });
 
+test("a share names the stat that took it and the context it was taken from", () => {
+  // The whole context is one anonymous bag in game, which left the breakdown printing
+  // "Context modifiers +15.00" with nothing to say for itself. Both ends are recorded: the
+  // `statContextModifier` stat is the row's name and the target is where it came from.
+  const result = calculate(
+    build({ auras: [{ id: "fire_res", rollPercent: 100 }] }),
+    auraSnapshot([exact("aura_effect", "FLAT", 30)]),
+  );
+  const ctx = result.contexts.find((c) => c.type === "STAT_CTX_MODIFIER_BONUS");
+  const share = ctx?.stats.find((m) => m.statId === "armor");
+  assert.deepEqual(share?.from, {
+    kind: "share",
+    id: "aura_effect",
+    by: { ctxType: "BASE_STAT", source: "original_mode_player", path: "character" },
+    of: { ctxType: "AURA", source: "fire_res", path: "auras[0]" },
+  });
+});
+
 /**
  * Two Augments and a cost reduction, for the capacity arithmetic.
  *

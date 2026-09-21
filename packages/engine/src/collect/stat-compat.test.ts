@@ -190,6 +190,34 @@ test("with no attributes recorded nothing applies, and the engine says so", () =
   assert.ok(result.diagnostics.some((d) => d.code === "vanilla-attributes-unknown"));
 });
 
+test("each converted stat names the attribute and the entry that converted it", () => {
+  // One context called `stat_compat` holds all of these, so without the tag a breakdown row
+  // reads "Vanilla attributes +2.00" — and which attribute it was is the answer: this one is
+  // the weapon in your hand, the next is what you ate.
+  const result = calculate(
+    build({ "minecraft:generic.attack_damage": 9, "kubejs:weapon_damage": 1 }),
+    snapshot(),
+  );
+  const ctx = result.contexts.find((c) => c.type === "VANILLA_STAT_COMPAT");
+  assert.deepEqual(
+    ctx?.stats.map((m) => [m.statId, m.from]),
+    [
+      ["weapon_damage", { kind: "attribute", id: "kubejs:weapon_damage", via: "kube_weapon_damage" }],
+      ["total_damage", { kind: "attribute", id: "minecraft:generic.attack_damage", via: "attack_damage_compat" }],
+    ],
+  );
+});
+
+test("an enchantment's conversion names the enchantment", () => {
+  const result = calculate(withEnchantedGear([{ "minecraft:fire_protection": 4 }]), snapshot());
+  const ctx = result.contexts.find((c) => c.type === "ENCHANT_COMPAT");
+  assert.deepEqual(ctx?.stats[0]?.from, {
+    kind: "enchantment",
+    id: "minecraft:fire_protection",
+    via: "fire_protection_compat",
+  });
+});
+
 test("enchantment compat sums across pieces, clamped per item and then in total", () => {
   // fire_protection_compat: conversion 2, per_item_max 12, maximum_cap 36, FLAT magic_shield.
   // Three pieces at level 4 -> trunc(4*2)=8 each, 24 total, under both caps.

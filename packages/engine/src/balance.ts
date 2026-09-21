@@ -66,6 +66,25 @@ export type Balance = {
   multiFor(scaling: StatScaling, level: number): number;
 };
 
+/**
+ * `LevelScalingConfig.getMultiFor` — what one of these curves is worth at a level.
+ *
+ *     public float getMultiFor(int lvl) {
+ *         if (cap_to_max_lvl) { lvl = Mth.clamp(lvl, 1, max); }
+ *         return base_scaling + per_lvl_scaling * (lvl - 1);
+ *     }
+ *
+ * Here rather than beside its one caller because the spell tooltip prints the same mana figure
+ * the cast pays, and the two arriving at it by different arithmetic is the kind of disagreement
+ * nobody notices until a number on a card is off by a level's worth.
+ *
+ * Note the cap applies to the *level*, not to the result.
+ */
+export function levelScalingMulti(curve: LevelScaling, level: number, maxLevel: number): number {
+  const lvl = curve.capToMaxLvl ? Math.min(Math.max(level, 1), maxLevel) : level;
+  return curve.baseScaling + curve.perLevelScaling * (lvl - 1);
+}
+
 /** Which `LevelScalingConfig` each `StatScaling` reads (StatScaling.java:5-43). */
 const CONFIG_KEY: Record<StatScaling, string | null> = {
   NONE: null,

@@ -36,6 +36,7 @@ import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 
 import { StatPoints } from "../character/StatPoints.js";
+import { StageList } from "./StageList.js";
 import { perkData, TreeCanvas, type HoverInfo } from "./TreeCanvas.js";
 
 const TREES: { key: TreeKey; label: string }[] = [
@@ -170,6 +171,10 @@ export function TreePanel(): ReactNode {
           spending tree points.
         */}
         <div className="tree-hud-column">
+          {/* Which allocation the canvas is showing. Above the tree buttons because it is the
+              wider question: those three pick a tree, this picks which *plan's* trees. */}
+          <StageList />
+
           <div className="tree-hud row gap-5">
             {TREES.map((option) => (
               <button

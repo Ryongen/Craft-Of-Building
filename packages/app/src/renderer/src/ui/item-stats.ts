@@ -27,10 +27,12 @@ import type { Snapshot } from "@cte2/extractor";
 import { balance, collectGear, collectJewels, makeEnv, statIndex } from "@cte2/engine";
 import type { ExactMod } from "@cte2/engine";
 import {
+  affix,
   fillTemplate,
   statDisplay,
   statNameRaw,
   stripFormatting,
+  underAugmentLabel,
   type Item,
   type Jewel,
 } from "@cte2/schema";
@@ -213,8 +215,25 @@ export type ItemSectionKind = NonNullable<ExactMod["from"]>["kind"] | "socket" |
 /** One part of an item, already worded: `{ kind: "prefix", label: "Prefix Stats", lines: [...] }`. */
 export type ItemSection = {
   kind: ItemSectionKind;
+  /**
+   * Unique within one card, and the only thing that is.
+   *
+   * `kind` was the key until an Abyssal Eye started getting one section per Augment: three
+   * `aura` sections in a row, three identical React keys. For everything else it is still the
+   * kind.
+   */
+  id: string;
   label: string;
   lines: StatLine[];
+  /**
+   * An Augment section the build is not running, so the sheet counts none of these lines.
+   *
+   * Printed anyway, which is a deliberate reversal: the card used to drop them and carry a
+   * footnote, and what that showed was an Abyssal Eye with a heading missing and no way to
+   * find out what the missing line was worth. An eye is bought *for* the lines it is not
+   * currently using, so they are shown, marked, and left out of nothing else.
+   */
+  dormant?: boolean;
 };
 
 /**
@@ -271,16 +290,17 @@ export function itemSections(
   return assemble(snapshot, ITEM_SECTIONS, byKind);
 }
 
-/** Folds one modifier into the bucket for its part of the item, creating the bucket if new. */
-function addTo(
-  byKind: Map<ItemSectionKind, Map<string, StatTotal>>,
-  kind: ItemSectionKind,
-  mod: ExactMod,
-): void {
-  let totals = byKind.get(kind);
+/**
+ * Folds one modifier into the bucket for its part of the item, creating the bucket if new.
+ *
+ * Generic in the key because a jewel buckets its conditional lines by *Augment* rather than by
+ * part, and that is the only difference between the two walks.
+ */
+function addTo<K>(byKey: Map<K, Map<string, StatTotal>>, key: K, mod: ExactMod): void {
+  let totals = byKey.get(key);
   if (totals === undefined) {
     totals = new Map<string, StatTotal>();
-    byKind.set(kind, totals);
+    byKey.set(key, totals);
   }
   addMod(totals, mod);
 }
@@ -294,6 +314,7 @@ function assemble(
   return order
     .map(({ kind, label }) => ({
       kind,
+      id: kind,
       label,
       lines: totalLines(snapshot, byKind.get(kind) ?? new Map<string, StatTotal>()),
     }))
@@ -312,24 +333,41 @@ function assemble(
 const JEWEL_SECTIONS: readonly { kind: ItemSectionKind; label: string }[] = [
   { kind: "prefix", label: "Jewel Stats" },
   { kind: "corruption", label: "Corruption Stats" },
-  { kind: "aura", label: "While Under Aura" },
 ];
 
 /**
  * {@link itemSections} for a jewel: what it grants, split by which list it came from.
  *
  * Through `collectJewels` for the reason the gear card goes through `collectGear` — the sheet
- * and the card must be the same computation — and that brings the game's two rules with it.
- * Corruptions resolve alongside the rolled affixes, and a Watcher's Eye line is counted only
- * while its aura is running, which is why `aurasOn` has to be the build's real set rather than
- * a convenient "all of them": a card that printed a dormant line would disagree with the sheet
- * about the one stat the player is squinting at.
+ * and the card must be the same computation — and that brings the game's rules with it:
+ * corruptions resolve alongside the rolled affixes, and every roll scales to the jewel's own
+ * level rather than the character's.
+ *
+ * ## One heading per Augment
+ *
+ * An Abyssal Eye is two or three `auraStats` lines, each waiting on a *different* Augment —
+ * `Affix.eye_aura_req`, which the record itself never names. So the card prints the game's own
+ * heading per Augment (`underAugmentLabel`, from `mmorpg.word.while_under_aura`) with that
+ * Augment's lines under it. It used to print one "While Under Aura" heading over the lot, which
+ * is the one thing a reader cannot act on: the point of an eye is *which* Augment each line is
+ * bought for.
+ *
+ * Two affixes can name the same Augment — `chaos_damage_eye` and `chaos_damage_ms_eye` both
+ * wait on Chaos Damage — so the grouping is by Augment and not by line, and one heading covers
+ * both.
+ *
+ * `aurasOn` no longer decides what is *printed*, only what is marked live. Every gate is opened
+ * for the collector and the sections the build is not running come back flagged `dormant`; the
+ * card dims those and says which Augment would switch them on. The sheet still counts exactly
+ * what `collectJewels` counts with the build's real set — this function is the card, and the
+ * card's job is to say what the jewel is worth, including under the Augment you have not
+ * socketed yet.
  *
  * ## Why the aura lines are told apart by their context
  *
  * `affixStats` tags every jewel roll `prefix`, aura lines included, so `ExactMod.from.kind`
  * cannot separate them. What does is the *shape* of what `collectJewels` returns: one context
- * per live aura line, each pathed `jewels[0].auraStats[n]`, and then one context for the jewel
+ * per aura line, each pathed `jewels[0].auraStats[n]`, and then one context for the jewel
  * itself at `jewels[0]`. The path is the discriminator, and it is stable because it is the same
  * string the validator points its diagnostics at.
  *
@@ -344,15 +382,51 @@ export function jewelSections(
   aurasOn: ReadonlySet<string>,
 ): ItemSection[] {
   const env = makeEnv(snapshot, statIndex(snapshot), balance(snapshot), characterLevel);
-  const contexts = collectJewels(env, [jewel], aurasOn);
+
+  // Which Augment gates each `auraStats` entry, by its index in the list — the affix's
+  // `eye_aura_req`, since `StatsWhileUnderAuraData` does not carry it. A line whose affix is
+  // unknown or carries no requirement is absent here and the collector reports it.
+  const gatedBy = new Map<number, string>();
+  (jewel.auraStats ?? []).forEach((line, index) => {
+    const required = affix(snapshot, line.affixId)?.eyeAuraReq ?? "";
+    if (required.length > 0) gatedBy.set(index, required);
+  });
+
+  const contexts = collectJewels(env, [jewel], new Set(gatedBy.values()));
 
   const byKind = new Map<ItemSectionKind, Map<string, StatTotal>>();
+  const byAugment = new Map<string, Map<string, StatTotal>>();
   for (const context of contexts) {
-    const conditional = context.path !== "jewels[0]";
+    const line = auraLineIndex(context.path);
+    const augment = line === undefined ? undefined : gatedBy.get(line);
     for (const mod of context.stats) {
-      addTo(byKind, conditional ? "aura" : mod.from?.kind ?? "prefix", mod);
+      if (augment === undefined) addTo(byKind, mod.from?.kind ?? "prefix", mod);
+      else addTo(byAugment, augment, mod);
     }
   }
 
-  return assemble(snapshot, JEWEL_SECTIONS, byKind);
+  // In the order the jewel lists them, which is the order the game's own tooltip prints them.
+  const augments: ItemSection[] = [];
+  const seen = new Set<string>();
+  for (const augment of gatedBy.values()) {
+    if (seen.has(augment)) continue;
+    seen.add(augment);
+    const totals = byAugment.get(augment);
+    if (totals === undefined) continue;
+    augments.push({
+      kind: "aura",
+      id: `aura:${augment}`,
+      label: underAugmentLabel(snapshot, augment),
+      lines: totalLines(snapshot, totals),
+      dormant: !aurasOn.has(augment),
+    });
+  }
+
+  return [...assemble(snapshot, JEWEL_SECTIONS, byKind), ...augments];
+}
+
+/** The `n` of a `jewels[0].auraStats[n]` path; `undefined` for the jewel's own context. */
+function auraLineIndex(path: string): number | undefined {
+  const match = /\.auraStats\[(\d+)\]$/.exec(path);
+  return match === null ? undefined : Number(match[1]);
 }

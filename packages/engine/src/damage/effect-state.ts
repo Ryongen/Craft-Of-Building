@@ -1002,9 +1002,29 @@ export type BuffUpkeep = {
 };
 
 export function casterBuffUpkeep(spell: Record<string, unknown>): BuffUpkeep | undefined {
+  return upkeepOn(spell, "caster");
+}
+
+/**
+ * The same question asked about the **enemy**: how long the debuff one press leaves on it lasts.
+ *
+ * `curse_of_damnation` is the shape this exists for. It puts `damnation` on everything within
+ * four blocks for 200 ticks and comes off cooldown after 60, and nobody re-curses a pack every
+ * three seconds — you cast it again when it falls off. A rotation paced by the cooldown charged
+ * the pass for three casts it never makes, and the same is true of every curse and debuff in the
+ * pack: `cooldown_ticks` says how soon you *may* re-press, not how soon you *have to*.
+ *
+ * The maximum is taken for the same reason it is on the caster side: a press that applies one
+ * long effect and a one-tick marker beside it is re-pressed when the long one expires.
+ */
+export function targetDebuffUpkeep(spell: Record<string, unknown>): BuffUpkeep | undefined {
+  return upkeepOn(spell, "target");
+}
+
+function upkeepOn(spell: Record<string, unknown>, holder: EffectHolder): BuffUpkeep | undefined {
   let best: BuffUpkeep | undefined;
   for (const applied of effectsAppliedBy(spell)) {
-    if (applied.holder !== "caster") continue;
+    if (applied.holder !== holder) continue;
     if (best === undefined || applied.durationTicks > best.durationTicks) {
       best = { durationTicks: applied.durationTicks, effectId: applied.id };
     }

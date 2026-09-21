@@ -47,7 +47,7 @@ import type { Snapshot } from "@cte2/extractor";
 import type { BuildConfig, Diagnostic, SkillSetup } from "@cte2/schema";
 import { CATEGORY, activeSupportLinks, entry } from "@cte2/schema";
 
-import type { Balance } from "../balance.js";
+import { levelScalingMulti, type Balance } from "../balance.js";
 import type { Compat } from "../compat.js";
 import type { StatIndex } from "../stat-def.js";
 import { supportSocketsFor } from "../collect/spell.js";
@@ -233,7 +233,7 @@ export function calculateSpell(input: SpellCalcInput): SpellCalc {
   // linked. It can now, and it is not a rounding error: most support gems charge 1.2x or 1.3x
   // and they compound, so five of them roughly doubles what a cast costs.
   const costMulti =
-    multiFor(input.balance.manaCostScaling, input.characterLevel, input.balance.maxLevel) *
+    levelScalingMulti(input.balance.manaCostScaling, input.characterLevel, input.balance.maxLevel) *
     supportCostMulti(input.snapshot, input.skill, input.equipped ?? []);
 
   event.data.setupNumber(EVENT.CAST_TICKS, declared.castTimeTicks);
@@ -578,11 +578,6 @@ function supportCostMulti(
     if (declared !== undefined) multi *= declared;
   }
   return multi;
-}
-
-function multiFor(curve: Balance["manaCostScaling"], level: number, maxLevel: number): number {
-  const lvl = curve.capToMaxLvl ? clamp(level, 1, maxLevel) : level;
-  return curve.baseScaling + curve.perLevelScaling * (lvl - 1);
 }
 
 function num(value: unknown): number | undefined {

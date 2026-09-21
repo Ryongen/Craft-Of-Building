@@ -26,10 +26,14 @@
 
 import {
   affixName,
+  attributeName,
   auraName,
+  enchantName,
   exileEffectName,
   gearTypeName,
   itemSetName,
+  omen,
+  omenName,
   perkName,
   runewordName,
   spellName,
@@ -45,6 +49,7 @@ import type { EffectState } from "@cte2/engine";
 import type { ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
+import { useProvenance } from "../../ui/Provenance.js";
 import { useDerived, type ModContribution } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { num, signed, smart } from "../../ui/format.js";
@@ -111,8 +116,9 @@ const CTX_BLURB: Record<string, string> = {
   FOOD_BUFF: "A meal, seafood or elixir.",
   STAT_CTX_MODIFIER_BONUS:
     "Not a source of its own: the share of every other context that `aura_effect` and its two " +
-    "siblings add on top. The game builds it from the contexts that already exist.",
-  MISC: "Everything the game files under Misc, including the solo-class bonus.",
+    "siblings add on top. The game builds it from the contexts that already exist, so the row " +
+    "names the stat that took the share and the context it was a share of.",
+  MISC: "Everything the game files under Misc — an omen's payout and the solo-class bonus.",
 };
 
 /**
@@ -320,6 +326,7 @@ export function StatBreakdown({
                 rows={group.rows}
                 snapshot={snapshot}
                 effects={derived.effects}
+                minusIsGood={display.minusIsGood}
               />
             ))}
           </div>
@@ -366,11 +373,14 @@ function KindGroup({
   rows,
   snapshot,
   effects,
+  minusIsGood,
 }: {
   name: string;
   rows: ModContribution[];
   snapshot: Snapshot;
   effects: EffectState;
+  /** `mmorpg_stat.minus_is_good` for the stat these rows feed. See {@link modTone}. */
+  minusIsGood: boolean;
 }): ReactNode {
   const flat = sum(rows, "FLAT");
   const percent = sum(rows, "PERCENT");
@@ -384,7 +394,14 @@ function KindGroup({
         </>
       }
       value={subtotal(flat, percent, more)}
-      tone="faint"
+      /*
+        Coloured by where the kind lands, not by each term.
+
+        A group can add flat and take percent — a unique with an upside and a downside sits under
+        one heading — and the subtotal beside it is already the three terms written together, so
+        the colour answers the question the heading asks: did this lot help.
+      */
+      tone={modTone(flat + percent + (more - 1) * 100, minusIsGood)}
     >
       {[...rows]
         .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
@@ -394,6 +411,7 @@ function KindGroup({
             row={row}
             snapshot={snapshot}
             effects={effects}
+            minusIsGood={minusIsGood}
           />
         ))}
     </StepRow>
@@ -404,12 +422,22 @@ function ContribRow({
   row,
   snapshot,
   effects,
+  minusIsGood,
 }: {
   row: ModContribution;
   snapshot: Snapshot;
   effects: EffectState;
+  minusIsGood: boolean;
 }): ReactNode {
   const setEffect = useBuild((s) => s.setEffect);
+  /*
+    Which of your things this row is, not merely what kind of thing.
+
+    The rows most in need of it are the tree's: this pack repeats a perk id at many grid
+    positions, so four rows reading "Attack Damage" under Talents are four different nodes and
+    the name alone cannot separate them. See `ui/mod-source.ts`.
+  */
+  const where = useProvenance(row);
 
   // An effect the capture did not record is the planner's own assumption, not an observation.
   // Saying so on the row is what turns "this number disagrees with the game" into "this number
@@ -418,21 +446,17 @@ function ContribRow({
     row.ctxType === "POTION_EFFECT" ? effects.options.find((o) => o.id === row.source) : undefined;
   const assumed = option !== undefined && !option.captured;
 
-  const origin = row.from;
-  const part =
-    origin === undefined
-      ? undefined
-      : `${originLabel(snapshot, origin)}${origin.tier === undefined ? "" : ` [${origin.tier}]`}` +
-        `${origin.rollPercent === undefined ? "" : ` · ${Math.round(origin.rollPercent)}%`}`;
+  const part = originPart(snapshot, row);
 
   return (
     <StepRow
       depth={1}
       label={
-        <>
+        <span className={where.has ? "has-source" : undefined} {...where.props}>
           {sourceName(snapshot, row)}
           {part !== undefined && <span className="faint"> — {part}</span>}
-        </>
+          {where.node}
+        </span>
       }
       title={`${CTX_BLURB[row.ctxType] ?? row.ctxType}\n${row.path}`}
       badge={
@@ -457,8 +481,22 @@ function ContribRow({
         ) : undefined
       }
       value={`${row.type === "MORE" ? "×" : ""}${signed(row.value)}${row.type === "PERCENT" ? "%" : ""}`}
+      tone={modTone(row.value, minusIsGood)}
     />
   );
+}
+
+/**
+ * Green for a modifier that improved the stat, red for one that did not.
+ *
+ * `minus_is_good` rather than the sign, which is the same rule the item card and the what-if
+ * tables already take: 19 of this pack's stats are better when they go down — cooldowns, costs,
+ * the `*_received` families — and colouring a cooldown reduction red would be worse than leaving
+ * every row grey, which is what this replaced.
+ */
+function modTone(value: number, minusIsGood: boolean): "good" | "bad" | undefined {
+  if (value === 0) return undefined;
+  return (minusIsGood ? value < 0 : value > 0) ? "good" : "bad";
 }
 
 /**
@@ -468,7 +506,15 @@ function ContribRow({
  * the formula, and a list whose rows move when a number changes cannot be compared with the one
  * you looked at a moment ago.
  */
-function groupContributions(
+/**
+ * Contributions bucketed into the kinds a player thinks in: gear, tree, jewels, auras, the rest.
+ *
+ * Exported for the same reason {@link sourceName} is: the Damage panel's trace drills all the way
+ * down to these rows, and a stat with thirty `STAT_CTX_MODIFIER_BONUS` entries behind six real
+ * sources is unreadable flat. One taxonomy, used by both screens, so a pack update that adds a
+ * context type shows up in the same place on each.
+ */
+export function groupContributions(
   contributions: readonly ModContribution[],
 ): { id: string; name: string; rows: ModContribution[] }[] {
   const out: { id: string; name: string; rows: ModContribution[] }[] = [];
@@ -493,10 +539,30 @@ function sum(rows: readonly ModContribution[], type: ModContribution["type"]): n
   return rows.filter((r) => r.type === type).reduce((n, r) => n + r.value, 0);
 }
 
+/**
+ * {@link subtotal} for a group of rows — what a kind puts into each term of the formula.
+ *
+ * `isPerc` is the stat's own `is_perc`, and it decides whether the FLAT term carries a `%`. It
+ * defaults to off so this sheet's own formula block reads as it always has, next to the terms it
+ * is derived from; the Damage tab passes it, because there a lone `+47.52` under Attack Damage
+ * is percentage points of damage and nothing on the row said so.
+ */
+export function contributionSubtotal(
+  rows: readonly ModContribution[],
+  isPerc = false,
+): string {
+  return subtotal(
+    sum(rows, "FLAT"),
+    sum(rows, "PERCENT"),
+    rows.filter((r) => r.type === "MORE").reduce((n, r) => n * (1 + r.value / 100), 1),
+    isPerc,
+  );
+}
+
 /** A group's contribution to each term, printed only where there is one. */
-function subtotal(flat: number, percent: number, more: number): string {
+function subtotal(flat: number, percent: number, more: number, isPerc = false): string {
   const parts: string[] = [];
-  if (flat !== 0) parts.push(signed(flat));
+  if (flat !== 0) parts.push(`${signed(flat)}${isPerc ? "%" : ""}`);
   if (percent !== 0) parts.push(`${signed(percent)}%`);
   if (more !== 1) parts.push(`×${num(more, 3)}`);
   return parts.length === 0 ? "—" : parts.join("  ");
@@ -511,11 +577,15 @@ function subtotal(flat: number, percent: number, more: number): string {
  * `GEAR` badge next to `sword_2`, where this produces "Sword". One mapping, not two.
  */
 export function sourceName(snapshot: Snapshot, contribution: ModContribution): string {
-  const { ctxType, source } = contribution;
+  const { ctxType, source, from } = contribution;
   switch (ctxType) {
     case "GEAR":
-    case "ENCHANT_COMPAT":
       return gearTypeName(snapshot, source);
+    // `enchant_compat` is the collector's own id for the context, not a registry entry, so
+    // naming it through a registry produced "Enchant Compat". Which enchantment it was is on
+    // the row's origin; the heading only has to say what kind of thing they all are.
+    case "ENCHANT_COMPAT":
+      return "Enchantments";
     case "JEWEL":
       return gearTypeName(snapshot, source);
     case "TALENT":
@@ -543,17 +613,71 @@ export function sourceName(snapshot: Snapshot, contribution: ModContribution): s
       return itemSetName(snapshot, source);
     case "VANILLA_STAT_COMPAT":
       return "Vanilla attributes";
+    /*
+      The thing that granted the `statContextModifier` stat, where the engine recorded it.
+
+      "Context modifiers" is the name of the bag, and a bag is all this could say before: one
+      heading over three dozen rows, each a share some stat took of some other context. Naming
+      the grantor rather than the stat keeps the rule every other row follows — a row is one of
+      your things — and it is also the only thing that tells these rows apart, since this build
+      has four `aura_effect` lines all taking a cut of the same Augment. The stat and the
+      context it was a cut of follow as the row's origin.
+    */
     case "STAT_CTX_MODIFIER_BONUS":
-      return "Context modifiers";
+      return from?.kind === "share" && from.by !== undefined
+        ? sourceName(snapshot, asContribution(from.by))
+        : "Context modifiers";
+    // MISC is where the game files two unrelated things: an omen's payout and the solo-class
+    // bonus. Both have a name and neither was printing one.
     case "MISC":
-      return "Misc";
+      return miscName(snapshot, source);
     default:
       return source;
   }
 }
 
-/** Names the part of an item a modifier came off, as specifically as the collector knew. */
-function originLabel(snapshot: Snapshot, origin: NonNullable<ModContribution["from"]>): string {
+/**
+ * What a `MISC` row actually is.
+ *
+ * `MiscStatCtx` is the game's catch-all and this pack puts exactly two things in it, so the
+ * check is against the omen registry rather than against a list written here — an omen the pack
+ * adds later names itself without anything changing. `solo_class_bonus` is `collectSpellSchools`
+ * deliberately filing the bonus outside `PASSIVES` so nothing that scales perks can reach it.
+ */
+function miscName(snapshot: Snapshot, source: string): string {
+  if (source === "solo_class_bonus") return "Solo class bonus";
+  return omen(snapshot, source) === undefined ? "Misc" : omenName(snapshot, source);
+}
+
+/**
+ * One end of a share, as a row {@link sourceName} can name.
+ *
+ * A `StatContext` is not a `ModContribution` — it has no type or value, because it is the
+ * group rather than one modifier — and the two fields that matter for naming are the same
+ * three either way. The stub carries a zero so nothing can print it by accident.
+ */
+function asContribution(ref: { ctxType: string; source: string; path: string }): ModContribution {
+  return {
+    ctxType: ref.ctxType as ModContribution["ctxType"],
+    source: ref.source,
+    path: ref.path,
+    type: "FLAT",
+    value: 0,
+  };
+}
+
+/**
+ * Names the part of an item a modifier came off, as specifically as the collector knew.
+ *
+ * `rowName` is what the row already says, and it is passed so a share does not say it twice:
+ * this pack names the `aura_effect` spell-school perk after the stat it grants, so the row
+ * would read "Augment Effect — Augment Effect · share of …".
+ */
+function originLabel(
+  snapshot: Snapshot,
+  origin: NonNullable<ModContribution["from"]>,
+  rowName?: string,
+): string {
   switch (origin.kind) {
     case "base":
       return "base stat";
@@ -563,11 +687,45 @@ function originLabel(snapshot: Snapshot, origin: NonNullable<ModContribution["fr
       return origin.id === undefined ? "runeword" : runewordName(snapshot, origin.id);
     case "rune":
       return origin.id === undefined ? "rune" : `rune ${origin.id}`;
+    // The vanilla attribute the compat entry read. This is the answer to "where does it come
+    // from" and not merely a label: `generic.attack_damage` is the weapon in your hand,
+    // `kubejs:magic_shield` is food diversity, and the row said neither.
+    case "attribute":
+      return origin.id === undefined ? "vanilla attribute" : attributeName(origin.id);
+    case "enchantment":
+      return origin.id === undefined ? "enchantment" : enchantName(origin.id);
+    // The stat that took the cut, and whose stats it was a cut of. The row itself is named
+    // after the thing that granted the stat.
+    case "share": {
+      const stat = origin.id === undefined ? "context modifier" : statName(snapshot, origin.id);
+      const of =
+        origin.of === undefined
+          ? "another context"
+          : sourceName(snapshot, asContribution(origin.of));
+      return stat === rowName ? `share of ${of}` : `${stat} · share of ${of}`;
+    }
     default:
       // Every remaining kind is an affix list, and the affix's own name is what the player sees
       // on the item.
       return origin.id === undefined ? origin.kind : affixName(snapshot, origin.id);
   }
+}
+
+/**
+ * The part of the source a row came off, worded — "Sword's Fury [mythic] · 87%".
+ *
+ * Shared because both drill-downs print the same rows and only one of them was printing this:
+ * the Damage tab's trace showed "Vanilla attributes +2.00" and "Context modifiers ×1.338" with
+ * the origin the engine had already resolved sitting unused on the modifier.
+ */
+export function originPart(snapshot: Snapshot, mod: ModContribution): string | undefined {
+  const origin = mod.from;
+  if (origin === undefined) return undefined;
+  const label = originLabel(snapshot, origin, sourceName(snapshot, mod));
+  return (
+    `${label}${origin.tier === undefined ? "" : ` [${origin.tier}]`}` +
+    `${origin.rollPercent === undefined ? "" : ` · ${Math.round(origin.rollPercent)}%`}`
+  );
 }
 
 function derivedTypeHint(type: string): string {

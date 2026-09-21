@@ -5,10 +5,13 @@ import {
   affixCount,
   affixesFor,
   jewelAffixesFor,
+  jewelCorruptionAffixes,
+  watcherEyeAffixes,
   jewelTags,
   allowedAffixTiers,
   basesForSlot,
   enchantCompats,
+  attributeName,
   enchantName,
   gearRarity,
   maxOfOneAffixType,
@@ -99,6 +102,25 @@ test("jewelAffixesFor narrows the pool to the jewel's own play style", () => {
   // `PlayStyle.fromID` falls back to STR, and so does an absent style.
   assert.deepEqual(jewelAffixesFor(snapshot, undefined).map((a) => a.id), ["any_jewel_affix"]);
   assert.deepEqual(jewelTags("dex"), ["any_jewel", "jewel_dex"]);
+
+  // The style narrows `jewel` affixes and nothing else. A `jewel` affix is never in either of
+  // the other two pools, either — the three lists a jewel carries never overlap.
+  assert.equal(jewelAffixesFor(snapshot, "int").some((a) => a.id === "armor_eye"), false);
+});
+
+test("a jewel's other two pools are filtered by type alone", () => {
+  const snapshot = standardSnapshot();
+
+  // `JewelItemData.corrupt` rolls `x -> x.type == AffixSlot.jewel_corruption` and the eye
+  // branch of `JewelBlueprint.createData` rolls `x -> x.type == AffixSlot.watcher_eye`. Neither
+  // consults a tag, which is why these two fixtures carry a `jewel_int` requirement that a
+  // tag-aware filter would use to exclude them.
+  assert.deepEqual(jewelCorruptionAffixes(snapshot).map((a) => a.id), ["jewel_corrupt_armor"]);
+
+  const eyes = watcherEyeAffixes(snapshot);
+  assert.deepEqual(eyes.map((a) => a.id), ["armor_eye"]);
+  // Which Augment gates the line is on the affix — the record that carries it never names one.
+  assert.equal(eyes[0]?.eyeAuraReq, "armor");
 });
 
 test("allowed affix tiers exclude uniques and anything above the item", () => {
@@ -459,6 +481,15 @@ test("an enchantment's name keeps the namespace when it is not vanilla's", () =>
   assert.equal(enchantName("wrd:reinforced"), "Reinforced (wrd)");
   // An id with no namespace at all is vanilla's, which is how the registry spells some of them.
   assert.equal(enchantName("looting"), "Looting");
+});
+
+test("an attribute's name drops vanilla's `generic.` and keeps everyone else's namespace", () => {
+  // `generic.` is on every vanilla attribute and says nothing; the namespace on the rest is the
+  // useful half, since `kubejs:magic_shield` is food diversity rather than anything Minecraft
+  // ships and a bare "Magic Shield" would read as the real stat of that name.
+  assert.equal(attributeName("minecraft:generic.max_health"), "Max Health");
+  assert.equal(attributeName("kubejs:magic_shield"), "Magic Shield (kubejs)");
+  assert.equal(attributeName("luck"), "Luck");
 });
 
 // ---------------------------------------------------------------------------

@@ -342,3 +342,42 @@ test("a Shatter releases 85% of the freeze event and a Shock 100% of the electri
   assert.equal(freeze.damagePerSecond, 0);
   assert.equal(electrify.damagePerSecond, 0);
 });
+
+test("a converted element rolls its own ailment: the cold half of a physical hit can freeze", () => {
+  // `AilmentChance.Effect.canActivate` ends
+  //
+  //     && (effect.getAttackType().isHit() || effect.getAttackType() == AttackType.bonus_dmg)
+  //
+  // — read out of `Mine_and_Slash-1.20.1-6.4.13.jar`, not the fork. `bonus_dmg` is what
+  // `buildBonusElementEvent` stamps on a converted element, and that child runs the whole source
+  // sweep, so the cold half of an 80%-converted physical hit is an ordinary cold hit as far as
+  // `freeze_chance` is concerned.
+  //
+  // The engine ran ailments only on the root event, so a spear build converting four fifths of
+  // itself to cold reported no freeze at all while the same skill's unconverted cold reading
+  // reported one — which is what made it visible.
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: { strike: spellEntry("strike", "Physical", "hit100") },
+    mmorpg_stat: { freeze_chance: statEntry("freeze_chance") },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("freeze_chance", "FLAT", 100),
+        exact("phys_to_water", "FLAT", 80),
+      ]),
+    },
+  });
+
+  const freeze = simulateHit(BUILD, snapshot, {})!.hit.ailments.find((a) => a.ailment === "freeze");
+  assert.ok(freeze !== undefined, "the converted cold event inflicts the cold ailment");
+  assert.equal(freeze.element, "Cold");
+
+  // Once, not once per event: the physical parent is the wrong element for freeze and rolls
+  // nothing, so the child is the only source of it.
+  assert.equal(
+    simulateHit(BUILD, snapshot, {})!.hit.ailments.filter((a) => a.ailment === "freeze").length,
+    1,
+  );
+});

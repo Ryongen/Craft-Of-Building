@@ -331,7 +331,7 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
       ? collectSpellContexts(
           env,
           withLearnedRank(snapshot, build, options.skill, options.spellRanks),
-          "skill",
+          skillPath(build, options.skill),
           // The whole bar, because a spell that borrows its support gems needs the Skill it
           // borrows them from — and that Skill is somewhere else in the document.
           build.skills ?? [],
@@ -713,7 +713,21 @@ function contextModifierBonus(contexts: readonly StatContext[]): StatContext {
       for (const other of contexts) {
         if (other.type !== target) continue;
         for (const stat of other.stats) {
-          stats.push({ statId: stat.statId, type: stat.type, value: stat.value * multi });
+          stats.push({
+            statId: stat.statId,
+            type: stat.type,
+            value: stat.value * multi,
+            // Both ends of the share, because neither alone identifies the row: a build with
+            // four `aura_effect` lines and six auras produces twenty-four of these under one
+            // heading, and the number beside each is meaningless without knowing whose stat it
+            // is a cut of and which line took the cut.
+            from: {
+              kind: "share",
+              id: mod.statId,
+              by: { ctxType: ctx.type, source: ctx.source, path: ctx.path },
+              of: { ctxType: other.type, source: other.source, path: other.path },
+            },
+          });
         }
       }
     }
@@ -827,4 +841,25 @@ function usableValue(
   const base = usable.valueNeededAtLevelOne * bal.multiFor(scaling, level);
   if (amount + base === 0) return 0;
   return clamp(amount / (amount + base), 0, usable.maxMulti) * 100;
+}
+
+/**
+ * Where in the document the skill this unit is for lives — `skills[0]`, or a bare root.
+ *
+ * It used to be the literal `"skill"`, on the reading that this unit is *the* skill and needs no
+ * index. But the paths built under it are read back: `provenanceOf` parses
+ * `skills[0].supports[2]` to find which gem a damage-trace row came off and prices its card at
+ * that gem’s own roll, and `skill.supports[2]` matched nothing — so every support gem hovered
+ * from the trace drew its card at 0%, showing a mythic’s stats at the bottom of their band
+ * beside a row computed at 96%. A diagnostic reads better for the same reason: it names the
+ * socket somebody can go and look at.
+ *
+ * Matched by `spellId` rather than by identity, because `withLearnedRank` hands back a copy and
+ * not every caller passes the document’s own object. A skill that is not on the bar — a
+ * candidate being priced by the support-gem picker — keeps the bare root, which is the honest
+ * answer: there is no socket to point at.
+ */
+function skillPath(build: BuildDoc, skill: SkillSetup): string {
+  const index = (build.skills ?? []).findIndex((s) => s.spellId === skill.spellId);
+  return index < 0 ? "skill" : `skills[${index}]`;
 }

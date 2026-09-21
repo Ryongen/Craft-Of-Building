@@ -35,6 +35,7 @@ import {
   type TreeKey,
 } from "./build-doc.js";
 import { DEFAULT_JEWEL_STYLE } from "./display.js";
+import { stageContent, stageDoc } from "./stages.js";
 import { ELEMENT_GUIDS } from "./elements.js";
 import { isTargetPresetId } from "./target-presets.js";
 import {
@@ -60,6 +61,7 @@ import {
   isKnownReqType,
   isTwoHanded,
   jewelTags,
+  MAX_EYE_AURA_STATS,
   maxBonusSpellLevels,
   maxLevel,
   maxOfOneAffixType,
@@ -143,6 +145,7 @@ export function validateBuild(
 
   validateCharacter(doc, snapshot, balanceId, add);
   validateTrees(doc, snapshot, balanceId, add);
+  validateStages(doc, snapshot, balanceId, add);
 
   for (const [i, item] of (doc.gear ?? []).entries()) {
     validateItem(item, snapshot, `gear[${i}]`, add);
@@ -213,7 +216,7 @@ type PointCodes = {
  *    derivable from a document.
  */
 function checkPointSpend(
-  doc: BuildDoc,
+  character: BuildDoc["character"],
   snapshot: Snapshot,
   balanceId: string,
   pool: PlayerPointType,
@@ -223,7 +226,7 @@ function checkPointSpend(
   codes: PointCodes,
   add: Add,
 ): void {
-  const available = pointsAvailable(snapshot, doc.character, pool, balanceId);
+  const available = pointsAvailable(snapshot, character, pool, balanceId);
 
   if (available.recorded) {
     if (spent > available.total) {
@@ -255,7 +258,7 @@ function checkPointSpend(
       codes.over,
       path,
       `${spent} ${noun} but at most ${budget.ceiling} are obtainable at level ` +
-        `${doc.character.level} (${budget.fromLevel} from levelling + ${budget.maxBonus} bonus, ` +
+        `${character.level} (${budget.fromLevel} from levelling + ${budget.maxBonus} bonus, ` +
         `capped at ${budget.maxTotal}).`,
     );
   } else if (spent > budget.fromLevel) {
@@ -263,7 +266,7 @@ function checkPointSpend(
       "warning",
       codes.beyondLevelling,
       path,
-      `${spent} ${noun} but levelling to ${doc.character.level} grants ${budget.fromLevel}. ` +
+      `${spent} ${noun} but levelling to ${character.level} grants ${budget.fromLevel}. ` +
         `Legal only if ${spent - budget.fromLevel} bonus point(s) were acquired, which only ` +
         "`character.pointTotals` can confirm.",
     );
@@ -368,13 +371,140 @@ function validateTrees(doc: BuildDoc, snapshot: Snapshot, balanceId: string, add
 
     validateTreeGraph(snapshot, treeId, path, allocated, add);
 
-    checkPointSpend(doc, snapshot, balanceId, TREE_POINT_TYPE[key], spent, path, "points allocated", {
+    checkPointSpend(doc.character, snapshot, balanceId, TREE_POINT_TYPE[key], spent, path, "points allocated", {
       over: "point-budget-exceeded",
       beyondLevelling: "point-budget-needs-bonus",
       unknown: "no-point-budget",
     }, add);
   }
 
+}
+
+/**
+ * The saved stages: that the list is well formed, and that every stage in it is an allocation
+ * the game could have produced.
+ *
+ * Two halves, and the second is the one worth having. The **shape** checks are cheap — ids that
+ * exist and are unique, one `main`, an `activeStage` that names something — and catch a file
+ * edited by hand or written by a version of this app that is not this one.
+ *
+ * The **legality** check runs the real rules over every stage that is not the live one, by
+ * building the document that stage *would* be and handing it to the same three validators the
+ * live allocation goes through. A build guide whose level-50 stage spends 91 talent points is
+ * wrong in exactly the way a live allocation would be, and it has to say so at the point the
+ * guide is being written rather than when a reader tries to follow it.
+ *
+ * The active stage is skipped because the live fields already were checked and are the same
+ * allocation — {@link syncStages} is what keeps that true, and {@link STAGE_DESYNC} is what
+ * reports a document where it is not.
+ */
+function validateStages(doc: BuildDoc, snapshot: Snapshot, balanceId: string, add: Add): void {
+  const stages = doc.stages;
+  if (stages === undefined) return;
+
+  if (!Array.isArray(stages)) {
+    add("error", "malformed-stages", "stages", `Expected an array, got ${JSON.stringify(stages)}.`);
+    return;
+  }
+  if (stages.length === 0) {
+    add("warning", "empty-stages", "stages", "Present but empty; omit it instead.");
+    return;
+  }
+
+  const seen = new Set<string>();
+  let mains = 0;
+
+  for (const [i, stage] of stages.entries()) {
+    const path = `stages[${i}]`;
+
+    if (typeof stage?.id !== "string" || stage.id.length === 0) {
+      add("error", "stage-without-id", `${path}.id`, "Every stage needs a non-empty id.");
+    } else if (seen.has(stage.id)) {
+      add("error", "duplicate-stage-id", `${path}.id`, `"${stage.id}" names more than one stage.`);
+    } else {
+      seen.add(stage.id);
+    }
+
+    if (typeof stage?.name !== "string" || stage.name.trim().length === 0) {
+      add("error", "stage-without-name", `${path}.name`, "Every stage needs a name to pick it by.");
+    }
+
+    if (stage?.main === true) mains++;
+
+    if (stage?.level !== undefined) {
+      const cap = maxLevel(snapshot, balanceId);
+      if (!Number.isInteger(stage.level) || stage.level < 1 || stage.level > cap) {
+        add("error", "stage-level-out-of-range", `${path}.level`, `Must be an integer in 1..${cap}, got ${stage.level}.`);
+      }
+    }
+
+    if (stage?.id !== undefined && stage.id === doc.activeStage) {
+      // The live fields are what this stage is, by definition. What a stored copy that has
+      // drifted from them means is settled — the live fields win — so this is a note that the
+      // file was written by something that did not know the rule, not a legality finding.
+      const stored = JSON.stringify(stageContent(stageDoc(doc, stage)));
+      if (stored !== JSON.stringify(stageContent(doc))) {
+        add(
+          "warning",
+          STAGE_DESYNC,
+          path,
+          "The active stage's stored allocation is not the one on the character. The live " +
+            "`tree`, `character.level`, `character.statPoints` and `character.schools` win; " +
+            "opening this document in the app will rewrite the stage from them.",
+        );
+      }
+      continue;
+    }
+
+    if (typeof stage?.id !== "string") continue;
+    const as = stageDoc(doc, stage);
+    const into = prefixed(path, add);
+    validateTrees(as, snapshot, balanceId, into);
+    validateStatPoints(as, snapshot, balanceId, into);
+    validateSchools(as, snapshot, balanceId, into);
+  }
+
+  if (mains > 1) {
+    add(
+      "error",
+      "many-main-stages",
+      "stages",
+      `${mains} stages are marked \`main\`; exactly one is the build's public face.`,
+    );
+  }
+  if (mains === 0) {
+    add(
+      "warning",
+      "no-main-stage",
+      "stages",
+      "No stage is marked `main`, so anything that can show only one will fall back to the first.",
+    );
+  }
+  if (doc.activeStage !== undefined && !seen.has(doc.activeStage)) {
+    add(
+      "warning",
+      "unknown-active-stage",
+      "activeStage",
+      `"${doc.activeStage}" names no stage; the character is showing an allocation no stage claims.`,
+    );
+  }
+}
+
+/** Reported where a stored active stage disagrees with the character it claims to describe. */
+const STAGE_DESYNC = "stage-out-of-sync";
+
+/**
+ * An `Add` that rewrites a live-document path onto a stage.
+ *
+ * The three validators below were written against `tree.talents[3]` and
+ * `character.statPoints.strength`, and a stage flattens both — `stages[1].talents[3]`. Rewriting
+ * here is what lets the rules be reused verbatim instead of being parameterised on where they
+ * are reading from, which is the sort of parameter that gets one call site wrong.
+ */
+function prefixed(path: string, add: Add): Add {
+  return (severity, code, at, message) => {
+    add(severity, code, `${path}.${at.replace(/^(tree|character)\./, "")}`, message);
+  };
 }
 
 /**
@@ -1275,8 +1405,101 @@ function validateJewel(jewel: Jewel, snapshot: Snapshot, path: string, add: Add)
     validateTier(roll, "jewel", snapshot, rarity, at, add);
   }
 
+  validateEyeLines(jewel, snapshot, path, add);
+
   if (jewel.socket !== undefined && !isCoord(jewel.socket)) {
     add("error", "malformed-coord", `${path}.socket`, `Expected [row, col], got ${JSON.stringify(jewel.socket)}.`);
+  }
+}
+
+/**
+ * An Abyssal Eye's conditional lines — `JewelItemData.auraStats`.
+ *
+ * Not affixes, and none of the affix rules apply to them. A `StatsWhileUnderAuraData` has no
+ * tier: `perc` is `new MinMax(0, 100).random()` in the constructor, so the plain 0-100 is the
+ * whole band whatever the jewel's rarity is. It has its own `lvl`, which is the drop's and not
+ * the character's. And which Augment gates it is on the *affix* — `eye_aura_req` — so a line
+ * whose affix does not carry one is a line the game can never switch on; `collectJewels` skips
+ * it and says so, and this says so before the engine is asked.
+ *
+ * The count and the duplicate rule come from where they are enforced in game, which is the
+ * blueprint rather than the class:
+ *
+ *     while (data.auraStats.size() < auraAffixes) {
+ *         Affix a = ...random();
+ *         if (data.auraStats.stream().noneMatch(x -> x.affix.equals(a.GUID()))) { ... }
+ *     }
+ *
+ * with `auraAffixes` coming from `UberBossTier.watcherEyeAffixes` — 1, 2 or 3. Nothing adds a
+ * fourth afterwards, so four is an item no boss can drop; it is still a *warning* rather than
+ * an error, because an eye from a pack version with a fourth tier would be a real item someone
+ * is wearing, and this file's rule is that a measurement wins. A repeated affix is an error:
+ * every eye affix is `only_one_per_item` and the loop re-rolls rather than stacking it.
+ */
+function validateEyeLines(jewel: Jewel, snapshot: Snapshot, path: string, add: Add): void {
+  const lines = jewel.auraStats ?? [];
+  if (lines.length > MAX_EYE_AURA_STATS) {
+    add(
+      "warning",
+      "too-many-eye-lines",
+      `${path}.auraStats`,
+      `${lines.length} Augment line(s). The highest UberBossTier grants ${MAX_EYE_AURA_STATS} ` +
+        `(WatcherEyeBlueprint) and nothing adds one afterwards.`,
+    );
+  }
+
+  const seen = new Set<string>();
+  for (const [i, line] of lines.entries()) {
+    const at = `${path}.auraStats[${i}]`;
+    const view = affix(snapshot, line.affixId);
+    if (!view) {
+      add("error", "unknown-affix", `${at}.affixId`, `No ${CATEGORY.affix} entry "${line.affixId}".`);
+      continue;
+    }
+    if (view.type !== "watcher_eye") {
+      add(
+        "error",
+        "affix-type-mismatch",
+        at,
+        `"${view.id}" is a "${view.type}" affix. Only "watcher_eye" affixes are Augment lines.`,
+      );
+    } else if (view.eyeAuraReq.length === 0) {
+      add(
+        "error",
+        "eye-line-without-augment",
+        at,
+        `"${view.id}" carries no \`eye_aura_req\`, so nothing says which Augment switches it on ` +
+          `and the engine counts none of it (StatsWhileUnderAuraData.getAura).`,
+      );
+    }
+    if (seen.has(line.affixId)) {
+      add(
+        "error",
+        "duplicate-eye-line",
+        at,
+        `"${line.affixId}" appears twice. It is \`only_one_per_item\`, and the blueprint re-rolls ` +
+          `rather than repeating one.`,
+      );
+    }
+    seen.add(line.affixId);
+
+    if (!Number.isFinite(line.rollPercent) || line.rollPercent < 0 || line.rollPercent > 100) {
+      add(
+        "error",
+        "roll-outside-tier-band",
+        `${at}.rollPercent`,
+        `An Augment line has no tier and rolls 0..100, got ${line.rollPercent}.`,
+      );
+    }
+    if (!Number.isInteger(line.itemLevel) || line.itemLevel < 0) {
+      add(
+        "error",
+        "bad-item-level",
+        `${at}.itemLevel`,
+        `Must be a non-negative integer, got ${line.itemLevel}. It is the line's own level ` +
+          `(StatsWhileUnderAuraData.lvl), which every stat on it interpolates at.`,
+      );
+    }
   }
 }
 
@@ -1920,7 +2143,7 @@ function validateStatPoints(doc: BuildDoc, snapshot: Snapshot, balanceId: string
 
   if (spent === 0) return;
 
-  checkPointSpend(doc, snapshot, balanceId, "STATS", spent, "character.statPoints", "points spent", {
+  checkPointSpend(doc.character, snapshot, balanceId, "STATS", spent, "character.statPoints", "points spent", {
     over: "stat-points-over-budget",
     beyondLevelling: "stat-points-beyond-levelling",
     unknown: "no-stat-point-budget",
@@ -2024,7 +2247,7 @@ function validateSchools(doc: BuildDoc, snapshot: Snapshot, balanceId: string, a
   for (const pool of ["SPELLS", "PASSIVES"] as const) {
     if (spent[pool] === 0) continue;
     checkPointSpend(
-      doc,
+      doc.character,
       snapshot,
       balanceId,
       pool,

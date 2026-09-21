@@ -206,7 +206,20 @@ export class EventData {
 }
 
 /** `MoreMultiData` — a MORE multiplier held out of the layers and applied after all of them. */
-export type MoreMulti = { statId: string; numberId: string; multi: number };
+export type MoreMulti = {
+  statId: string;
+  numberId: string;
+  multi: number;
+  /**
+   * The `mmorpg_stat_effect` block that recorded it, when a breakdown was being taken.
+   *
+   * One stat can carry several `MULTIPLICATIVE_DAMAGE` blocks behind different gates, and the
+   * game records — and prints — one `Multipliers:` row per block rather than one per stat. So a
+   * breakdown legitimately shows the same name twice with two different numbers, and without
+   * this there is nothing on the screen that says which row is which.
+   */
+  effectId?: string;
+};
 
 /** A bonus-element damage event queued by conversion, ele-as-extra, or taken-as. */
 export type BonusElement = {
@@ -249,6 +262,19 @@ export class DamageEventState {
 
   /** The `flat_damage` layer's total, captured during the flush for ailments to read. */
   appliedFlatDamage = 0;
+
+  /**
+   * `damage_block`'s multiplier — the share of hits that are not evaded — captured on the way
+   * past, the same way {@link appliedFlatDamage} is.
+   *
+   * 1 on an event nothing dodged, which is most of them: the layer is only written by
+   * `DodgeRating` and `SpellDodgeEffect`, and only one of the two can gate any given hit.
+   * Captured here rather than derived by a caller because the layer is spent during the flush
+   * and afterwards the accumulator no longer describes what it did — and because a reader is
+   * entitled to the figure whether or not a breakdown was asked for, which rules out reading it
+   * off the trace.
+   */
+  hitChance = 1;
 
   /** Present only when a breakdown was asked for; see `damage/breakdown.ts`. */
   readonly recorder: Recorder | undefined;
@@ -355,7 +381,8 @@ export class DamageEventState {
    */
   addMoreMulti(statId: string, numberId: string, multi: number): void {
     if (multi === 1) return;
-    this.moreMultis.push({ statId, numberId, multi });
+    const effectId = this.recorder?.effectId;
+    this.moreMultis.push({ statId, numberId, multi, ...(effectId === undefined ? {} : { effectId }) });
   }
 
   /**

@@ -334,6 +334,26 @@ a {
   padding: 6px var(--space-5);
 }
 
+/*
+ * The stage switcher, at the right-hand end of the tab row.
+ *
+ * `margin-left: auto` rather than a spacer element, so the tabs keep their own gap rule. The
+ * select is capped because it sizes itself to its longest option and stage names are free text.
+ */
+.tab-stage {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  padding-right: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.tab-stage select {
+  max-width: 160px;
+}
+
 /* The unselected tabs are dimmed by opacity as well as by colour, so the icons dim with the
    words — an icon at full saturation beside a grey label reads as the selected one. */
 .tabs button:not(.active) .stat-icon {
@@ -867,8 +887,47 @@ body.resizing {
   cursor: pointer;
 }
 
-.step-row.interactive:hover {
-  background: var(--bg-panel);
+/*
+ * Alternate rows carry a band that fades along the row — the same device as `.delta-row`, and
+ * here for the same reason: the label is left and the number is right, and across the full width
+ * of the Damage tab a drill-down forty rows deep is a list the eye changes line halfway across.
+ * Brightest under the label and thinnest under the number, so the tint reads as a direction to
+ * follow rather than as a table rule.
+ *
+ * Deliberately faint. The numbers are already coloured by whether each row helped the hit, and a
+ * zebra loud enough to compete with that costs more than it buys.
+ *
+ * Scoped to a container so the parity counts rows and only rows: a `StepRow` renders as a
+ * fragment, so every row of the tree at every depth is a sibling, and loose in a card the count
+ * would also take in headings and notes. `.step-group` is the damage trace's wrapper, `.steps`
+ * the stat drill-down's.
+ */
+.steps > .step-row:nth-child(even),
+.step-group > .step-row:nth-child(even) {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.055) 0%,
+    rgba(255, 255, 255, 0.03) 55%,
+    rgba(255, 255, 255, 0.012) 100%
+  );
+}
+
+/*
+ * The row under the pointer. A ring and a small outward glow over a raised fill, so it reads as
+ * one row lifted out of the list rather than as a heavier stripe competing with the band.
+ *
+ * `background-color` rather than the shorthand, so it sits under the band's gradient instead of
+ * fighting it for specificity — a banded row keeps its fade and gains the fill.
+ */
+.step-row:hover {
+  background-color: var(--bg-raised);
+  box-shadow:
+    0 0 0 1px var(--accent-dim),
+    0 0 7px rgba(88, 166, 255, 0.22);
+}
+
+.step-row:hover .step-label {
+  color: var(--text);
 }
 
 .step-label {
@@ -1181,12 +1240,30 @@ table.grid td.num {
 /*
  * Two columns of cards where the window allows it, one where it does not.
  *
- * CSS columns rather than a grid for the same reason `StatList` uses them: these cards are wildly
- * uneven — a four-row rate card beside a two-table sustain card — and a grid row is as tall as
- * its tallest cell. `break-inside: avoid` on the card is what keeps one whole.
+ * A grid rather than CSS columns, and the pairing is the whole reason. These cards are read as
+ * pairs — Full DPS beside the Rate it is computed from, the Effects assumed up beside the Target
+ * they are assumed against, the Damage sources beside the Sustain that pays for them — and CSS
+ * columns cannot express that: they fill the first column to the bottom and start the second, so
+ * the card that lands next to Rate is whichever one the balancer happens to push over, and it
+ * moves the moment a conditional card appears or the reader folds something.
+ *
+ * `align-items: start` is what keeps the cost of that bearable: a card is its own height rather
+ * than its row's, so a two-table Sustain beside a four-row Damage sources leaves a gap under the
+ * short one instead of stretching it. `break-inside: avoid` stays on `.panel-card` — it does
+ * nothing in a grid, and it is still what `.trace-stats` and `StatList` need one level down.
+ *
+ * The track size reads as a knot and is doing one job: **two columns at most, one when narrow,
+ * and no media query**. `auto-fit` fits as many tracks of the minimum as it can, so a plain
+ * `minmax(420px, 1fr)` gave three on a wide window and broke every pair. Making the minimum at
+ * least half the container caps the count at two; keeping the 420px floor is what still drops it
+ * to one on a narrow one. It stays measured against the panel rather than the viewport, which
+ * matters here — the stat sidebar takes 380px out of the window and a media query would not
+ * know that.
  */
 .card-columns {
-  columns: 420px 2;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(420px, (100% - var(--space-6)) / 2), 1fr));
+  align-items: start;
   column-gap: var(--space-6);
 }
 
@@ -1432,12 +1509,141 @@ table.grid td.num {
 
 /* -- damage -------------------------------------------------------------- */
 
-.dmg-columns {
+/*
+ * The breakdown's two halves: the hit's own event on the left, an ailment's on the right.
+ *
+ * A grid rather than the `columns` the card list uses, because these two are *parallel* readings
+ * of one cast and have to start level with each other — CSS columns would flow the ailment block
+ * under the hit trace as soon as the hit trace grew.
+ *
+ * And a grid of **bands** rather than two independent columns, which is the same requirement one
+ * level down. Title, buttons, summary and trace are a row each, holding both columns' cells, so a
+ * row is as tall as its taller half. Left to stack themselves the two columns' headers came out
+ * different heights and the ailment's event began 120px above the hit's — the two blocks this
+ * layout exists to put side by side were the two it failed to align.
+ *
+ * Below 1100px there is not room for two traces side by side, so the placement is dropped and
+ * they stack in source order: the whole hit column, then the whole ailment column.
+ */
+.breakdown-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-4);
+  grid-template-columns: 1fr 1fr;
+  column-gap: var(--space-6);
+  align-items: start;
 }
 
+/*
+ * Explicit placement rather than source order, so the narrow layout can drop it.
+ *
+ * With the cells placed, the DOM can stay in reading order — the hit's four bands, then the
+ * ailment's four — and the media query below only has to switch the placement off for them to
+ * stack as one column in that same order. Interleaving the two columns in the markup would have
+ * read correctly wide and nonsensically narrow.
+ */
+.bd-left { grid-column: 1; }
+.bd-right { grid-column: 2; }
+.bd-band-1 { grid-row: 1; }
+.bd-band-2 { grid-row: 2; }
+.bd-band-3 { grid-row: 3; }
+
+/*
+ * The trace band is three rows, not one, so `Final damage` lines up across the columns.
+ *
+ * The working above it is a list of however many layers and multipliers that event happened to
+ * run, and the two events do not run the same ones — Holy Fire's ailment carries two `dot_dmg`
+ * multipliers its hit does not, so the two totals ended up twenty pixels apart. Giving the
+ * working its own grid row makes that row as tall as the taller of the two, and the totals below
+ * it land level whatever either list does. The same holds when a row is expanded: the track
+ * regrows and both totals move together.
+ *
+ * `subgrid` is what carries the panel's rows down through the band cell and into the card, so the
+ * card keeps its own frame around all three sections rather than being split into three boxes.
+ */
+.bd-band-4 {
+  grid-row: 4 / span 3;
+  display: grid;
+  grid-template-rows: subgrid;
+}
+
+.bd-band-4 > .card {
+  grid-row: 1 / -1;
+  display: grid;
+  grid-template-rows: subgrid;
+}
+
+/* No children, no third row — see `trace-leaf` in `Trace.tsx`. */
+.bd-band-4 > .card.trace-leaf {
+  grid-row: 1 / span 2;
+}
+
+/* Whatever stands in for a trace — the Average note, "no trace was recorded" — takes the lot. */
+.bd-band-4 > .notice,
+.bd-band-4 > .faint {
+  grid-row: 1 / -1;
+}
+
+/*
+ * The working, the total and the children: one grid row each at the top level, and plain blocks
+ * inside a nested child, where there is no second column to line up with.
+ */
+.trace-body,
+.trace-final,
+.trace-children {
+  min-width: 0;
+  /*
+   * A trace row is `white-space: nowrap`, so in a narrow column one of them overflows. It has to
+   * scroll here rather than on the band cell, which cannot have an overflow of its own without
+   * ceasing to be a subgrid — and the three sections are exactly the right thing to scroll: each
+   * keeps its own rows together and nothing pushes a scrollbar onto the whole tab.
+   */
+  overflow-x: auto;
+}
+
+.bd-cell {
+  min-width: 0;
+}
+
+/* Every band has a bottom margin except the last, so the two columns' bands stay in step. */
+.bd-band-1,
+.bd-band-2,
+.bd-band-3 {
+  margin-bottom: var(--space-4);
+}
+
+/*
+ * A band with nothing in it still has to hold its height, or the column beside it rides up.
+ *
+ * One ailment needs no chooser, and without this the summary under it started level with the
+ * *buttons* opposite instead of with the summary opposite — the exact misalignment the grid is
+ * here to prevent, reintroduced by an empty cell. Sized to a button so the row it shares matches
+ * whichever side does have one.
+ */
+.bd-spacer {
+  height: 28px;
+}
+
+@media (max-width: 1100px) {
+  .breakdown-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bd-left,
+  .bd-right,
+  .bd-band-1,
+  .bd-band-2,
+  .bd-band-3,
+  .bd-band-4 {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+/*
+ * The chosen branch's total, at the head of its own rows.
+ *
+ * `.dmg-columns` put three of these across the top of the tab. Only one branch can be traced at
+ * a time, so two of the three were always describing rows nobody was looking at.
+ */
 .dmg-total {
   font-family: var(--mono);
   font-size: var(--text-2xl);
@@ -1465,7 +1671,11 @@ table.grid td.num {
 }
 
 .trace-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background-color: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  box-shadow:
+    0 0 0 1px var(--accent-dim),
+    0 0 7px rgba(88, 166, 255, 0.22);
 }
 
 /*
@@ -2769,6 +2979,122 @@ textarea.paste:focus {
   flex: 0 0 auto;
 }
 
+/*
+ * The stage list on the tree canvas.
+ *
+ * The whole block is one `.tree-hud`, so it reads as the same surface as the tree buttons under
+ * it. The list is in normal flow rather than floating: the overlay column is a stack of siblings
+ * and a popup inside one of them is how this app has twice produced a dropdown that renders
+ * behind the rows below it.
+ */
+.stage-block {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4);
+}
+
+button.stage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+
+.stage-label {
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.stage-current {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The mark an exporter reads, and the only gold thing in the block — it names one row. */
+.stage-main {
+  color: var(--allocated);
+}
+
+.stage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: var(--space-3);
+}
+
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.stage-row.selected {
+  background: var(--accent-dim);
+}
+
+button.stage-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 2px var(--space-3);
+  height: var(--row);
+  text-align: left;
+}
+
+.stage-row.selected button.stage-pick {
+  color: var(--text);
+}
+
+.stage-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The row's buttons appear on hover or on the row you are on.
+ *
+ * Three glyphs on four rows is more furniture than list, and the destructive one is the widest
+ * target in the block. Keeping them out until the pointer is on the row leaves the list readable
+ * as a list, which is what it is for 95% of the time it is open.
+ */
+.stage-actions {
+  display: flex;
+  gap: 1px;
+  padding-right: var(--space-2);
+  visibility: hidden;
+}
+
+.stage-row:hover .stage-actions,
+.stage-row.selected .stage-actions {
+  visibility: visible;
+}
+
+.stage-actions button.nudge.on {
+  color: var(--allocated);
+}
+
+.stage-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--row);
+  margin: 0 var(--space-2);
+}
+
 /* The stat rows are tighter here than on a panel — this sits over a canvas you are clicking. */
 .tree-hud-column .alloc-row {
   gap: var(--space-2);
@@ -3115,6 +3441,278 @@ textarea.paste:focus {
   color: #ffffff; /* White stat text descriptions[cite: 1, 2] */
 }
 
+
+/* -- the skill and gem cards --------------------------------------------- */
+
+/*
+ * Two more readings of `.item-window`.
+ *
+ * Everything structural — the frame, the header, the dividers, the stat lines — is the item
+ * card's, because a skill's tooltip and an item's are the same object in game and were two
+ * different objects here only because the skill never had one: it had a browser `title`. What
+ * these rules add is the parts an item has no equivalent of: a description paragraph, a
+ * `label / value` fact list, and the tag chips.
+ */
+
+.item-window.tt-spell {
+  min-width: 300px;
+  max-width: 380px;
+  border-color: #6b4fa0;
+}
+
+.item-window.tt-spell .tt-title {
+  color: #ff9d9d;
+}
+
+/*
+ * A gem's card, in the game's own gem colour.
+ *
+ * `ChatFormatting.GREEN` for a skill gem against `RED` for a spell — the mod's two tooltips are
+ * told apart by that before a word of either is read, and a card that used one colour for both
+ * would throw that away for no reason.
+ */
+.item-window.tt-gem {
+  min-width: 260px;
+  max-width: 360px;
+  border-color: #3f7a4e;
+}
+
+.item-window.tt-gem .tt-title {
+  color: #7fe08f;
+}
+
+/*
+ * A buff and a debuff, on the same frame as a gem's.
+ *
+ * Green and red rather than the gem's green alone, because the one thing a reader needs off a
+ * glance at one of these is which way it points: the damage trace hovers both from the same kind
+ * of row, and Banner of the Piercing Gale taking 24% of the mob's armour and Frenzy Charge giving
+ * you 9% more damage are opposite answers to the same question. The hues are the palette's
+ * `green` and `red`, dimmed to a border the way `.tt-gem` dims its own.
+ */
+.item-window.tt-buff {
+  min-width: 260px;
+  max-width: 360px;
+  border-color: #3f7a4e;
+}
+
+.item-window.tt-buff .tt-title {
+  color: #7fe08f;
+}
+
+.item-window.tt-debuff {
+  min-width: 260px;
+  max-width: 360px;
+  border-color: #8a3f3f;
+}
+
+.item-window.tt-debuff .tt-title {
+  color: #ff8a8a;
+}
+
+/*
+ * A class perk's card, in the gold the tree and the Classes grid paint an allocated node.
+ *
+ * Its own name rather than `.tt-perk`, which is the tree's mini-map card and sets `min-width: 0`
+ * for a canvas this one does not have.
+ */
+.item-window.tt-perk-card {
+  min-width: 260px;
+  max-width: 360px;
+  border-color: #7a6330;
+}
+
+.item-window.tt-perk-card .tt-title {
+  color: #ffcc66;
+}
+
+/* A tree node's card, bordered and titled the gold the tree paints an allocated node. */
+.item-window.tt-perk {
+  min-width: 0;
+  max-width: none;
+  border-color: #8a6f2e;
+}
+
+.item-window.tt-perk .tt-title {
+  color: #d9b44a;
+}
+
+/*
+ * The skill's description on the Skills panel, in the pack's own colours.
+ *
+ * Same text and same resolution as the tooltip's, at the panel's own size: this is a paragraph
+ * to read rather than a card to glance at, so it is selectable and it keeps the body font.
+ */
+.skill-desc {
+  margin: 0 0 10px;
+  max-width: 70ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  user-select: text;
+}
+
+.skill-desc p {
+  margin: 0 0 6px;
+}
+
+.skill-desc p:last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * A drill-down row whose source is a thing you own — an item, a jewel, a gem, a tree node.
+ *
+ * Underlined faintly rather than coloured or badged: the row's number is already carrying the
+ * good/bad colour and its label is already the source's name, so the only thing left to say is
+ * that there is more here if you rest on it. A dotted underline is the oldest signal there is
+ * for exactly that, and it costs the row no space.
+ */
+.has-source {
+  text-decoration: underline dotted rgba(255, 255, 255, 0.28);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.step-row:hover .has-source {
+  text-decoration-color: var(--accent);
+}
+
+/*
+ * The tree, centred on one node, inside a provenance card.
+ *
+ * The canvas is the Tree tab's own renderer at a fixed transform, so the art, the allocated gold
+ * and the connectors are the ones the tab draws. What this adds is the crosshair: `draw` can mark
+ * a node as *hovered*, and that is not what is being said here — the pointer is on a stat row a
+ * long way away. The ring says "this one", dead centre, where `centreOn` put it.
+ */
+.perk-peek {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #12141a;
+}
+
+.perk-peek canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* Size and offset come from the component, so the ring is always exactly one cell. */
+.perk-peek-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(88, 166, 255, 0.55);
+  pointer-events: none;
+}
+
+/*
+ * A place to rest the pointer to bring a card up.
+ *
+ * Its own element rather than the control beside it, because hovering a picker you are about to
+ * open would drop a card over the list it is about to show.
+ */
+.tt-anchor {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  background: #15121b;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.tt-anchor:hover {
+  border-color: var(--accent-dim);
+}
+
+/* The spell's own 16px art, drawn at 30 inside the 32px frame the item card already defines.
+   `pixelated` for the reason `StatIcon` needs it: these are resource-pack textures and the
+   browser's default smoothing turns them to mush at this size. */
+.tt-spell-icon {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+}
+
+/*
+ * What the skill does, in the pack's own words and colours.
+ *
+ * `parseFormatting` has already turned the `§` codes into spans, so the only job here is the
+ * paragraph rhythm. Left at the card's own line height rather than tightened: these are whole
+ * sentences, not stat lines, and they are the one part of the card that is read rather than
+ * scanned.
+ */
+.tt-desc {
+  color: #aaaaaa;
+}
+
+.tt-desc p {
+  margin: 0 0 6px;
+}
+
+.tt-desc p:last-child {
+  margin-bottom: 0;
+}
+
+/* `label` left, number right, the way the game's own footer facts sit. */
+.tt-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tt-fact-k {
+  color: #6e7583;
+}
+
+.tt-fact-v {
+  color: #cfcfcf;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The rank the rest of the card is read at — the one fact that is a *choice* rather than a
+   property of the spell, so it is the one that is marked. */
+.tt-fact-v.accent {
+  color: var(--accent);
+}
+
+/*
+ * The planner's own remark at the foot of a card.
+ *
+ * Set apart from everything above it on purpose: the rest of the card is what the game says
+ * about the gem, and this is what *this build* would get from it. The two being visually the
+ * same would be the card claiming the mod said something it did not.
+ */
+.tt-note {
+  color: #8fa3c7;
+  font-size: 12px;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.tt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tt-chip {
+  background: #1d2130;
+  color: #8fa3c7;
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 1.6;
+  text-transform: capitalize;
+}
+
 /* Sockets Section (Bottom, above item label) */
 .tt-sockets {
   color: #aaaaaa;
@@ -3254,14 +3852,24 @@ textarea.paste:focus {
 }
 
 /*
- * The aura lines that are *not* counted right now, named so the omission is not a mystery.
+ * An Augment heading whose Augment is not socketed, and the note that says so.
  *
- * Grey and small because it is a note about the card rather than part of the item: the stats
- * above are what the sheet is using, and this says which switch would add more.
+ * The lines stay on the card — an Abyssal Eye is bought for the Augment you are about to run —
+ * but they are not what the sheet is counting, so the whole group is dimmed and the heading
+ * carries a grey aside. Dimmed rather than dropped: the reader is choosing between eyes, and
+ * a card that hides three quarters of one of them cannot be chosen from.
+ *
+ * `opacity` is safe here in a way it is not on the jewel rows: nothing inside this card opens
+ * a dropdown, so the stacking context it creates has nothing to trap.
  */
+.tt-category-group.dormant {
+  opacity: 0.6;
+}
+
 .tt-dormant {
   color: #aaaaaa;
   font-size: 11px;
+  font-weight: normal;
 }
 
 /* ---------------------------------------------------------------------------

@@ -17,18 +17,39 @@ import { spellName } from "@cte2/schema";
  * Shared by the single skill and the rotation. They differ in one way that matters and it is in
  * the engine rather than here: the rotation merges every skill's triggers against **one** proc
  * cooldown, because the cooldown is a ceiling over the build and not one per skill.
+ *
+ * ## A proc this skill cannot fire but your rotation can
+ *
+ * `proc_arrow_storm_on_ricochet_shot` is gated on `spell_has_tag_ricochet_shot`, so against any
+ * other skill it resolves to zero with "only ricochet_shot skills trigger it" — which is true of
+ * the skill you are reading and false of the build, the moment Ricochet Shot is ticked into the
+ * rotation. Reading "only ricochet_shot skills trigger it" on a build whose rotation contains
+ * Ricochet Shot is the one way this table can be actively misleading, so `rotation` is passed in
+ * and a row the pass does fire says so and prints what the pass gets for it.
  */
 export function ProcTable({
   procs,
   total,
   hint,
+  rotation,
 }: {
   procs: readonly Proc[];
   total: number;
   hint: string;
+  /**
+   * The rotation's merged proc list, when there is one, so a row limited *here* can say that it
+   * is live *there*. Omitted on the rotation's own table, which is already that list.
+   */
+  rotation?: readonly Proc[] | undefined;
 }): ReactNode {
   const world = useWorld();
   if (procs.length === 0) return null;
+
+  /** The same proc in the rotation's list, live, keyed the way the engine merges them. */
+  const inRotation = (proc: Proc): Proc | undefined =>
+    rotation?.find(
+      (r) => r.statId === proc.statId && r.spellId === proc.spellId && r.limit === undefined,
+    );
 
   return (
     <div className="card">
@@ -48,10 +69,12 @@ export function ProcTable({
           </tr>
         </thead>
         <tbody>
-          {procs.map((proc) => (
+          {procs.map((proc) => {
+            const live = proc.limit === undefined ? undefined : inRotation(proc);
+            return (
             <tr
               key={`${proc.statId}:${proc.spellId}`}
-              style={proc.limit === undefined ? undefined : { opacity: 0.6 }}
+              style={proc.limit === undefined || live !== undefined ? undefined : { opacity: 0.6 }}
             >
               <td>
                 {spellName(world.snapshot, proc.spellId)}
@@ -63,7 +86,14 @@ export function ProcTable({
                 {proc.statId}
                 {proc.limit !== undefined && (
                   <div className="faint text-xs">
-                    {procReason(proc)}
+                    {live === undefined ? (
+                      procReason(proc)
+                    ) : (
+                      <>
+                        {procReason(proc)} &mdash;{" "}
+                        <strong>your rotation does</strong>, for {smart(live.dps)}/s
+                      </>
+                    )}
                   </div>
                 )}
               </td>
@@ -72,7 +102,8 @@ export function ProcTable({
               <td className="num">{smart(proc.damagePerProc)}</td>
               <td className="num">{smart(proc.dps)}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

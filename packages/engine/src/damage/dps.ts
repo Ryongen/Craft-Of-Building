@@ -95,7 +95,7 @@ import {
   type ResourceBudget,
   type ResourceId,
 } from "./resources.js";
-import { casterBuffUpkeep, type EffectState } from "./effect-state.js";
+import { casterBuffUpkeep, targetDebuffUpkeep, type EffectState } from "./effect-state.js";
 import {
   procDps,
   procSourcesFor,
@@ -367,6 +367,31 @@ export type DpsResult = {
   /** Total damage one cast puts on the target, across every source. */
   damagePerCast: number;
   critDamagePerCast: number;
+  /**
+   * The share of {@link damagePerCast} that came from a permanent aura rather than from the cast.
+   *
+   * Inside `damagePerCast`, not beside it. An aura's damage is billed to the button that puts it
+   * up — that is what makes Holy Fire's figure appear on Holy Fire's row at all — but it is not
+   * *produced* by the press: `auras.ts` gives a permanent carrier a life of exactly one cast
+   * cycle so that `damagePerCast / cycleSeconds` comes out as the rate the aura really pulses at,
+   * whatever the cycle happens to be. That arithmetic holds only against this skill's own cycle.
+   * A rotation has a different one, so {@link simulateFullDps} takes this term out of the
+   * per-press damage and adds {@link auraDps} back on its own clock instead.
+   *
+   * 0 for everything that holds no permanent damaging effect, which is 428 of the 432 spells.
+   */
+  auraDamagePerCast: number;
+  auraCritDamagePerCast: number;
+  /**
+   * What the held auras deal per second, on their own fixed timing.
+   *
+   * `holy_fire` pulses every 10 ticks for as long as it is up: twice a second, whether you are
+   * mid-cast, on cooldown or standing still. It is a term of {@link dps} already; it is broken
+   * out because it is the one part of this figure a cast rate does not pace.
+   */
+  auraDps: number;
+  /** The same with the crit branch pinned, so a rotation's all-crit figure has one to add. */
+  auraCritDps: number;
   /** `damagePerCast / rate.cycleSeconds` — the rate at which the button comes back. */
   dps: number;
   critDps: number;
@@ -448,6 +473,17 @@ export type DpsResult = {
    * which is the whole reason that gem is worth linking to a buff. See `effect-duration.ts`.
    */
   buff?: BuffDuration;
+  /**
+   * The longest-lived effect one press puts on the **enemy**, and how long it lasts.
+   *
+   * The mirror of {@link buff}, and it answers the same question for the half of the pack that
+   * is pressed for what it does to the target rather than to you: a curse, a shred, a banner.
+   * `cooldown_ticks` says how soon a curse *may* be re-cast and `potion_dur` says how soon it
+   * *has to* be, and those differ by a factor of three on `curse_of_damnation`.
+   *
+   * Undefined for a spell that puts nothing on the target, which is most of them.
+   */
+  debuff?: BuffDuration;
   /** Exile effects this cast needs before it will do anything, from `caster_has_mns_effect`. */
   requires: string[];
   /**
@@ -483,20 +519,39 @@ export type Overlap = {
 };
 
 /**
- * Why a skill is in the rotation: because you press it for its damage, or to keep a buff up.
+ * Why a skill is in the rotation: you press it for its damage, you press it to keep something
+ * up, or you pressed it once at the start of the map and it has been running ever since.
  *
- * The distinction exists because charging a buff one press per pass is wrong by a large factor
- * and always in the same direction. `banishing_blade` is a toggle — one press, `potion_dur: -1`,
+ * The distinction exists because charging one press per pass is wrong by a large factor and
+ * always in the same direction. `banishing_blade` is a toggle — one press, `potion_dur: -1`,
  * and it is up for the rest of the fight — but it declares a 40-tick cooldown, and a rotation
  * that treated it as a step both added its cast to every pass *and* stretched the pass to its
  * cooldown. Ticking one free toggle next to a 1.0s skill more than halved the reported DPS,
  * which is the opposite of what putting a buff on the bar does.
+ *
+ * The same is true of everything you press for a *duration* rather than for a hit.
+ * `curse_of_damnation` leaves `damnation` on the pack for ten seconds and comes off cooldown
+ * after three; nobody re-curses three times over, so its period is the debuff's and not the
+ * button's.
  */
 export type FullDpsRole =
   /** Pressed once per pass, for what it does to the target. */
   | "rotation"
-  /** Pressed when its buff runs out, which is rarely and sometimes never. */
-  | "upkeep";
+  /**
+   * Pressed when what it applied runs out — a buff on you, a curse on the pack.
+   *
+   * Rarely, and for a `potion_dur: -1` toggle never.
+   */
+  | "upkeep"
+  /**
+   * A toggle that deals damage while it is up: the pack's four damaging auras.
+   *
+   * Free like any other toggle — one press a map, no cooldown the pass waits on — but unlike a
+   * buff it is *also* a damage source, and one that runs on its own timing. Holy Fire pulses
+   * every 10 ticks whatever you are doing with your hands, so its contribution is added to the
+   * rotation as a rate rather than as damage per press.
+   */
+  | "aura";
 
 export type FullDpsSkill = {
   skill: SkillSetup;
@@ -514,10 +569,19 @@ export type FullDpsSkill = {
   /**
    * Upkeep only: seconds between presses. `Infinity` for a toggle you press once.
    *
-   * `max(buff duration, the spell's own cycle)` — you re-press when it falls off, and no faster
-   * than the cooldown lets you.
+   * `max(effect duration, the spell's own cycle)` — you re-press when it falls off, and no
+   * faster than the cooldown lets you.
    */
   upkeepSeconds?: number;
+  /** Which side the effect that set the period sits on: your sheet, or the pack's. */
+  upkeepHolder?: "caster" | "target";
+  /**
+   * What this skill deals per second on a clock the rotation does not set.
+   *
+   * An aura's pulses. Added to the pass as a rate rather than as damage per press, and therefore
+   * the one term here that does not change when you tick a second skill in beside it.
+   */
+  auraDps?: number;
   /**
    * Upkeep only: how long one press actually lasts, before the cooldown is considered.
    *
@@ -536,9 +600,22 @@ export type FullDpsResult = {
   skills: FullDpsSkill[];
   /** Seconds for one pass through every ticked skill, global cooldowns included. */
   rotationSeconds: number;
-  /** Damage one pass puts on the target, from the casts themselves. */
+  /**
+   * Damage one pass puts on the target, from the casts themselves.
+   *
+   * Aura pulses are deliberately not in it: they are not produced by a press, so there is no
+   * "per pass" figure for them that a longer pass would not inflate. They are in
+   * {@link auraDps} and in {@link skillDps}.
+   */
   damagePerRotation: number;
-  /** `damagePerRotation / rotationSeconds` — the casts alone, without what they set off. */
+  /**
+   * What the auras you are running deal per second, on their own fixed timing.
+   *
+   * Part of {@link skillDps}, and the one term of it a rotation's length does not move: Holy
+   * Fire pulses twice a second whether you are pressing one button or four.
+   */
+  auraDps: number;
+  /** `damagePerRotation / rotationSeconds + auraDps` — the casts alone, without what they set off. */
   skillDps: number;
   /**
    * Every proc the whole rotation fires, merged across the skills that trigger it.
@@ -918,6 +995,16 @@ export function simulateDps(
   const persistentPerCast = sources
     .filter((s) => s.persistent)
     .reduce((sum, s) => sum + s.damagePerCast * s.sustained, 0);
+  // What a permanent aura contributed, kept separately for the one caller that must not pace it
+  // by this skill's cycle. See `DpsResult.auraDamagePerCast`.
+  const auraSourceResults = sources.filter(
+    (s) => s.source.carrier.kind === "effect" && s.source.carrier.permanent,
+  );
+  const auraPerCast = auraSourceResults.reduce((sum, s) => sum + s.damagePerCast * s.sustained, 0);
+  const auraCritPerCast = auraSourceResults.reduce(
+    (sum, s) => sum + s.critDamagePerCast * s.sustained,
+    0,
+  );
 
   const perSecond = (total: number): number =>
     rate.cycleSeconds > 0 ? (total * rate.castsPerCycle) / rate.cycleSeconds : 0;
@@ -1325,7 +1412,7 @@ export function simulateDps(
   // The spell sheet, deliberately: `ExileEffectAction` attaches the casting spell to the event,
   // so the duration is resolved off the per-spell unit and a linked Effect Duration gem reaches
   // it. See `effect-duration.ts`, which has the two lines of 6.4.13 that say so.
-  const buff = buffDurationOf({
+  const durationInput = {
     snapshot,
     index,
     layers,
@@ -1339,7 +1426,12 @@ export function simulateDps(
     config: build.config ?? {},
     effects,
     diagnostics,
-  });
+  };
+  const buff = buffDurationOf(durationInput, "caster");
+  // The same sweep on the target side. `increase_effect_duration_ticks_num` is a Source-side
+  // stat — your own duration gear lengthens a curse you cast exactly as it lengthens a buff you
+  // cast — so the only thing that changes is which grants are read.
+  const debuff = buffDurationOf(durationInput, "target");
 
   return {
     spellId: skill.spellId,
@@ -1370,6 +1462,10 @@ export function simulateDps(
     ...(reachDistance === undefined ? {} : { reachDistance }),
     damagePerCast,
     critDamagePerCast,
+    auraDamagePerCast: auraPerCast,
+    auraCritDamagePerCast: auraCritPerCast,
+    auraDps: perSecond(auraPerCast),
+    auraCritDps: perSecond(auraCritPerCast),
     dps: perSecond(sustainedPerCast),
     critDps: perSecond(sustainedCritPerCast),
     ...(combo === undefined ? {} : { combo }),
@@ -1395,6 +1491,7 @@ export function simulateDps(
       ? hit.average.ailments.reduce((sum, a) => sum + procPool(a, castsPerSecond), 0)
       : 0,
     ...(buff === undefined ? {} : { buff }),
+    ...(debuff === undefined ? {} : { debuff }),
     requires: [...requires],
     ...(selfDamage === undefined ? {} : { selfDamage }),
     diagnostics: [...hit.diagnostics, ...diagnostics],
@@ -1402,28 +1499,36 @@ export function simulateDps(
 }
 
 /**
- * {@link BuffDuration} for one cast, or undefined when the press buffs nobody.
+ * {@link BuffDuration} for one cast, or undefined when the press puts nothing on that side.
  *
- * `casterBuffUpkeep` picks the effect — the longest-lived of the ones the press puts on you,
- * which is the one whose expiry makes you press the button again — and this resolves what the
- * pack declared for it against the sheet that will actually be carrying it.
+ * `casterBuffUpkeep` and `targetDebuffUpkeep` pick the effect — the longest-lived of the ones
+ * the press applies, which is the one whose expiry makes you press the button again — and this
+ * resolves what the pack declared for it against the sheet that will actually be carrying it.
+ *
+ * Both sides read the same sweep because the stat that lengthens an effect is Source-side: your
+ * duration gear extends a curse you put on a mob exactly as it extends a stance you put on
+ * yourself. `holder` decides which grants are looked at and nothing else.
  */
-function buffDurationOf(input: {
-  snapshot: Snapshot;
-  index: StatIndex;
-  layers: LayerIndex;
-  balance: Balance;
-  compat: Compat;
-  sheet: Sheet;
-  spell: Record<string, unknown>;
-  spellId: string;
-  spellTags: ReadonlySet<string>;
-  characterLevel: number;
-  config: BuildConfig;
-  effects: EffectState;
-  diagnostics: Diagnostic[];
-}): BuffDuration | undefined {
-  const upkeep = casterBuffUpkeep(input.spell);
+function buffDurationOf(
+  input: {
+    snapshot: Snapshot;
+    index: StatIndex;
+    layers: LayerIndex;
+    balance: Balance;
+    compat: Compat;
+    sheet: Sheet;
+    spell: Record<string, unknown>;
+    spellId: string;
+    spellTags: ReadonlySet<string>;
+    characterLevel: number;
+    config: BuildConfig;
+    effects: EffectState;
+    diagnostics: Diagnostic[];
+  },
+  holder: "caster" | "target",
+): BuffDuration | undefined {
+  const upkeep =
+    holder === "caster" ? casterBuffUpkeep(input.spell) : targetDebuffUpkeep(input.spell);
   if (upkeep === undefined) return undefined;
 
   if (!Number.isFinite(upkeep.durationTicks)) {
@@ -1675,6 +1780,7 @@ export function simulateFullDps(
     skills: [],
     rotationSeconds: 0,
     damagePerRotation: 0,
+    auraDps: 0,
     skillDps: 0,
     procs: [],
     procDps: 0,
@@ -1730,10 +1836,11 @@ export function simulateFullDps(
       // Filled in below: it is a share of a pass length that is not known yet.
       rotationSeconds: 0,
       pressSeconds,
-      role: "upkeep",
+      role: buff.role,
       upkeepSeconds: buff.seconds,
       upkeepDurationSeconds: buff.durationSeconds,
       upkeepEffectId: buff.effectId,
+      upkeepHolder: buff.holder,
     });
 
     // A buff whose cooldown outlasts its own effect cannot be kept up, and the sheet under this
@@ -1756,19 +1863,25 @@ export function simulateFullDps(
   if (entries.length === 0) return empty([]);
 
   const rotation = entries.filter((e) => e.role === "rotation");
+  // An aura is charged nothing and waits for nothing, so it never appears in the solve below —
+  // its whole contribution is the rate it pulses at, added at the end.
   const upkeep = entries.filter((e) => e.role === "upkeep");
 
   // Nothing but buffs is a legal thing to tick and a meaningless rotation, so it degrades to the
   // plain reading -- you press them one after another -- rather than dividing by zero.
   const buffsOnly = rotation.length === 0;
   if (buffsOnly) {
+    const auraOnly = entries.every((e) => e.role === "aura");
     diagnostics.push({
       severity: "info",
       code: "full-dps-buffs-only",
       path: "skills",
-      message:
-        "Every skill ticked into Full DPS is a buff, so the rotation is the presses themselves. " +
-        "Tick the skill you actually attack with to see what those buffs are worth.",
+      message: auraOnly
+        ? "Every skill ticked into Full DPS is an aura, so the figure is what they pulse for on " +
+          "their own — no button is being pressed. Tick the skill you actually attack with to " +
+          "see the rotation."
+        : "Every skill ticked into Full DPS is a buff, so the rotation is the presses themselves. " +
+          "Tick the skill you actually attack with to see what those buffs are worth.",
     });
   }
 
@@ -1799,25 +1912,41 @@ export function simulateFullDps(
   }
   const rotationSeconds = base / (1 - Math.min(upkeepShare, 0.95));
 
-  // Now the pass length is known, each upkeep buff gets its share of it.
+  // Now the pass length is known, each upkeep press gets its share of it. An aura's period is
+  // `Infinity`, so it gets none — which is the whole of "a toggle costs the rotation nothing".
   for (const entry of entries) {
-    if (entry.role !== "upkeep") continue;
-    const presses = buffsOnly ? 1 : rotationSeconds / (entry.upkeepSeconds ?? Infinity);
+    // What the aura this button holds pulses for, on every entry that holds one rather than only
+    // on the ones whose tag made them a toggle.
+    if (entry.result.auraDps > 0) entry.auraDps = entry.result.auraDps;
+    if (entry.role === "rotation") continue;
+    const presses =
+      buffsOnly && entry.role !== "aura" ? 1 : rotationSeconds / (entry.upkeepSeconds ?? Infinity);
     entry.pressesPerRotation = presses;
     entry.rotationSeconds = entry.pressSeconds * presses;
   }
 
   const pressesOf = (entry: Entry): number =>
-    entry.role === "upkeep" ? (entry.pressesPerRotation ?? 0) : 1;
+    entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+
+  // The aura share comes out of every per-press figure and goes back in as a rate. A permanent
+  // carrier was counted over *its own* skill's cycle so that the division would cancel; a pass
+  // through four buttons has a different length, and leaving the term in would have scaled Holy
+  // Fire by the ratio between the two.
+  const castDamage = (e: Entry): number => e.result.damagePerCast - e.result.auraDamagePerCast;
+  const castCritDamage = (e: Entry): number =>
+    e.result.critDamagePerCast - e.result.auraCritDamagePerCast;
 
   const damagePerRotation = entries.reduce(
-    (sum, e) => sum + e.result.damagePerCast * e.result.rate.castsPerCycle * pressesOf(e),
+    (sum, e) => sum + castDamage(e) * e.result.rate.castsPerCycle * pressesOf(e),
     0,
   );
   const critPerRotation = entries.reduce(
-    (sum, e) => sum + e.result.critDamagePerCast * e.result.rate.castsPerCycle * pressesOf(e),
+    (sum, e) => sum + castCritDamage(e) * e.result.rate.castsPerCycle * pressesOf(e),
     0,
   );
+  // Every aura the pass holds, whatever role its button ended up in.
+  const auraPerSecond = entries.reduce((sum, e) => sum + e.result.auraDps, 0);
+  const auraCritPerSecond = entries.reduce((sum, e) => sum + e.result.auraCritDps, 0);
   const packSize = Math.max(1, options.packSize ?? build.config?.packSize ?? 1);
 
   if (base > sequential) {
@@ -1839,71 +1968,116 @@ export function simulateFullDps(
   const procs = rotationProcs(
     entries.map((e) => ({
       procs: e.result.procs,
-      cycleSeconds: e.result.rate.cycleSeconds,
-      presses: pressesOf(e),
+      // An aura lands its hits whether or not you press anything, so it contributes triggers for
+      // the whole length of the pass rather than for a press it never makes. `triggersPerSecond`
+      // is already a real rate for it — two Holy Fire pulses a second, not two per cast — so the
+      // pass length is what it multiplies by. Zeroing it with the presses is how a Holy Fire
+      // build's procs would have disappeared the moment the aura stopped being a rotation step.
+      cycleSeconds: e.role === "aura" ? rotationSeconds : e.result.rate.cycleSeconds,
+      presses: e.role === "aura" ? 1 : pressesOf(e),
     })),
     rotationSeconds,
   );
   const procsPerSecond = procDps(procs);
-  const skillDps = rotationSeconds > 0 ? damagePerRotation / rotationSeconds : 0;
+  const skillDps =
+    (rotationSeconds > 0 ? damagePerRotation / rotationSeconds : 0) + auraPerSecond;
+
+  // An aura's ailments are on the aura's clock too: Holy Fire ignites at two pulses a second for
+  // as long as it is up, and weighting that by presses-per-pass — zero, for a toggle — dropped
+  // the whole burning half of a Holy Fire build.
+  const ailmentWeight = (e: Entry): number => (e.role === "aura" ? 1 : pressesOf(e));
 
   return {
     skills: entries,
     rotationSeconds,
     damagePerRotation,
+    auraDps: auraPerSecond,
     skillDps,
     procs,
     procDps: procsPerSecond,
     dps: skillDps + procsPerSecond,
-    critDps: rotationSeconds > 0 ? critPerRotation / rotationSeconds : 0,
+    critDps:
+      (rotationSeconds > 0 ? critPerRotation / rotationSeconds : 0) + auraCritPerSecond,
     packDps: (skillDps + procsPerSecond) * packSize,
     // Ailments run on their own clock and do not queue behind a cast, so they add rather than
     // divide.
-    ailmentDps: entries.reduce((sum, e) => sum + e.result.ailmentDps * pressesOf(e), 0),
-    ailmentProcDps: entries.reduce((sum, e) => sum + e.result.ailmentProcDps * pressesOf(e), 0),
+    ailmentDps: entries.reduce((sum, e) => sum + e.result.ailmentDps * ailmentWeight(e), 0),
+    ailmentProcDps: entries.reduce((sum, e) => sum + e.result.ailmentProcDps * ailmentWeight(e), 0),
     diagnostics: [...diagnostics, ...entries.flatMap((e) => e.result.diagnostics)],
   };
 }
 
 /**
- * Whether a ticked skill is a buff you keep up rather than a step you press, and how often.
+ * Whether a ticked skill is something you keep up rather than a step you press, and how often.
  *
- * Three questions, all answered from the pack's own declarations:
+ * Everything here is answered from the pack's own declarations, in three questions:
  *
- *   - **is it a buff** -- `config.tags` says so. 79 spells carry the tag, and it is the authored
- *     intent, which beats inferring one from an empty source list;
- *   - **does it do anything to the target** -- 75 of those 79 declare no `damage` act at all, and
- *     the four that do (`power_surge`, `mirror_image`, `eighth_gate`,
- *     `banner_of_the_frozen_guard`) are tagged `damage` as well and are pressed for it. A buff
- *     that hits stays a rotation step;
- *   - **how long does one press last** -- {@link DpsResult.buff}, the longest-lived effect the
- *     press puts on you, already scaled by the build's `eff_dur_u_cast` stats.
+ *   - **is it an aura** -- `config.tags` says so, for thirteen spells. An aura is a toggle by
+ *     construction: `holy_fire`'s `on_cast` is a pair of branches gated on whether you already
+ *     hold the effect, so pressing the button a second time turns it *off*. It is never a
+ *     rotation step, and the four that deal damage are no exception -- the damage is the
+ *     effect's own component group ticking on its own `tick_rate`, not something the press
+ *     produces. The pass is charged nothing for it and waits on nothing for it.
+ *   - **is it pressed for a duration** -- a skill that puts no damage on the target is pressed
+ *     for what it applies and nothing else: a buff on you, a curse on the pack, a banner on the
+ *     ground. `cooldown_ticks` says how soon you *may* press it again; the effect's own duration
+ *     says how soon you *have to*, and on `curse_of_damnation` those are 3s and 10s. Measured
+ *     rather than declared, because a `damage` act that reaches nothing where the target stands
+ *     is not a reason to press a button;
+ *   - **how long does one press last** -- {@link DpsResult.buff} or {@link DpsResult.debuff},
+ *     the longest-lived effect the press applies on that side, already scaled by the build's
+ *     `eff_dur_u_cast` stats. The caster side is preferred when a press does both, because a
+ *     buff you drop is a buff you notice; the debuff is what paces a pure curse.
  *
  * The period is `max(duration, the spell's own cycle)`: you re-press when it falls off, and no
  * faster than the cooldown allows. Both halves of that `max` move with the gems now — duration
  * with Effect Duration, the cycle with Cooldown — which is what makes either one worth linking
- * to a buff at all.
+ * to one of these at all.
  */
-function upkeepOf(
-  result: DpsResult,
-): { seconds: number; durationSeconds: number; effectId: string } | undefined {
-  if (!result.declared.tags.includes("buff")) return undefined;
-  // What it puts on the target is what makes it a step. Measured rather than declared, because a
-  // `damage` act that reaches nothing where the target stands is not a reason to press it.
-  if (result.damagePerCast > 0) return undefined;
+function upkeepOf(result: DpsResult):
+  | {
+      role: Exclude<FullDpsRole, "rotation">;
+      seconds: number;
+      durationSeconds: number;
+      effectId: string;
+      holder: "caster" | "target";
+    }
+  | undefined {
+  const aura = result.declared.tags.includes("aura");
+  // A toggle that hits is still a toggle. Everything else earns its way out of the rotation by
+  // putting nothing on the target.
+  if (!aura && result.damagePerCast > 0) return undefined;
 
-  // `result.buff` rather than a second walk of the spell: it is the same `casterBuffUpkeep`
-  // answer with the `eff_dur_u_cast` sweep already applied, and the rotation has to be paced by
-  // the duration the build really gets. Re-deriving it here is how the Effect Duration support
-  // gem would have gone on doing nothing to the pass length.
-  const buff = result.buff;
-  if (buff === undefined) return undefined;
+  // `result.buff` / `result.debuff` rather than a second walk of the spell: they are the same
+  // upkeep answers with the `eff_dur_u_cast` sweep already applied, and the rotation has to be
+  // paced by the duration the build really gets. Re-deriving it here is how the Effect Duration
+  // support gem would have gone on doing nothing to the pass length.
+  const held = result.buff;
+  const applied = result.debuff;
+  const chosen = held ?? applied;
+  if (chosen === undefined) {
+    // An aura with nothing to pace it is still free: it is up, and the pass does not wait for
+    // it. Anything else with no effect to expire is a button you are pressing for no stated
+    // reason, so it stays a rotation step and the pass is charged for it.
+    if (!aura) return undefined;
+    return {
+      role: "aura",
+      seconds: Number.POSITIVE_INFINITY,
+      durationSeconds: Number.POSITIVE_INFINITY,
+      effectId: result.spellId,
+      holder: "caster",
+    };
+  }
 
-  const durationSeconds = buff.durationSeconds;
+  const durationSeconds = chosen.durationSeconds;
   return {
+    role: aura ? "aura" : "upkeep",
+    // Every aura in this pack is `potion_dur: -1` and comes out of this as `Infinity`; the max
+    // is written the same way for both sides so that one which is not would still be charged.
     seconds: Math.max(durationSeconds, result.rate.cycleSeconds),
     durationSeconds,
-    effectId: buff.effectId,
+    effectId: chosen.effectId,
+    holder: held !== undefined ? "caster" : "target",
   };
 }
 

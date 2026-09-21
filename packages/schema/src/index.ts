@@ -18,6 +18,7 @@ export type {
   BuildConfig,
   BuildDoc,
   BuildMeta,
+  BuildStage,
   EffectSetup,
   EnemySetup,
   FoodBuffSetup,
@@ -33,6 +34,25 @@ export type {
   TreeCoord,
   TreeKey,
 } from "./build-doc.js";
+
+export {
+  DEFAULT_STAGE_NAME,
+  IMPLICIT_STAGE_ID,
+  activeStage,
+  addStage,
+  applyStage,
+  ensureStages,
+  mainStage,
+  normalizeStages,
+  removeStage,
+  renameStage,
+  setMainStage,
+  stageContent,
+  stageDoc,
+  stageList,
+  syncStages,
+} from "./stages.js";
+export type { StageContent } from "./stages.js";
 
 export {
   TARGET_PRESETS,
@@ -82,7 +102,12 @@ export {
   isKnownReqType,
   JEWEL_STYLES,
   jewelAffixesFor,
+  jewelCorruptionAffixes,
   jewelTags,
+  MAX_EYE_AURA_STATS,
+  MAX_JEWEL_CORRUPTIONS,
+  watcherEyeAffixes,
+  WATCHER_EYE_UNIQUE,
   maxBonusSpellLevels,
   maxLevel,
   maxOfOneAffixType,
@@ -108,6 +133,7 @@ export {
   allUniques,
   coreStatIds,
   enchantCompats,
+  attributeName,
   enchantName,
   isTwoHanded,
   maxQuality,
@@ -216,6 +242,7 @@ export {
   runewordName,
   itemSetName,
   mobAffixName,
+  omenName,
   slotName,
   spellDesc,
   spellName,
@@ -226,8 +253,10 @@ export {
   statName,
   statNameRaw,
   stripFormatting,
+  stripGlossaryMarkup,
   supportGemName,
   text,
+  underAugmentLabel,
   uniqueName,
 } from "./display.js";
 export type { SheetGroup, Span, StatDisplay } from "./display.js";

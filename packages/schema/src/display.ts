@@ -60,6 +60,8 @@ export const LANG_KEY = {
   mobAffix: (id: string) => `mmorpg.mob_affix.${id}`,
   /** `ItemSet.locNameLangFileGUID()` — `SlashRef.MODID + ".item_set." + id`. */
   itemSet: (id: string) => `mmorpg.item_set.${id}`,
+  /** An omen — "Codex" in this pack's wording. `mmorpg.omen.blood` is "Codex of Blood". */
+  omen: (id: string) => `mmorpg.omen.${id}`,
   /** `GemItem.GemType`, the colour half of a gem's name. */
   gemType: (id: string) => `mmorpg.gem_type.${id}`,
   /** `GemItem.GemRank`, the quality half — keyed by the rank's lowercased display name. */
@@ -374,6 +376,35 @@ export function auraName(snapshot: Snapshot, id: string): string {
   return named(snapshot, LANG_KEY.aura(id), id);
 }
 
+/**
+ * The heading an Abyssal Eye's conditional lines sit under — "While Under Effect of Armor
+ * Augment".
+ *
+ * The game's own heading rather than a phrasing invented here.
+ * `StatsWhileUnderAuraData.getTooltip` prints one of these per aura stat, then that line's stats
+ * under it:
+ *
+ *     list.add(Words.WHILE_UNDER_AURA.locName(getAura().locName()
+ *         .withStyle(ChatFormatting.LIGHT_PURPLE)).withStyle(ChatFormatting.GOLD));
+ *
+ * — read out of `Mine_and_Slash-1.20.1-6.4.13.jar`. `Words.WHILE_UNDER_AURA` is
+ * `mmorpg.word.while_under_aura`, which Craft to Exile 2 ships as `"While Under Effect of
+ * %1$s:"`, and the Augment's own name fills it. Naming the Augment is the whole content of the
+ * record: which one gates a line is a property of the affix (`Affix.eye_aura_req`), and an eye
+ * carries two or three lines waiting on two or three different Augments.
+ *
+ * The trailing colon is dropped, because every caller punctuates its own headings.
+ */
+export function underAugmentLabel(snapshot: Snapshot, auraId: string): string {
+  const template =
+    text(snapshot, LANG_KEY.word("while_under_aura")) ?? "While Under Effect of %1$s:";
+  const name = auraName(snapshot, auraId);
+  return stripFormatting(template)
+    .replace(/%\d+\$s/g, () => name)
+    .replace(/:\s*$/, "")
+    .trim();
+}
+
 export function exileEffectName(snapshot: Snapshot, id: string): string {
   return named(snapshot, LANG_KEY.exileEffect(id), id);
 }
@@ -385,6 +416,17 @@ export function runewordName(snapshot: Snapshot, id: string): string {
 /** A gear set's display name — "Oath of Mahj" for `oath_of_mahj`. */
 export function itemSetName(snapshot: Snapshot, id: string): string {
   return named(snapshot, LANG_KEY.itemSet(id), id);
+}
+
+/**
+ * An omen's display name — "Codex of Waves" for `waves`.
+ *
+ * An omen's stats enter the container as `StatCtxType.MISC`, so a breakdown row for one has
+ * nothing but the source id to go on and every screen that wanted the name had to build the
+ * key itself. One helper, alongside the other categories'.
+ */
+export function omenName(snapshot: Snapshot, id: string): string {
+  return named(snapshot, LANG_KEY.omen(id), id);
 }
 
 /** A mob affix's display name — "of Flames" for `fire_mob_affix`. */

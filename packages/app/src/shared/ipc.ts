@@ -76,6 +76,15 @@ export type SnapshotPayload = {
    * they are resolved out of other mods' item models, so an id is all a caller has.
    */
   itemIcons: Record<string, string>;
+  /**
+   * `index.json`'s `version`, or 0 when there is no index or it could not be read.
+   *
+   * The snapshot and the textures are written by two separate extractor flags and go out of
+   * step routinely. A texture the index does not hold degrades to a generic icon, which looks
+   * exactly like one the pack genuinely ships none of — so the version is carried rather than
+   * left to be inferred from a missing key.
+   */
+  assetIndexVersion: number;
 };
 
 /**

@@ -21,7 +21,7 @@
  * under it.
  */
 
-import { spellName, statLayerName, statName, type ElementName } from "@cte2/schema";
+import { spellName, statName, type ElementName } from "@cte2/schema";
 import type { ReactNode } from "react";
 
 import { damageRates } from "../../state/compare.js";
@@ -30,7 +30,7 @@ import { useWorld } from "../../state/snapshot.js";
 import { num, smart } from "../../ui/format.js";
 import { elementLabel } from "../../ui/palette.js";
 import { StepRow } from "../../ui/StepRow.js";
-import { formatStep } from "../../ui/trace-format.js";
+import { formatStep, layerLabel } from "../../ui/trace-format.js";
 import { StatBreakdown } from "./StatBreakdown.js";
 
 /**
@@ -901,7 +901,7 @@ function HitTrace({ derived }: { derived: DerivedBuild }): ReactNode {
             label={
               <>
                 <span className="faint">[{step.side}] </span>
-                {statLayerName(snapshot, step.layerId)}
+                {layerLabel(snapshot, step, trace.element)}
               </>
             }
             value={formatStep(step)}

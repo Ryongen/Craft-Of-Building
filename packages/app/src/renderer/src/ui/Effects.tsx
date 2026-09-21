@@ -22,6 +22,7 @@ import { useBuild } from "../state/build-store.js";
 import { useWorld } from "../state/snapshot.js";
 import { NumberField } from "./fields.js";
 import { Picker, type PickerOption } from "./Picker.js";
+import { useEffectProvenance } from "./Provenance.js";
 
 /**
  * What an effect nobody mentioned is assumed to be.
@@ -146,6 +147,16 @@ export function EffectToggle({
 }): ReactNode {
   const world = useWorld();
   const on = option.stacks > 0;
+  /*
+    What the buff actually grants, as a card rather than as a line of the `title` string.
+
+    The toggle said which effects were assumed up and never what any of them did, so "is Frenzy
+    Charge worth assuming" meant leaving the tab. The card is the same one the damage trace
+    raises on a `Buffs & effects` row, priced at this option's own roll and stacks — which is
+    the point of sharing it: the toggle and the trace cannot end up describing the buff
+    differently.
+  */
+  const where = useEffectProvenance(option.id);
 
   const grants = option.grantedBy
     .map((g) =>
@@ -232,7 +243,10 @@ export function EffectToggle({
           checked={on}
           onChange={(event) => onChange(option.id, event.target.checked ? true : false)}
         />
-        <span className="text-sm">{option.id}</span>
+        <span className="text-sm has-source" {...where.props}>
+          {option.id}
+          {where.node}
+        </span>
       </label>
       {on && option.maxStacks > 1 && (
         <NumberField

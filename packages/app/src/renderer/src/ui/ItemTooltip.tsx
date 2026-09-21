@@ -36,8 +36,6 @@
 
 import type { Item, Jewel } from "@cte2/schema";
 import {
-  affix,
-  auraName,
   gearTypeName,
   isAuraEnabled,
   itemName,
@@ -45,9 +43,11 @@ import {
   jewelName,
   statName,
   uniqueName,
+  WATCHER_EYE_UNIQUE,
 } from "@cte2/schema";
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useMemo, type ReactNode } from "react";
+
+import { floatingStyle, useHoverCard, type At } from "./HoverCard.js";
 
 import { checkRequirements } from "@cte2/engine";
 import { useBuild } from "../state/build-store.js";
@@ -64,16 +64,17 @@ import { itemSections, jewelSections, type ItemSection, type StatLine } from "./
  */
 const CARD = { width: 320, height: 350 };
 
-type At = { x: number; y: number };
-
 /**
  * Split a resolved stat line into its numbers and its words.
  *
  * The engine hands back `"+40 Armor"` as one string and the game colours the halves differently —
  * the value green, the stat white — so the line is cut on the run that looks like a number. Done
  * here rather than by the callers because every section prints lines and they must colour alike.
+ *
+ * Exported for the skill and gem cards, which print the same kind of line off the same
+ * `totalLines` and would otherwise have to decide for themselves where a number ends.
  */
-function renderFormattedStatLine(line: string): ReactNode {
+export function renderFormattedStatLine(line: string): ReactNode {
   const parts: string[] = line.split(/([\+\-]?\d+(?:\.\d+)?%?\w?)/g);
 
   return parts.map((part: string, index: number) => {
@@ -87,46 +88,9 @@ function renderFormattedStatLine(line: string): ReactNode {
 }
 
 export function useItemTooltip(item: Item | undefined) {
-  const [at, setAt] = useState<At | null>(null);
-
-  const track = useCallback((event: React.MouseEvent) => {
-    setAt({ x: event.clientX, y: event.clientY });
-  }, []);
-  const clear = useCallback(() => setAt(null), []);
-
-  return {
-    props: { onMouseEnter: track, onMouseMove: track, onMouseLeave: clear },
-    /**
-     * Take the card down without the pointer having left.
-     *
-     * `onMouseLeave` is the normal way out and it does not fire when the element carrying these
-     * handlers is *unmounted* under the cursor — which is exactly what a paperdoll row does when
-     * it swaps itself for its slot list. The card then hung around over the list, pinned to a
-     * position the pointer had long since moved on from.
-     */
-    clear,
-    node:
-      at === null || item === undefined
-        ? null
-        : createPortal(<ItemWindow item={item} floating at={at} />, document.body),
-  };
-}
-
-/**
- * Where to put a floating card, given the pointer.
- *
- * Flipped towards the inside of the window when it would otherwise run off the right or the
- * bottom edge, because a tooltip half off the screen is one you have to move the mouse to read.
- */
-function floatingStyle(at: At): CSSProperties {
-  const flipX = at.x > window.innerWidth - CARD.width - 24;
-  const flipY = at.y > window.innerHeight - CARD.height;
-  return {
-    left: flipX ? undefined : at.x + 16,
-    right: flipX ? window.innerWidth - at.x + 16 : undefined,
-    top: flipY ? undefined : at.y + 16,
-    bottom: flipY ? window.innerHeight - at.y + 16 : undefined,
-  };
+  return useHoverCard(
+    item === undefined ? undefined : (at: At) => <ItemWindow item={item} floating at={at} />,
+  );
 }
 
 /**
@@ -185,7 +149,7 @@ export function ItemWindow({
   return (
     <div
       className={`item-window ${rarityClass}${floating ? " floating" : ""}`}
-      style={floating && at !== undefined ? floatingStyle(at) : undefined}
+      style={floating && at !== undefined ? floatingStyle(at, CARD) : undefined}
     >
       {/* 1. Header */}
       <div className="tt-header">
@@ -228,7 +192,7 @@ export function ItemWindow({
       {/* 3. Stat Categories */}
       <div className="tt-section tt-stats">
         {sections.map((section) => (
-          <CategoryGroup key={section.kind} section={section} />
+          <CategoryGroup key={section.id} section={section} />
         ))}
       </div>
 
@@ -273,13 +237,22 @@ export function ItemWindow({
  * Shared by both cards rather than closed over inside one of them, because a jewel's sections
  * and an item's are the same thing printed the same way — the only difference is which list
  * produced them.
+ *
+ * A `dormant` section is an Abyssal Eye's lines for an Augment the build is not running. They
+ * are dimmed and the heading says so, because the alternative — leaving them out — is a card
+ * that goes quiet about the part of the jewel the reader is deciding about.
  */
 function CategoryGroup({ section }: { section: ItemSection }): ReactNode {
   if (section.lines.length === 0) return null;
 
   return (
-    <div className="tt-category-group">
-      <div className={`tt-category-title ${section.kind}`}>{section.label}:</div>
+    <div className={`tt-category-group${section.dormant === true ? " dormant" : ""}`}>
+      <div className={`tt-category-title ${section.kind}`}>
+        {section.label}:
+        {section.dormant === true && (
+          <div className="tt-dormant">not socketed — granting nothing</div>
+        )}
+      </div>
       {section.lines.map((line: StatLine, i: number) => (
         // `worse` rather than "negative": the game colours a line by `minus_is_good`, so −15
         // Mana Cost stays green and −40% Attack Speed does not. `totalLines` has already
@@ -295,26 +268,14 @@ function CategoryGroup({ section }: { section: ItemSection }): ReactNode {
 /**
  * `useItemTooltip` for a jewel.
  *
- * Its own hook rather than a union on the other one because the two cards take different
- * things and answer to different collectors; sharing the pointer tracking is all that was
- * worth sharing, and that is three lines.
+ * Its own hook rather than a union on the other one, because the two cards take different things
+ * and answer to different collectors. The pointer tracking is all the two ever shared, and it
+ * now lives in `useHoverCard` with every other floating card in the app.
  */
 export function useJewelTooltip(jewel: Jewel | undefined) {
-  const [at, setAt] = useState<At | null>(null);
-
-  const track = useCallback((event: React.MouseEvent) => {
-    setAt({ x: event.clientX, y: event.clientY });
-  }, []);
-  const clear = useCallback(() => setAt(null), []);
-
-  return {
-    props: { onMouseEnter: track, onMouseMove: track, onMouseLeave: clear },
-    clear,
-    node:
-      at === null || jewel === undefined
-        ? null
-        : createPortal(<JewelWindow jewel={jewel} floating at={at} />, document.body),
-  };
+  return useHoverCard(
+    jewel === undefined ? undefined : (at: At) => <JewelWindow jewel={jewel} floating at={at} />,
+  );
 }
 
 /**
@@ -354,9 +315,10 @@ export function JewelWindow({
   const auras = useBuild((s) => s.doc.auras);
 
   /**
-   * The auras the build is actually running, which is what decides whether a Watcher's Eye
+   * The Augments the build is actually running, which is what decides whether an Abyssal Eye
    * line counts. The build's own set rather than "all of them", so the card and the sheet
-   * cannot disagree about a stat that is switched off.
+   * cannot disagree about a stat that is switched off. The dormant lines are still printed —
+   * `jewelSections` marks them rather than dropping them.
    */
   const aurasOn = useMemo(
     () => new Set((auras ?? []).filter(isAuraEnabled).map((aura) => aura.id)),
@@ -368,33 +330,28 @@ export function JewelWindow({
     [snapshot, jewel, level, aurasOn],
   );
 
-  /**
-   * Aura lines the jewel carries that are not currently live.
-   *
-   * They are absent from `sections` by design — the card prints what the sheet counts — but
-   * absent with no explanation reads as a broken Watcher's Eye. Named by their aura, so the
-   * reader knows which switch turns them back on.
-   */
-  const dormant = useMemo(() => {
-    const names = new Set<string>();
-    for (const line of jewel.auraStats ?? []) {
-      const required = affix(snapshot, line.affixId)?.eyeAuraReq ?? "";
-      if (required.length > 0 && !aurasOn.has(required)) names.add(auraName(snapshot, required));
-    }
-    return [...names].sort();
-  }, [snapshot, jewel, aurasOn]);
-
   const name = jewelName(snapshot, jewel);
-  // The unique is in the subtitle, not the title, because `JewelItemData.getItem()` does not
-  // consult it — a Watcher's Eye crafted onto a Viridian Jewel is still called a Viridian
-  // Jewel in game, and the tooltip is where the unique is named.
-  const unique = jewel.unique === undefined ? null : uniqueName(snapshot, jewel.unique.id);
+  /*
+   * The unique is in the subtitle, not the title, because `JewelItemData.getItem()` does not
+   * consult it — a crafted unique on a Viridian Jewel is still called a Viridian Jewel in game,
+   * and the tooltip is where the unique is named.
+   *
+   * `watcher_eye` is the exception and is left out. It is `CraftedUniqueJewelData.WATCHER_EYE`,
+   * a marker rather than an entry — no `mmorpg_unique_gears` record carries that id, so
+   * `uniqueName` had nothing to read and humanised it into a second title, "Watcher Eye",
+   * under the real one. The aura lines already name the item and the headings already name
+   * what it does.
+   */
+  const unique =
+    jewel.unique === undefined || jewel.unique.id === WATCHER_EYE_UNIQUE
+      ? null
+      : uniqueName(snapshot, jewel.unique.id);
   const rarityClass = `rarity-${(jewel.rarity ?? "common").toLowerCase()}`;
 
   return (
     <div
       className={`item-window ${rarityClass}${floating ? " floating" : ""}`}
-      style={floating && at !== undefined ? floatingStyle(at) : undefined}
+      style={floating && at !== undefined ? floatingStyle(at, CARD) : undefined}
     >
       <div className="tt-header">
         <div className="tt-icon-frame">
@@ -414,20 +371,9 @@ export function JewelWindow({
             <span className="stat-text">No stats</span>
           </div>
         ) : (
-          sections.map((section) => <CategoryGroup key={section.kind} section={section} />)
+          sections.map((section) => <CategoryGroup key={section.id} section={section} />)
         )}
       </div>
-
-      {dormant.length > 0 && (
-        <>
-          <div className="tt-divider" />
-          <div className="tt-section tt-dormant">
-            {dormant.map((aura) => (
-              <div key={aura}>Needs {aura} — not running</div>
-            ))}
-          </div>
-        </>
-      )}
 
       <div className="tt-divider" />
 

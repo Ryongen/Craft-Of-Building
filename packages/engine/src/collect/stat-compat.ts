@@ -134,7 +134,12 @@ function enchantResult(
     isStatScaling(e.scaling) ? total * env.balance.multiFor(e.scaling, env.level) : total,
   );
   if (scaled === 0) return null;
-  return { statId: e.statId, type: e.modType, value: scaled };
+  return {
+    statId: e.statId,
+    type: e.modType,
+    value: scaled,
+    from: { kind: "enchantment", id: e.enchantId, via: e.id },
+  };
 }
 
 /**
@@ -331,7 +336,15 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
     );
     if (scaled === 0) continue;
 
-    mods.push({ statId: e.statId, type: e.modType, value: scaled });
+    // Tagged with the attribute rather than left anonymous: the context is one bag called
+    // `stat_compat`, and "which attribute" is the only thing that tells a weapon's
+    // `generic.attack_damage` apart from a meal's `kubejs:magic_shield` on the breakdown.
+    mods.push({
+      statId: e.statId,
+      type: e.modType,
+      value: scaled,
+      from: { kind: "attribute", id: e.attributeId, via: e.id },
+    });
   }
 
   if (attributes !== undefined) reportStaleWeaponAttribute(env, build, attributes);

@@ -729,6 +729,64 @@ export type BuildConfig = {
   inCombatRegenMulti?: number;
 };
 
+/**
+ * One saved stage of a build: the trees, the points and the level they were planned at.
+ *
+ * A build is not one allocation, it is a sequence of them — the tree you run to 20, the one you
+ * respec into at 50, and the two endgame trees you are still arguing with yourself about. Before
+ * this there was one way to keep the earlier ones, which was to save a second file, and a second
+ * file is a second character: change a ring and you have changed it in one of them.
+ *
+ * So a stage holds the part of a build that is **spent**, and nothing else:
+ *
+ *   - the three trees,
+ *   - `statPoints` and `schools`, which are spent out of the same levelling budget and move for
+ *     the same reasons — a level-20 tree next to a level-100 stat allocation is not a stage of
+ *     anything,
+ *   - the `level` all of the above were planned at, which is what makes the point budgets, the
+ *     school row requirements and every level-scaled perk read correctly when it is switched to.
+ *
+ * Gear, jewels, skills, auras, the enemy and the config are **not** here. They belong to the
+ * character and are shared by every stage, which is the entire difference between this and
+ * saving another file: switching stage changes what you spent, never what you are wearing.
+ *
+ * Every field below the id and the name is optional and means "nothing allocated", exactly as
+ * the same field means on {@link BuildDoc} — a brand new stage is a legal empty one.
+ */
+export type BuildStage = {
+  /**
+   * Stable identity, opaque and never shown. Referenced by {@link BuildDoc.activeStage}.
+   *
+   * Not the name: a stage called "Levelling" that gets renamed to "1-20" is the same stage, and
+   * two stages are allowed to be called the same thing by a person who has not finished
+   * thinking yet.
+   */
+  id: string;
+  /** What the player called it — "1-20", "Crit endgame". Free text, theirs to change. */
+  name: string;
+  /**
+   * The one stage that represents this build to anything that can only show one: an exporter, a
+   * build-guide viewer, a thumbnail.
+   *
+   * Separate from {@link BuildDoc.activeStage} on purpose. Opening the levelling tree to check
+   * something must not silently change what a guide publishes, and the endgame tree a build is
+   * *about* is usually not the one being edited at any given moment.
+   *
+   * At most one stage carries it. Absent rather than `false` on the others, so the flag reads as
+   * a mark on one entry rather than a field every entry has an opinion about.
+   */
+  main?: true;
+  /** `character.level` this stage was planned at. */
+  level?: number;
+  talents?: TreeCoord[];
+  ascendancy?: TreeCoord[];
+  atlas?: TreeCoord[];
+  /** `character.statPoints` — see there. */
+  statPoints?: Record<string, number>;
+  /** `character.schools` — see there. */
+  schools?: Record<string, number>;
+};
+
 export type BuildMeta = {
   name?: string;
   createdAt?: string;
@@ -868,6 +926,38 @@ export type BuildDoc = {
     ascendancy?: TreeCoord[];
     atlas?: TreeCoord[];
   };
+  /**
+   * Saved stages of the same character — the levelling tree, the mid-game tree, the two
+   * endgame trees you cannot decide between.
+   *
+   * A stage is **not** a second character. It is the part of a build that is spent rather than
+   * worn: the three trees, the core-stat points, the spell-school allocation, and the level all
+   * four of those were planned at. Gear, jewels, skills, auras and config are the character's
+   * and are shared by every stage, which is what makes switching between two endgame trees a
+   * comparison of the trees rather than of two unrelated documents.
+   *
+   * ## The live document is always one of them
+   *
+   * `tree`, `character.level`, `character.statPoints` and `character.schools` stay exactly what
+   * they have always been: the character as it stands, and the only thing the engine, the
+   * validator and the companion mod's dump ever read. {@link BuildDoc.activeStage} names the
+   * entry in this list that those fields are currently showing, and the app writes them back
+   * into it on every edit. So a document with stages has the active one stored twice, and where
+   * the two ever disagree — a hand edit, a capture written over an older file — **the live
+   * fields win**, because they are what every other reader of this format already believes.
+   *
+   * Absent entirely until someone asks for a second stage. A document with no `stages` is a
+   * character with one unnamed stage, which is what every build authored before this field
+   * existed is, and it must keep meaning exactly that.
+   */
+  stages?: BuildStage[];
+  /**
+   * Which stage the live fields are showing — a {@link BuildStage.id}.
+   *
+   * Ignored where it names nothing, rather than being an error: a document that lost its stage
+   * list to a hand edit is still a perfectly good character.
+   */
+  activeStage?: string;
   /**
    * What the character is **wearing**.
    *

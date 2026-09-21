@@ -37,6 +37,7 @@ import {
   omenBuckets,
   omenIds,
   omenMinLevel,
+  omenName,
   gearTypeName,
   isTwoHanded,
   itemName,
@@ -76,7 +77,7 @@ import { modDetail, modKeywords } from "../../ui/mods.js";
 
 import { ImportDialog } from "./ImportDialog.js";
 import { ItemEditor } from "./ItemEditor.js";
-import { OmenEditor, omenName, omenWord } from "./OmenEditor.js";
+import { OmenEditor, omenWord } from "./OmenEditor.js";
 import { JewelList } from "./JewelList.js";
 
 /**

@@ -20,6 +20,7 @@ export type {
 } from "./calculate.js";
 
 export { balance } from "./balance.js";
+export { levelScalingMulti } from "./balance.js";
 export type { Balance, LevelScaling } from "./balance.js";
 
 export { DEFAULT_STAT_REQ_MULTI, checkRequirements, gearRequirements } from "./requirements.js";
@@ -162,7 +163,9 @@ export type {
   EventTrace,
   LayerContribution,
   LayerStep,
+  MitigationDetail,
   MoreStep,
+  ScaledWrite,
   WriteKind,
 } from "./damage/breakdown.js";
 

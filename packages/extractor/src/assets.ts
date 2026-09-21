@@ -6,12 +6,26 @@
  * inside the mod jar. A planner that renders the talent tree needs those bitmaps, so this is
  * the second half of extraction — same inputs, same merge rule, different payload.
  *
- * ## Scope: `assets/mmorpg/textures/gui` and nothing else
+ * ## Scope: `assets/mmorpg/textures/gui`, plus two item folders
  *
- * Measured against Mine and Slash `1.20.1-6.4.7` plus pack `2.0.2`, that subtree is 1,323 PNGs
- * totalling 0.73 MB in the jar, with 363 overriding files in the pack's `resources.zip`. It
- * covers every icon the registries reference — 810 distinct paths across `stat_icons/`,
+ * Measured against Mine and Slash `1.20.1-6.4.7` plus pack `2.0.2`, the GUI subtree is 1,323
+ * PNGs totalling 0.73 MB in the jar, with 363 overriding files in the pack's `resources.zip`.
+ * It covers every icon the registries reference — 810 distinct paths across `stat_icons/`,
  * `talent_icons/`, `spells/icons/`, `spells/passives/` and `asc_classes/`.
+ *
+ * Two icon sets a planner needs are **not** under `gui/` and were being missed entirely. They
+ * are not GUI textures because in Mine and Slash they are *items*, and the game draws the item:
+ *
+ *   - `textures/item/mob_effects/<id>.png` — an exile effect's icon.
+ *     `ExileEffect.getTexture()` is `SlashRef.id("textures/item/mob_effects/" + GUID() + ".png")`,
+ *     read off the 6.4.13 jar's constant pool rather than the fork. 37 of the pack's 212 effects
+ *     ship one; the rest have no icon of their own in any layer, and a caller has to fall back.
+ *   - `textures/item/skill_gems/{skill,support,aura}/<style>.png` — the three gem items, by
+ *     `PlayStyle` rather than by id. There is no per-gem or per-Augment texture anywhere: every
+ *     Fortify gem in the game is the same green gem, and that is the icon to draw.
+ *
+ * 46 files and 23 KB between them, so the cost of taking the whole of both folders is nothing
+ * against the cost of guessing which ids will exist next patch.
  *
  * Item textures are the second pass, in `item-icons.ts`. Gear bases point at items belonging
  * to other mods (`roe_weapons:bow_3`, `cte_essentials:cloth_0_boots`), so those do mean walking
@@ -35,13 +49,35 @@ import { resolveItemIcons } from "./item-icons.js";
 import type { Install } from "./locate.js";
 import { openArchive, type ResourceArchive } from "./zip.js";
 
-export const ASSET_INDEX_VERSION = 2;
+export const ASSET_INDEX_VERSION = 3;
 
-/** The archive prefix every extracted texture lives under. */
-const GUI_PREFIX = "assets/mmorpg/textures/gui/";
+/**
+ * The archive subtrees copied, and the relative root each is filed under.
+ *
+ * The relative root is what lands on disk and what the index is keyed by, so **an existing one
+ * must never move**: a key that changes spelling is indistinguishable from a texture the pack
+ * dropped, and the app would render `unknown.png` for every icon it used to find. `gui/` keeps
+ * the bare relative path it has always had (`stat_icons/main/accuracy.png`); the two item
+ * folders are filed under `item/`, which no GUI texture can collide with because the jar has no
+ * `textures/gui/item/` at all — checked, not assumed.
+ *
+ * The version above is bumped with this list. An index written before an entry was added is not
+ * wrong about what it holds, it is merely short, and the number is how the app tells "this pack
+ * ships no icon" from "you have not re-extracted since". See the `--assets` note in the CLI.
+ */
+const SUBTREES: readonly { archive: string; relative: string }[] = [
+  { archive: "assets/mmorpg/textures/gui/", relative: "" },
+  { archive: "assets/mmorpg/textures/item/mob_effects/", relative: "item/mob_effects/" },
+  { archive: "assets/mmorpg/textures/item/skill_gems/", relative: "item/skill_gems/" },
+];
 
 /** The namespaced form a registry entry refers to a texture by. */
-const RESOURCE_PREFIX = "mmorpg:textures/gui/";
+const RESOURCE_PREFIX = "mmorpg:textures/";
+
+/** `gui/stat_icons/...` for a GUI texture, `item/mob_effects/...` for an effect icon. */
+function resourceKey(relative: string): string {
+  return RESOURCE_PREFIX + (relative.startsWith("item/") ? relative : `gui/${relative}`);
+}
 
 /**
  * The placeholder Mine and Slash ships for exactly this case.
@@ -123,8 +159,8 @@ export function extractAssets(
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, file.bytes);
 
-    assets[RESOURCE_PREFIX + relative] = relative;
-    sources[RESOURCE_PREFIX + relative] = file.source;
+    assets[resourceKey(relative)] = relative;
+    sources[resourceKey(relative)] = file.source;
     bytes += file.bytes.length;
   }
 
@@ -169,11 +205,13 @@ function readInto(
   const archive = openArchive(archivePath);
   let replaced = 0;
   try {
-    for (const name of archive.find(GUI_PREFIX, ".png")) {
-      const relative = name.slice(GUI_PREFIX.length);
-      if (relative.length === 0) continue;
-      if (files.has(relative)) replaced++;
-      files.set(relative, { bytes: archive.read(name), source });
+    for (const subtree of SUBTREES) {
+      for (const name of archive.find(subtree.archive, ".png")) {
+        const relative = subtree.relative + name.slice(subtree.archive.length);
+        if (relative.length === subtree.relative.length) continue;
+        if (files.has(relative)) replaced++;
+        files.set(relative, { bytes: archive.read(name), source });
+      }
     }
   } finally {
     archive.close();

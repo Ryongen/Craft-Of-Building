@@ -22,6 +22,7 @@ import {
   sheetGroupOf,
   sheetGroupRank,
   stripGlossaryMarkup,
+  underAugmentLabel,
   uniqueName,
 } from "./display.js";
 import type { Item } from "./build-doc.js";
@@ -324,6 +325,27 @@ test("a jewel is named by its play style, and aura stats outrank the style", () 
       auraStats: [{ affixId: "chaos_res", rollPercent: 50, itemLevel: 60 }],
     }),
     "Abyssal Eye, Divine Jewel",
+  );
+});
+
+test("an Abyssal Eye's heading names the Augment the line waits on", () => {
+  const snapshot = gearSnapshot();
+  snapshot.lang["mmorpg.word.while_under_aura"] = "While Under Effect of %1$s:";
+  // The pack writes the Augment's name with glossary markup, as it does for every other name.
+  snapshot.lang["mmorpg.aura.armor"] = "[Armor](armour) [Augment](augment)";
+
+  assert.equal(underAugmentLabel(snapshot, "armor"), "While Under Effect of Armor Augment");
+
+  // A translator who words it differently words the card differently — the template is the
+  // pack's, and the trailing colon is the caller's business either way.
+  snapshot.lang["mmorpg.word.while_under_aura"] = "With %1$s running:";
+  assert.equal(underAugmentLabel(snapshot, "armor"), "With Armor Augment running");
+
+  // An unnamed Augment still has to be identifiable: `named` humanises the id rather than
+  // leaving the heading to say "While Under Effect of".
+  assert.equal(
+    underAugmentLabel(snapshot, "magic_shield_reg"),
+    "With Magic Shield Reg running",
   );
 });
 

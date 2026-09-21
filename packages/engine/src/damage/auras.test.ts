@@ -23,9 +23,10 @@ import {
   closeTo,
   engineSnapshot,
   exact,
+  spellEntry,
   valueCalcEntry,
 } from "../test-support.js";
-import { simulateDps } from "./dps.js";
+import { simulateDps, simulateFullDps } from "./dps.js";
 
 /** The aura's own component group: a pulse at the enemy and a pulse at yourself, every 10 ticks. */
 function auraEffect(id: string, selfToo: boolean): Record<string, unknown> {
@@ -138,7 +139,19 @@ function scenario(selfToo = true) {
       pulse_hit: valueCalcEntry("pulse_hit", { min: 100, max: 100 }),
       pulse_self: valueCalcEntry("pulse_self", { min: 40, max: 40 }),
     },
-    mmorpg_spells: { pulse_aura: toggleSpell("pulse_aura", "pulse") },
+    mmorpg_spells: {
+      pulse_aura: toggleSpell("pulse_aura", "pulse"),
+      // A plain attack to put the aura next to. One second a cast, nothing else going on.
+      strike: spellEntry("strike", "Physical", "pulse_hit", {
+        config: {
+          tags: { tags: ["melee"] },
+          use_support_gems_from: "",
+          cooldown_ticks: 0,
+          cast_time_ticks: 0,
+          cast_speed_ticks: 20,
+        },
+      }),
+    },
     mmorpg_exile_effect: { pulse: auraEffect("pulse", selfToo) },
     mmorpg_base_stats: { original_mode_player: baseStats("original_mode_player", [exact("health", "FLAT", 1000)]) },
   });
@@ -214,4 +227,68 @@ test("an aura the build is not running contributes nothing", () => {
     0,
     "an effect that is switched off is not a source",
   );
+});
+
+/**
+ * An aura in a rotation, which is the second half of the same finding.
+ *
+ * `simulateDps` had the aura right and `simulateFullDps` then took it apart. The pass charged it
+ * a cast and stretched itself to its 2s cooldown — a toggle you press once a map, waited on every
+ * time round — and then divided a figure priced over the aura's *own* cycle by the pass's, which
+ * is a different number. Both errors ran the same way: ticking Holy Fire into a rotation made the
+ * rotation read worse.
+ */
+
+const ATTACK = { spellId: "strike", level: 1, main: true, includeInFullDps: true };
+const AURA = { spellId: "pulse_aura", level: 1, includeInFullDps: true };
+
+function rotationBuild(skills: Record<string, unknown>[]): BuildDoc {
+  return { schemaVersion: 1, character: { level: 1 }, skills } as BuildDoc;
+}
+
+test("an aura does not lengthen the rotation, because you do not press it again", () => {
+  const snapshot = scenario(false);
+  const alone = simulateFullDps(rotationBuild([ATTACK]), snapshot);
+  const withAura = simulateFullDps(rotationBuild([ATTACK, AURA]), snapshot);
+
+  // The toggle costs 0.5s to cast and declares a 40-tick cooldown. Charged as a step it both
+  // added that cast to every pass and stretched the pass to 2s, against a 1s attack.
+  closeTo(withAura.rotationSeconds, alone.rotationSeconds);
+
+  const entry = withAura.skills.find((e) => e.skill.spellId === "pulse_aura");
+  assert.ok(entry);
+  assert.equal(entry.role, "aura");
+  assert.equal(entry.upkeepSeconds, Infinity);
+  assert.equal(entry.rotationSeconds, 0, "a toggle costs the pass nothing");
+});
+
+test("an aura's pulses are added at their own rate, not divided by the pass", () => {
+  const snapshot = scenario(false);
+  const single = simulateDps(rotationBuild([AURA, { ...ATTACK, main: false }]), snapshot, {
+    skill: AURA,
+  });
+  assert.ok(single);
+  assert.ok(single.auraDps > 0);
+
+  const withAura = simulateFullDps(rotationBuild([ATTACK, AURA]), snapshot);
+  const alone = simulateFullDps(rotationBuild([ATTACK]), snapshot);
+
+  // The whole point: the aura contributes exactly what it pulses for, whatever else is ticked.
+  closeTo(withAura.auraDps, single.auraDps);
+  closeTo(withAura.skillDps, alone.skillDps + single.auraDps);
+  assert.ok(withAura.dps > alone.dps, "ticking an aura must never lower the figure");
+});
+
+test("an aura's damage is the same whether the pass is short or long", () => {
+  const snapshot = scenario(false);
+  const short = simulateFullDps(rotationBuild([ATTACK, AURA]), snapshot);
+  const long = simulateFullDps(
+    rotationBuild([ATTACK, { ...ATTACK, main: false }, { ...ATTACK, main: false }, AURA]),
+    snapshot,
+  );
+
+  // Three attacks make the pass three times as long. An aura priced per press would have had its
+  // contribution cut to a third; an aura priced per second does not move at all.
+  assert.ok(long.rotationSeconds > short.rotationSeconds * 2);
+  closeTo(long.auraDps, short.auraDps);
 });

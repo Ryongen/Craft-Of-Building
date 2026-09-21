@@ -37,6 +37,7 @@ import {
   omenCountsSlot,
   omenIds,
   omenMinLevel,
+  omenName,
   omenStatPercent,
   slotName,
   statName,
@@ -57,11 +58,6 @@ import { Picker, type PickerOption } from "../../ui/Picker.js";
 /** The pack renames omens to "Codex"; `item.mmorpg.omen` is the key that says so. */
 function omenWord(snapshot: Parameters<typeof text>[0]): string {
   return text(snapshot, "item.mmorpg.omen") ?? "Omen";
-}
-
-/** An omen's display name, e.g. `mmorpg.omen.blood` -> "Codex of Blood". */
-function omenName(snapshot: Parameters<typeof text>[0], id: string): string {
-  return text(snapshot, `mmorpg.omen.${id}`) ?? id;
 }
 
 export function OmenEditor({
@@ -496,4 +492,4 @@ function BucketStats({
   );
 }
 
-export { omenName, omenWord };
+export { omenWord };

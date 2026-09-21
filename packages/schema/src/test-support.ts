@@ -244,6 +244,16 @@ export function standardSnapshot(): Snapshot {
       // all three styles; `jewel_int_only` rolls on a Stardust Jewel and nowhere else.
       any_jewel_affix: affixEntry("any_jewel_affix", "jewel", [includesAny(["any_jewel"])]),
       jewel_int_only: affixEntry("jewel_int_only", "jewel", [includesAny(["jewel_int"])]),
+      // A jewel's other two lists. Neither is drawn by tag — `JewelItemData.corrupt` and the
+      // eye branch of `JewelBlueprint.createData` both filter on the type alone — so both
+      // carry a tag requirement that would exclude them if one were ever consulted.
+      jewel_corrupt_armor: affixEntry("jewel_corrupt_armor", "jewel_corruption", [
+        includesAny(["jewel_int"]),
+      ]),
+      armor_eye: affixEntry("armor_eye", "watcher_eye", [includesAny(["jewel_int"])], {
+        eye_aura_req: "armor",
+        only_one_per_item: true,
+      }),
       // An unimplemented requirement mode must fail loud rather than be assumed true.
       weird_prefix: affixEntry("weird_prefix", "prefix", [
         { req_type: "SOMETHING_NEW", included: ["armor_family"], excluded: [] },

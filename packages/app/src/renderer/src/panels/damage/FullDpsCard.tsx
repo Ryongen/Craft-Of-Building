@@ -19,7 +19,15 @@ import { spellName } from "@cte2/schema";
  * and stretched the pass to its cooldown, so ticking one free buff could halve the number. Here
  * it is charged its upkeep instead &mdash; nothing at all for a toggle &mdash; and the effect it
  * puts on the sheet is counted either way, because availability comes from the skill bar rather
- * than from this tick.
+ * than from this tick. A **curse** is the same shape with the effect on the other side: you
+ * re-cast it when it falls off the pack, not every time its cooldown blinks.
+ *
+ * An **aura** is a third thing. It is a toggle, so the pass is charged nothing and waits on
+ * nothing for it &mdash; but four of them deal damage, and that damage is the effect's own
+ * component group ticking on its own `tick_rate`. Holy Fire pulses twice a second whether you
+ * are mid-cast, on cooldown or standing still, so it is added here as a **rate** rather than as
+ * damage per press, and it is the one term of this figure that does not move when you tick a
+ * second skill in beside it.
  *
  * **Procs are in the headline.** Everything the rotation sets off is merged against one shared
  * `proc_cooldown_ticks` ceiling and added, which is the difference between reading a proc-heavy
@@ -37,7 +45,10 @@ export function FullDpsCard({
   const world = useWorld();
   if (full === undefined) return null;
 
-  const upkeep = full.skills.filter((entry) => entry.role === "upkeep");
+  // The toggles and the timed re-presses share one table: both answer "how often do I press this
+  // and what does it cost the pass", and splitting them would have put Holy Fire and Banishing
+  // Blade on two tables that print the same four columns.
+  const upkeep = full.skills.filter((entry) => entry.role !== "rotation");
 
   return (
     <div className="card">
@@ -65,10 +76,17 @@ export function FullDpsCard({
                 hint="Spells your gear casts while you press these buttons — part of the Full DPS above"
               />
             )}
+            {full.auraDps > 0 && (
+              <Figure
+                label="Auras"
+                value={smart(full.auraDps)}
+                hint="What the auras you are running pulse for, on their own fixed timing. Part of the Full DPS above, and the one term of it a longer rotation does not dilute."
+              />
+            )}
             <Figure
               label="Rotation"
               value={`${num(full.rotationSeconds, 2)}s`}
-              hint="Casts plus the shared global cooldowns they arm. A buff is charged its upkeep, not a cast."
+              hint="Casts plus the shared global cooldowns they arm. A buff, a curse and an aura are charged their upkeep, not a cast."
             />
             <Figure
               label="Per rotation"
@@ -107,7 +125,7 @@ export function FullDpsCard({
                 onChange={(event) => onToggle(index, event.target.checked)}
               />
               <span>{spellName(world.snapshot, skill.spellId)}</span>
-              {entry?.role === "upkeep" ? (
+              {entry !== undefined && entry.role !== "rotation" ? (
                 <span className="badge" title={upkeepTitle(entry)}>
                   {upkeepBadge(entry)}
                 </span>
@@ -127,8 +145,8 @@ export function FullDpsCard({
         <table className="grid mt-5">
           <thead>
             <tr>
-              <th>Buff</th>
-              <th>Keeps up</th>
+              <th>Kept up</th>
+              <th>Effect</th>
               <th className="num">Press every</th>
               {/* Two right-aligned columns of prose run into each other without this. */}
               <th className="num" style={{ paddingLeft: 22 }}>
@@ -145,9 +163,17 @@ export function FullDpsCard({
               const short = entry.upkeepSeconds !== undefined && entry.upkeepSeconds > lasts;
               return (
                 <tr key={`${entry.skill.spellId}-${i}`} className={short ? "highlight" : undefined}>
-                  <td>{spellName(world.snapshot, entry.skill.spellId)}</td>
+                  <td>
+                    {spellName(world.snapshot, entry.skill.spellId)}
+                    {(entry.auraDps ?? 0) > 0 && (
+                      <div className="faint text-xs">pulses for {smart(entry.auraDps ?? 0)}/s</div>
+                    )}
+                  </td>
                   <td className="mono text-sm">
                     {entry.upkeepEffectId}
+                    <div className="faint text-xs">
+                      {entry.upkeepHolder === "target" ? "on the pack" : "on you"}
+                    </div>
                   </td>
                   <td
                     className="num"
@@ -183,11 +209,13 @@ export function FullDpsCard({
         Tick the skills you actually press. Casting an <em>attack</em> arms one shared global
         cooldown, so a combo extender you cast to enable a finisher costs the finisher real time
         &mdash; which is why this reads lower than the finisher on its own, and why that is the
-        honest number. A <strong>buff</strong> costs the pass only its upkeep: a toggle such as
-        Banishing Blade is pressed once and charged nothing, so ticking it adds what it does and
-        takes nothing away. Its stats are on your sheet whether or not it is ticked here &mdash;
-        availability comes from the skill bar, and the <strong>enabled</strong> box on the Skills
-        tab is the only thing that takes a buff off it.
+        honest number. A <strong>buff</strong> or a <strong>curse</strong> costs the pass only its
+        upkeep: it is re-pressed when what it applied runs out, which for a curse is its duration
+        on the pack rather than its cooldown, and for a toggle such as Banishing Blade is never.
+        An <strong>aura</strong> is free the same way and deals its damage on its own clock, so
+        ticking one adds what it pulses for and takes nothing away. Their stats are on your sheet
+        whether or not they are ticked here &mdash; availability comes from the skill bar, and the
+        <strong> enabled</strong> box on the Skills tab is the only thing that takes one off it.
       </div>
     </div>
   );
@@ -216,8 +244,9 @@ function upkeepCost(seconds: number): string {
 
 /** The chip beside a ticked buff: what it costs the pass, at a glance. */
 function upkeepBadge(entry: FullDpsSkill): string {
-  if (entry.upkeepSeconds === Infinity) return "upkeep · free";
-  return `upkeep · ${upkeepCost(entry.rotationSeconds)}`;
+  const kind = entry.role === "aura" ? "aura" : "upkeep";
+  if (entry.upkeepSeconds === Infinity) return `${kind} · free`;
+  return `${kind} · ${upkeepCost(entry.rotationSeconds)}`;
 }
 
 /** What that chip means, spelled out for the hover. */
@@ -225,16 +254,23 @@ function upkeepBadge(entry: FullDpsSkill): string {
 /** What that chip means, spelled out for the hover. */
 function upkeepTitle(entry: FullDpsSkill): string {
   const press = `One press costs ${num(entry.pressSeconds, 2)}s`;
+  const pulses =
+    (entry.auraDps ?? 0) > 0
+      ? ` It pulses for ${smart(entry.auraDps ?? 0)}/s on its own timing for as long as it is up — ` +
+        `that is in the figure above, and the rotation does not pace it.`
+      : "";
   if (entry.upkeepSeconds === Infinity) {
     return (
       `${press}, and ${entry.upkeepEffectId} never expires — it is a toggle, so you press it once ` +
-      `and the rotation is charged nothing for it.`
+      `and the rotation is charged nothing for it.${pulses}`
     );
   }
+  const where = entry.upkeepHolder === "target" ? "falls off the pack" : "runs out";
   return (
-    `${press}, and ${entry.upkeepEffectId} has to be re-cast every ` +
+    `${press}, and ${entry.upkeepEffectId} ${where} every ` +
     `${num(entry.upkeepSeconds ?? 0, 1)}s — ${num(entry.pressesPerRotation ?? 0, 3)} presses per ` +
-    `pass, so ${upkeepCost(entry.rotationSeconds)} of it.`
+    `pass, so ${upkeepCost(entry.rotationSeconds)} of it. Its cooldown is not what paces it: a ` +
+    `cooldown says how soon you may press again, not how soon you have to.${pulses}`
   );
 }
 

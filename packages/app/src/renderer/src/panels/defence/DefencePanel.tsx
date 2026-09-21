@@ -21,7 +21,8 @@ import type {
 } from "@cte2/engine";
 import { useMemo, type ReactNode } from "react";
 
-import { spellName, statName, statLayerName } from "@cte2/schema";
+import { spellName, statName } from "@cte2/schema";
+import { layerLabel } from "../../ui/trace-format.js";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
@@ -687,8 +688,9 @@ function Breakdown({
             <tr key={`${step.layerId}-${i}`}>
               {/* The layer's own name from the pack, rather than its id with the underscores
                   taken out — `damage_reduction` reads as "Damage Reduction" either way, but
-                  `ele_as_extra_flat` does not. */}
-              <td title={step.layerId}>{statLayerName(world.snapshot, step.layerId)}</td>
+                  `ele_as_extra_flat` does not. Through `layerLabel` because three of those names
+                  are templates: this table printed "%1$s to %2$s Conversion" verbatim. */}
+              <td title={step.layerId}>{layerLabel(world.snapshot, step, entry.element)}</td>
               <td className="num">
                 {step.multiplier === undefined ? "—" : `x${num(step.multiplier, 3)}`}
               </td>

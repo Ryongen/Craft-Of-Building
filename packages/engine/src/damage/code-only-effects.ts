@@ -207,7 +207,7 @@ export function inCodeEffects(): InCodeEffect[] {
       runsOnZero: false,
       run(ctx, value) {
         if (!isDirectHit(ctx) || isBonusElementDamage(ctx)) return;
-        ctx.event.addBonusEleDmg(element.name, withEffectiveness(ctx, value), "Source");
+        addFlatWithEffectiveness(ctx, element.name, value);
       },
     });
 
@@ -220,7 +220,7 @@ export function inCodeEffects(): InCodeEffect[] {
       run(ctx, value) {
         if (!isDirectHit(ctx) || isBonusElementDamage(ctx)) return;
         if (ctx.event.data.getString(EVENT.STYLE, "str") === "int") return;
-        ctx.event.addBonusEleDmg(element.name, withEffectiveness(ctx, value), "Source");
+        addFlatWithEffectiveness(ctx, element.name, value);
       },
     });
 
@@ -234,7 +234,7 @@ export function inCodeEffects(): InCodeEffect[] {
         if (!isDirectHit(ctx) || isBonusElementDamage(ctx)) return;
         if (!ctx.event.data.getString(EVENT.SPELL)) return;
         if (!ctx.spellTags.has("magic")) return;
-        ctx.event.addBonusEleDmg(element.name, withEffectiveness(ctx, value), "Source");
+        addFlatWithEffectiveness(ctx, element.name, value);
       },
     });
 
@@ -586,7 +586,20 @@ function resistEffect(ctx: DamageCtx, element: ElementName, value: number): void
   const resist = clamp(raw, min, cap);
 
   const layerId = element === "Physical" ? LAYER.PHYSICAL_MITIGATION : LAYER.ELEMENTAL_MITIGATION;
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
   ctx.event.getLayer(layerId, EVENT.NUMBER, "Target")?.reduce(resist);
+  // The four numbers this row is made of, so the panel can print the subtraction rather than a
+  // result. Nothing reads them unless a breakdown was asked for.
+  recorder?.annotateSince(before, {
+    sheet: value,
+    penetration: pene,
+    // The subtraction, not `raw`: `raw` has already been truncated, and the truncation is one of
+    // the steps the panel has to be able to show.
+    afterPenetration: value - pene,
+    min,
+    cap,
+  });
   ctx.event.data.setBoolean(EVENT.RESISTED_ALREADY, true);
 }
 
@@ -622,7 +635,17 @@ function armorEffect(ctx: DamageCtx, value: number): void {
   const effective = clamp(fraction, 0, usable.maxMulti);
 
   const defense = effective * (afterPene > 0 ? 100 : -100);
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
   ctx.event.getLayer(LAYER.ARMOR_MITIGATION, EVENT.NUMBER, "Target")?.reduce(defense);
+  // No `cap`: armour's ceiling is the curve's `maxMulti` on the *fraction*, not a bound on the
+  // rating, so quoting one here would name a number that never applied to these points.
+  recorder?.annotateSince(before, {
+    sheet: value,
+    penetration: ctx.event.penetration,
+    afterPenetration: afterPene,
+    points,
+  });
 }
 
 /**
@@ -661,7 +684,8 @@ function dodgeEffect(ctx: DamageCtx, value: number): void {
   const usable = USABLE_STATS["dodge"];
   if (!usable || usable.kind !== "curve") return;
 
-  const points = Math.trunc(Math.max(0, value - ctx.event.data.getNumber(EVENT.ACCURACY)));
+  const accuracy = ctx.event.data.getNumber(EVENT.ACCURACY);
+  const points = Math.trunc(Math.max(0, value - accuracy));
   if (points <= 0) return;
 
   const shape = ctx.index.shapeOf("dodge");
@@ -670,7 +694,19 @@ function dodgeEffect(ctx: DamageCtx, value: number): void {
   const chance = clamp(fraction, 0, usable.maxMulti);
   if (chance <= 0) return;
 
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
   ctx.event.getLayer(LAYER.DAMAGE_BLOCK, EVENT.NUMBER, "Target")?.reduce(100 * chance);
+  // The three numbers this row is made of. `afterPenetration` is the subtraction *before* the
+  // truncation, exactly as the resist layers record it, so the panel can show the fraction of a
+  // point the `(int)` cast drops rather than leaving it to be noticed as a rounding error.
+  recorder?.annotateSince(before, {
+    sheet: value,
+    penetration: 0,
+    accuracy,
+    afterPenetration: value - accuracy,
+    points,
+  });
   if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_DODGED, true);
 }
 
@@ -693,7 +729,8 @@ function spellDodgeEffect(ctx: DamageCtx, value: number): void {
   const usable = USABLE_STATS["spell_dodge"];
   if (!usable || usable.kind !== "curve") return;
 
-  const points = Math.trunc(Math.max(0, value - ctx.event.data.getNumber(EVENT.ACCURACY)));
+  const accuracy = ctx.event.data.getNumber(EVENT.ACCURACY);
+  const points = Math.trunc(Math.max(0, value - accuracy));
   if (points <= 0) return;
 
   const shape = ctx.index.shapeOf("spell_dodge");
@@ -702,7 +739,16 @@ function spellDodgeEffect(ctx: DamageCtx, value: number): void {
   const chance = clamp(fraction, 0, usable.maxMulti);
   if (chance <= 0) return;
 
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
   ctx.event.getLayer(LAYER.DAMAGE_BLOCK, EVENT.NUMBER, "Target")?.reduce(100 * chance);
+  recorder?.annotateSince(before, {
+    sheet: value,
+    penetration: 0,
+    accuracy,
+    afterPenetration: value - accuracy,
+    points,
+  });
   if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_DODGED, true);
 }
 
@@ -720,9 +766,22 @@ function additiveIncrease(ctx: DamageCtx, statId: string, value: number, dmgMult
   }
 }
 
-/** `NumberModifier.SPELL_DAMAGE_EFFECTIVENESS_MULTI.modify` — the calc's multi, defaulting to 1. */
-function withEffectiveness(ctx: DamageCtx, value: number): number {
-  return ctx.event.data.getNumber(EVENT.DMG_EFFECTIVENESS, 1) * value;
+/**
+ * `NumberModifier.SPELL_DAMAGE_EFFECTIVENESS_MULTI.modify` — the calc's multi, defaulting to 1 —
+ * applied to a flat added-damage write, with a note to the trace of what the multiplier was.
+ *
+ * The three flat-added-damage families all read as a stat the panel then silently inflates:
+ * `flat_water_added_damage` sits at 99.84 on the sheet and writes +191.12 into `flat_damage`
+ * on a skill whose `dmg_effectiveness` is 1.914, and nothing on screen held the 1.914. It is
+ * recorded rather than recomputed by the panel because only this call knows the write happened
+ * — off-element flat damage becomes a whole child event instead, with no layer write to annotate.
+ */
+function addFlatWithEffectiveness(ctx: DamageCtx, element: ElementName, value: number): void {
+  const multi = ctx.event.data.getNumber(EVENT.DMG_EFFECTIVENESS, 1);
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
+  ctx.event.addBonusEleDmg(element, multi * value, "Source");
+  recorder?.scaledSince(before, value, multi);
 }
 
 /** `EventData.getBoolean(IS_BONUS_ELEMENT_DAMAGE)` — set on every converted child event. */

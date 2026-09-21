@@ -36,8 +36,15 @@ export function StepRow({
   value?: ReactNode;
   /** Indent level. 0 is flush with the table. */
   depth?: number;
-  /** Colours the row's value: a subtotal, a warning, something switched off. */
-  tone?: "faint" | "warn" | "good" | "bad";
+  /**
+   * Colours the row's value: a subtotal, a warning, something switched off, or which way the
+   * number moved the result.
+   *
+   * `undefined` is spelled out because the callers derive it — `valueTone` in the damage trace
+   * returns nothing for a row whose sign carries no meaning — and under
+   * `exactOptionalPropertyTypes` an optional prop does not accept one.
+   */
+  tone?: "faint" | "warn" | "good" | "bad" | undefined;
   title?: string;
   /** A short chip before the value — "assumed", "capped", a context type. */
   badge?: ReactNode;

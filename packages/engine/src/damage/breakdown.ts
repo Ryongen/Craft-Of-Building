@@ -43,6 +43,54 @@ import type { EffectSide } from "./event.js";
 /** How a stat wrote into a layer's accumulator. */
 export type WriteKind = "add" | "reduce" | "multiply" | "conversion";
 
+/**
+ * How a defensive layer got from the target's sheet to the number it reduced by.
+ *
+ * Recorded by the five layers where the accumulator write is not the stat: the two resist
+ * mitigations and armour, which spend `penetration`, and dodge and spell dodge, which spend the
+ * attacker's `accuracy`. A mob declaring 30 fire resistance against 33.61 penetration reduces
+ * the layer by −3.61, and without this the panel could only print that −3.61 beside the sheet's
+ * 30 and leave the reader to find the penetration in a badge at the top of the card. Dodge was
+ * worse: a mob with 416 dodge against 225 accuracy produced a bare 8.37%, with neither figure
+ * nor the curve between them anywhere on screen.
+ */
+export type MitigationDetail = {
+  /** What the target's sheet said, before penetration. */
+  sheet: number;
+  /** Penetration spent against it. Zero for physical resistance, which never spends any. */
+  penetration: number;
+  /**
+   * The attacker's `accuracy`, subtracted from the target's evasion before the curve.
+   *
+   * Dodge and spell dodge only. `DodgeRating`: `clamp(dodge - ACCURACY, 0, MAX)` — the same
+   * shape as penetration against a resist, and a different stat with a different name, so it is
+   * a different field rather than a second meaning for one.
+   */
+  accuracy?: number;
+  /**
+   * The integer rating that actually entered the curve, where the layer has one.
+   *
+   * Armour, dodge and spell dodge all run `value / (value + base)` over a rounded or truncated
+   * rating and hand the layer a *percentage*, so the row above and the row below are in
+   * different units and nothing between them said where the change happened. The two resist
+   * layers have no curve and leave this unset.
+   */
+  points?: number;
+  /**
+   * `sheet - penetration`, before the truncation, the clamp or the curve.
+   *
+   * Deliberately the raw subtraction. The resist effect truncates towards zero before it clamps,
+   * so on AMFK the column read −16.80 − 33.61 and landed on −50.00, and the missing .41 was one
+   * more number the panel could not account for. Handing over the subtraction itself lets the
+   * panel print the step that ate it.
+   */
+  afterPenetration: number;
+  /** The floor the clamp used. Absent where the layer does not clamp — armour's curve. */
+  min?: number;
+  /** The ceiling the clamp used. Absent where the layer does not clamp — armour's curve. */
+  cap?: number;
+};
+
 export type LayerContribution = {
   /** The stat whose effect ran. `MoreStep` covers the MORE path separately. */
   statId: string;
@@ -58,6 +106,29 @@ export type LayerContribution = {
   value: number;
   before: number;
   after: number;
+  /** Set by the mitigation layers only. See {@link MitigationDetail}. */
+  mitigation?: MitigationDetail;
+  /** Set where what the layer got was not the stat's own value. See {@link ScaledWrite}. */
+  scaled?: ScaledWrite;
+};
+
+/**
+ * The stat's own value, and what the event multiplied it by before the layer saw it.
+ *
+ * `NumberModifier.SPELL_DAMAGE_EFFECTIVENESS_MULTI` is the only modifier of this shape the game
+ * has, and it is why flat added damage is the one stat whose sheet reading never matches the row
+ * it produces. `BonusFlatElementalDamage` multiplies by the skill's `dmg_effectiveness` before
+ * `addBonusEleDmg` — 1.914 on `tailwind_sweep` — so 99.84 on the sheet writes +191.12 into
+ * `flat_damage`. Both numbers were already on screen, one under the other, with nothing between
+ * them, which reads as the panel inventing damage rather than as the skill carrying it.
+ */
+export type ScaledWrite = {
+  /** What the stat resolved to, before the multiplier. */
+  raw: number;
+  /** What it was multiplied by. */
+  multi: number;
+  /** Which multiplier it was, for the row's wording. Only one kind exists so far. */
+  reason: "effectiveness";
 };
 
 /** One layer's turn during the flush, in layer-priority order. */
@@ -85,6 +156,13 @@ export type MoreStep = {
   statId: string;
   numberId: string;
   multi: number;
+  /**
+   * The `mmorpg_stat_effect` block behind it — see {@link MoreMulti.effectId}.
+   *
+   * The reason a breakdown can print "Damage Over Time x1.24" twice and mean two different
+   * things: one stat, two blocks, two rows, exactly as the game's own log prints them.
+   */
+  effectId?: string;
   before: number;
   after: number;
 };
@@ -146,6 +224,42 @@ export class Recorder {
       before,
       after,
     });
+  }
+
+  /**
+   * Attaches the arithmetic behind the write that just happened.
+   *
+   * Separate from `write` because the accumulator cannot know it: `reduce` is handed one
+   * finished number, and the sheet value, the penetration and the clamp that produced it all
+   * live inside the effect.
+   *
+   * `since` is {@link contributions}' length taken *before* the write, and it is what makes
+   * "there may be nothing to annotate" safe. A write of zero is dropped — which is right, a
+   * mitigation that changed nothing has nothing to explain — and without the guard the detail
+   * then landed on whichever contribution happened to be last. On a physical hit that was
+   * literally happening: `resistEffect` reduces by 0 against a mob with no physical resistance,
+   * and its `{sheet: 0, cap: 75}` was attaching to the `phys_to_water` conversion row directly
+   * above it, so the panel offered a resistance drill-down under a conversion.
+   */
+  annotateSince(since: number, detail: MitigationDetail): void {
+    if (this.contributions.length === since) return;
+    const last = this.contributions.at(-1);
+    if (last !== undefined) last.mitigation = detail;
+  }
+
+  /**
+   * Attaches the multiplication the event did to a value on its way into a layer.
+   *
+   * `since` is {@link contributions}' length taken *before* the write, and the guard it gives is
+   * not defensive padding: `addBonusEleDmg` only reaches a layer when the flat damage is the
+   * element the hit already deals and spawns a bonus-element event otherwise, so without the
+   * check an off-element write would annotate whichever contribution happened to be last — a
+   * different stat, on a different layer, with a multiplier that was never applied to it.
+   */
+  scaledSince(since: number, raw: number, multi: number): void {
+    if (multi === 1 || this.contributions.length === since) return;
+    const last = this.contributions.at(-1);
+    if (last !== undefined) last.scaled = { raw, multi, reason: "effectiveness" };
   }
 
   /**

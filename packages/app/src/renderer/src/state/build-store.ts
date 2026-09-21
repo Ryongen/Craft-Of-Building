@@ -16,11 +16,18 @@ import {
   BUILD_DOC_VERSION,
   MAX_ACTIVE_SKILLS,
   activeSkillCount,
+  addStage,
+  applyStage,
   buildTargetEnemy,
   emptyBuild,
   isSkillEnabled,
   nodeKey,
+  normalizeStages,
   parseNodeKey,
+  removeStage,
+  renameStage,
+  setMainStage,
+  syncStages,
   type AuraSetup,
   type FoodBuffSetup,
   type BuildDoc,
@@ -192,6 +199,36 @@ export type BuildState = {
   deallocateNodes(tree: TreeKey, keys: readonly NodeKey[]): void;
   clearTree(tree: TreeKey): void;
 
+  // -- stages -------------------------------------------------------------
+  //
+  // A stage is the part of a build that is *spent* — the three trees, the stat points, the
+  // school allocation and the level they were planned at. The character wears one set of gear
+  // and has one skill bar across all of them, so switching stage compares two plans for the
+  // same character rather than two characters.
+  //
+  // Every one of these goes through `edit`, so a switch undoes like anything else, and the
+  // document is what carries the list — pin a build with stages and the baseline has them too.
+
+  /** Add an empty stage at the character's current level and switch to it. */
+  addStage(name: string): void;
+  /** Add a copy of `from` and switch to it — the move for "this tree, but without the crit nodes". */
+  duplicateStage(from: string, name: string): void;
+  /** Show a stage on the character. What the one being left holds is banked first. */
+  switchStage(id: string): void;
+  renameStage(id: string, name: string): void;
+  /**
+   * Delete a stage. Deleting the one being edited switches to another; deleting the last one
+   * leaves the character exactly as it is, with no list.
+   */
+  removeStage(id: string): void;
+  /**
+   * Mark the stage that represents this build to an exporter or a build viewer.
+   *
+   * Not the same as switching to it — see `BuildStage.main`. Looking at your levelling tree must
+   * not change what a guide publishes.
+   */
+  setMainStage(id: string): void;
+
   // -- gear ---------------------------------------------------------------
   addItem(item: Item): void;
   updateItem(index: number, item: Item): void;
@@ -309,8 +346,13 @@ function edit(
   options: { keepsCapture?: boolean } = {},
 ): void {
   set((state) => {
-    const next = change(state.doc);
-    if (next === state.doc) return {};
+    const changed = change(state.doc);
+    if (changed === state.doc) return {};
+    // Every edit, in one place: whatever a mutator did to the trees, the level or the points is
+    // what the stage being edited now holds. Doing it per mutator would mean one of the eight
+    // that touch those fields eventually not doing it, and a stage quietly losing an hour of
+    // work at the next switch. `syncStages` is a no-op for a document with no stages.
+    const next = syncStages(changed);
     return {
       doc: next,
       dirty: true,
@@ -389,7 +431,17 @@ export const useBuild = create<BuildState>((set) => ({
     set({ doc: emptyBuild(1), path: null, observed: null, dirty: false, past: [], future: [] }),
 
   loadBuild: (doc, path, observed) =>
-    set({ doc, path, observed: observed ?? null, dirty: false, past: [], future: [] }),
+    set({
+      // A document can arrive from a text editor, a capture written over an older file, or a
+      // build of this app that is not this one. `normalizeStages` is what makes the app's
+      // handling of a damaged stage list defined — the validator still reports what was wrong.
+      doc: normalizeStages(doc),
+      path,
+      observed: observed ?? null,
+      dirty: false,
+      past: [],
+      future: [],
+    }),
 
   markSaved: (path) => set({ path, dirty: false }),
 
@@ -629,6 +681,15 @@ export const useBuild = create<BuildState>((set) => ({
     }),
 
   clearTree: (tree) => edit(set, (doc) => withTree(doc, tree, [])),
+
+  addStage: (name) => edit(set, (doc) => addStage(doc, name)),
+  duplicateStage: (from, name) => edit(set, (doc) => addStage(doc, name, from)),
+  switchStage: (id) => edit(set, (doc) => applyStage(doc, id)),
+  // Renaming and marking change nothing about the character, so the capture still describes it
+  // — the same reason `setName` keeps it.
+  renameStage: (id, name) => edit(set, (doc) => renameStage(doc, id, name), { keepsCapture: true }),
+  removeStage: (id) => edit(set, (doc) => removeStage(doc, id)),
+  setMainStage: (id) => edit(set, (doc) => setMainStage(doc, id), { keepsCapture: true }),
 
   addItem: (item) => edit(set, (doc) => prune(doc, "gear", [...(doc.gear ?? []), item])),
   updateItem: (index, item) =>

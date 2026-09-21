@@ -65,16 +65,70 @@ export type ExactMod = {
   from?: ModOrigin;
 };
 
-/** What part of an item, jewel or rune produced a modifier. */
+/**
+ * What inside a source produced a modifier.
+ *
+ * Nine of the kinds are parts of an item — the lists a `GEAR` or `JEWEL` context merges. The
+ * last three are the contexts that are not a thing you own and so had nothing else to say for
+ * themselves:
+ *
+ *  - `attribute` and `enchantment` are the two halves of `mmorpg_stat_compat`. Its whole
+ *    context is one anonymous bag under the source id `stat_compat`, so a row reading "Vanilla
+ *    attributes +2.00" named neither the attribute it converted nor the entry that converted
+ *    it — and which attribute it was is the entire answer, since `generic.attack_damage` is
+ *    your weapon and `kubejs:magic_shield` is what you ate.
+ *  - `share` is a `STAT_CTX_MODIFIER_BONUS` row: the cut `aura_effect`, `jewel_effect` or
+ *    `more_food_stats` takes of *another* context. Thirty-six of them under one "Context
+ *    modifiers" heading are unreadable without saying which stat took the share and whose
+ *    stats it was a share of, which is what {@link ModOrigin.of} carries.
+ */
 export type ModOrigin = {
   /** Which list it came off. `base` is the item's own `base_stats`. */
-  kind: "base" | "implicit" | "prefix" | "suffix" | "corruption" | "enchant" | "unique" | "rune" | "runeword";
+  kind:
+    | "base"
+    | "implicit"
+    | "prefix"
+    | "suffix"
+    | "corruption"
+    | "enchant"
+    | "unique"
+    | "rune"
+    | "runeword"
+    /** A vanilla attribute `mmorpg_stat_compat` converted — `id` is the attribute. */
+    | "attribute"
+    /** A vanilla enchantment on equipped gear, converted the same way — `id` is the enchant. */
+    | "enchantment"
+    /** A cut of another context, taken by a `statContextModifier` stat — `id` is that stat. */
+    | "share";
   /** The registry id of the part — an `mmorpg_affixes`, `mmorpg_runes` or unique id. */
   id?: string;
   /** The percent the roll resolved at, 0-100. The number no player can read in game. */
   rollPercent?: number;
   /** The affix's own rarity, which is what the game calls its tier. */
   tier?: string;
+  /**
+   * The rule that produced it, where that is neither the context nor {@link ModOrigin.id} — the
+   * `mmorpg_stat_compat` entry id for a compat row. Two entries can convert one attribute into
+   * two different stats, so the attribute alone does not identify the conversion.
+   */
+  via?: string;
+  /**
+   * For a `share`: the context the share was taken from.
+   *
+   * The same three fields a `StatContext` carries, so the app can name it with the same
+   * function it names any other row with.
+   */
+  of?: { ctxType: string; source: string; path: string };
+  /**
+   * For a `share`: the context that granted the `statContextModifier` stat.
+   *
+   * The thing you own, and so the answer to "where does it come from" — this build's four
+   * `aura_effect` lines are two Yun runes, a ring corruption and a school perk, and without
+   * this they were four rows of identical text under one heading, told apart only by their
+   * numbers. It is also what the row hovers, for the same reason every other row hovers the
+   * thing rather than the rule.
+   */
+  by?: { ctxType: string; source: string; path: string };
 };
 
 /** `StatModifier`: a range, resolved by a roll percent. */

@@ -41,7 +41,7 @@ import { activeOn, type EffectState } from "./effect-state.js";
 import { inCodeEffects, MAX_CONVERSION_DEPTH } from "./code-only-effects.js";
 import { sheetValue, type DamageCtx, type ProcHit, type RestoreRecord, type Sheet } from "./ctx.js";
 import { DamageEventState, EVENT, type EffectSide } from "./event.js";
-import { layerIndex, type LayerIndex } from "./layers.js";
+import { LAYER, layerIndex, type LayerIndex } from "./layers.js";
 import { PRIORITY, UNKNOWN_ORDER_PRIORITY, datapackPriority } from "./priority.js";
 import { calculatedValue, damageEffectiveness, valueCalc } from "./value-calc.js";
 
@@ -138,6 +138,16 @@ export type DamageResult = {
   dmgEffectiveness: number;
   element: ElementName;
   critChance: number;
+  /**
+   * The share of this act's hits that are not evaded — `damage_block`'s multiplier.
+   *
+   * 1 wherever nothing can dodge the hit, which is most acts: `DodgeRating` takes physical
+   * non-`magic` hits and `SpellDodgeEffect` takes `magic` spells, and a mob with no evasion
+   * rating leaves the layer unwritten either way. Reported rather than left inside the number
+   * because it is already folded into every total here, and a figure that quietly assumes a
+   * target you never miss is one the reader cannot check.
+   */
+  hitChance: number;
   /** Whether this was resolved against the caster — see {@link DamageOptions.selfHit}. */
   selfHit: boolean;
   /** `crit` pinned false. */
@@ -297,6 +307,7 @@ export function simulateHit(
     style: spellStyle(spell),
     selfHit,
     sourceStatsDisabled: false,
+    hitChance: 1,
   };
 
   const procs = options.procs === true ? { onHit: [] as ProcHit[], onCrit: [] as ProcHit[] } : undefined;
@@ -314,6 +325,7 @@ export function simulateHit(
     dmgEffectiveness: effectiveness,
     element,
     critChance: rolledCrit,
+    hitChance: shared.hitChance,
     selfHit,
     hit,
     crit,
@@ -367,6 +379,14 @@ type Shared = {
    * an attacker stat, so a hit whose attacker half never ran cannot roll one.
    */
   sourceStatsDisabled: boolean;
+  /**
+   * `damage_block`'s multiplier off the root event — written by `runEvent` at depth 0.
+   *
+   * Mutable for the same reason {@link Shared.sourceStatsDisabled} is: it is a fact the event
+   * discovers and the caller reports, and threading a twelfth out-parameter through a recursive
+   * `runEvent` to carry one number would cost more than it explains.
+   */
+  hitChance: number;
 };
 
 function runBranch(
@@ -546,6 +566,19 @@ function runEvent(
     moreMultis,
   );
 
+  /*
+    What fraction of this cast's hits actually land, off the root event.
+
+    `damage_block` is the layer dodge and spell dodge average themselves onto, so its multiplier
+    *is* the chance to hit — 1 on the hits nothing can evade, which is most of them. Read at
+    depth 0 only: a bonus-element child carries `bonus_dmg`, which dodge refuses outright, so a
+    child would always report 1 and overwrite the parent's real figure.
+
+    Kept on `shared` for the same reason `sourceStatsDisabled` is: it is one fact about the cast
+    that the caller needs and the event that knows it is three frames down.
+  */
+  if (depth === 0) shared.hitChance = event.hitChance;
+
   // The children have to be collected before the trace is closed, because a bonus element is a
   // whole nested event and its own layers belong under this one.
   const children = collectBonusElements(
@@ -563,7 +596,25 @@ function runEvent(
   const dealt = Math.max(0, event.damage);
   byElement.set(element, (byElement.get(element) ?? 0) + dealt);
 
-  if (depth === 0) {
+  /*
+    Every event that sweeps the attacker rolls its own ailment, not just the hit itself.
+
+    `AilmentChance.Effect` is a Source-side effect at `FINAL_DAMAGE`, and its gate ends
+
+        && (effect.getAttackType().isHit() || effect.getAttackType() == AttackType.bonus_dmg)
+
+    — checked against the 6.4.13 jar, not only the fork. `bonus_dmg` is exactly what
+    `buildBonusElementEvent` stamps on a converted element, and that child runs the whole sweep
+    (`calcSourceEffects = !takenAs`), so the cold half of an 80%-converted physical hit is an
+    ordinary cold hit as far as `freeze_chance` is concerned. Gating on `depth === 0` silently
+    dropped it: the physical reading of Tailwind Sweep converts four fifths of itself to cold on
+    a build with freeze chance and reported no ailment at all.
+
+    The condition is `disableSourceStats`, which is the same thing the sweep above is gated on —
+    a `damage_taken_as` child, or a self-hit that hit `no_attacker_stats_on_selfdmg`, never runs
+    a Source-side effect and so cannot roll one either.
+  */
+  if (!ctx.disableSourceStats) {
     ailments.push(
       ...applyAilments(ctx, shared.sourceSheet, shared.targetSheet, (ailment, base) =>
         ailmentEventDamage(shared, ailment, base, diagnostics),
@@ -759,6 +810,9 @@ function flush(ctx: DamageCtx, steps: LayerStep[], moreMultis: MoreStep[]): void
     if (layer.numberId === EVENT.NUMBER && layer.layer.id === "flat_damage") {
       event.appliedFlatDamage = layer.getNumber();
     }
+    if (layer.numberId === EVENT.NUMBER && layer.layer.id === LAYER.DAMAGE_BLOCK) {
+      event.hitChance = layer.getMultiplier();
+    }
     if (recorder !== undefined && snapshot !== undefined) {
       steps.push({
         layerId: layer.layer.id,
@@ -786,7 +840,14 @@ function flush(ctx: DamageCtx, steps: LayerStep[], moreMultis: MoreStep[]): void
     const after = before * more.multi;
     event.data.setNumber(more.numberId, after);
     if (recorder !== undefined) {
-      moreMultis.push({ statId: more.statId, numberId: more.numberId, multi: more.multi, before, after });
+      moreMultis.push({
+        statId: more.statId,
+        numberId: more.numberId,
+        multi: more.multi,
+        ...(more.effectId === undefined ? {} : { effectId: more.effectId }),
+        before,
+        after,
+      });
     }
   }
 }
@@ -1363,6 +1424,7 @@ export function simulateBasicAttack(
     // A swing always lands on something else; nothing in the pack makes you hit yourself with one.
     selfHit: false,
     sourceStatsDisabled: false,
+    hitChance: 1,
   };
 
   const procs = options.procs === true ? { onHit: [] as ProcHit[], onCrit: [] as ProcHit[] } : undefined;
@@ -1375,6 +1437,9 @@ export function simulateBasicAttack(
     dmgEffectiveness: 1,
     element,
     critChance,
+    // A swing is `AttackType.hit` and physical, which is exactly what `DodgeRating` takes, so
+    // this is the one place the figure is routinely below 1.
+    hitChance: shared.hitChance,
     selfHit: false,
     hit,
     crit,

@@ -73,7 +73,11 @@ type SiteManifest = {
   };
 };
 
-type AssetIndexFile = { assets?: Record<string, string>; items?: Record<string, string> };
+type AssetIndexFile = {
+  assets?: Record<string, string>;
+  items?: Record<string, string>;
+  version?: number;
+};
 
 /** A snapshot the user supplied, kept so a reload does not throw it away. */
 type StoredSnapshot = { name: string; json: string };
@@ -188,6 +192,8 @@ export function createWebApi(): Cte2Api {
   let assetsBase = "";
   let assetIndex: Record<string, string> = {};
   let itemIconIndex: Record<string, string> = {};
+  /** The published index's own version, so the Data panel can say when the site's are behind. */
+  let assetIndexVersion = 0;
   let loadedFrom = "";
   /** True when what is loaded came from the user rather than from the site. */
   let userSupplied = false;
@@ -238,6 +244,7 @@ export function createWebApi(): Cte2Api {
       );
       assetIndex = index.assets ?? {};
       itemIconIndex = index.items ?? {};
+      assetIndexVersion = typeof index.version === "number" ? index.version : 0;
 
       // A snapshot the user handed over wins over the one the site shipped, and survives a
       // reload: someone on a different pack version should not have to re-pick it every visit.
@@ -251,6 +258,7 @@ export function createWebApi(): Cte2Api {
           assetsDir: assetsBase,
           assets: assetIndex,
           itemIcons: itemIconIndex,
+          assetIndexVersion,
         };
       }
 
@@ -262,6 +270,7 @@ export function createWebApi(): Cte2Api {
         assetsDir: assetsBase,
         assets: assetIndex,
         itemIcons: itemIconIndex,
+        assetIndexVersion,
       };
     },
 

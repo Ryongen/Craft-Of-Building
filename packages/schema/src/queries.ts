@@ -535,6 +535,73 @@ export function jewelAffixesFor(snapshot: Snapshot, style: string | undefined): 
     .filter((a) => a.type === "jewel" && affixAllowedOnTags(a, tags));
 }
 
+/** Every affix of one type, in id order — the pools that are filtered by nothing but the type. */
+function affixesOfType(snapshot: Snapshot, type: AffixType): AffixView[] {
+  return ids(snapshot, CATEGORY.affix)
+    .map((id) => affix(snapshot, id))
+    .filter((a): a is AffixView => a !== undefined && a.type === type)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * The Augment lines an Abyssal Eye may carry — every `watcher_eye` affix, unfiltered.
+ *
+ * `WatcherEyeBlueprint` sets `JewelBlueprint.isEye`, and that branch of `createData` draws from
+ * the type alone:
+ *
+ *     while (data.auraStats.size() < auraAffixes) {
+ *         Affix a = ExileDB.Affixes().getFilterWrapped(x -> x.type == AffixSlot.watcher_eye).random();
+ *         if (data.auraStats.stream().noneMatch(x -> x.affix.equals(a.GUID())))
+ *             data.auraStats.add(new StatsWhileUnderAuraData(a, level));
+ *     }
+ *
+ * — `Mine_and_Slash-1.20.1-6.4.13.jar`. No tag requirement is consulted and the jewel's style
+ * does not narrow it, which is why this takes no style: the eye is always a `str`-tagged pool's
+ * problem for its *rolled* affixes and no pool's problem for these. The `noneMatch` is the one
+ * rule there is — the same affix never appears twice on one eye, which `only_one_per_item`
+ * already says on all 33 of them.
+ */
+export function watcherEyeAffixes(snapshot: Snapshot): AffixView[] {
+  return affixesOfType(snapshot, "watcher_eye");
+}
+
+/**
+ * What an Orb of Mesmerizing Chaos can put on a jewel — every `jewel_corruption` affix.
+ *
+ *     if (cor.isEmpty()) {
+ *         int num = RandomUtils.roll(10) ? 2 : 1;
+ *         for (int i = 0; i < num; i++) {
+ *             Affix a = rollAffix(cor, x -> x.type == AffixSlot.jewel_corruption);
+ *             ...
+ *         }
+ *     }
+ *
+ * — `JewelItemData.corrupt`, same jar. Type only, again: the style tags never come into it, so
+ * a Meteorite and a Stardust jewel corrupt out of the same pool. Two is the ceiling, and a
+ * corrupted jewel can never be corrupted again.
+ */
+export function jewelCorruptionAffixes(snapshot: Snapshot): AffixView[] {
+  return affixesOfType(snapshot, "jewel_corruption");
+}
+
+/**
+ * `JewelItemData.corrupt` rolls one, or two on a 1-in-10 — so two is the most a jewel carries.
+ */
+export const MAX_JEWEL_CORRUPTIONS = 2;
+
+/**
+ * How many Augment lines an Abyssal Eye can carry.
+ *
+ * `WatcherEyeBlueprint` reads it off the uber boss that dropped the eye —
+ * `UberBossTier.watcherEyeAffixes`, which is 1, 2 or 3 as the tier goes up (tiers registered at
+ * levels 40, 60 and 90 in the same jar). Three is the ceiling, and there is no way to add a
+ * fourth afterwards.
+ */
+export const MAX_EYE_AURA_STATS = 3;
+
+/** `CraftedUniqueJewelData.WATCHER_EYE` — the `unique.id` that marks a jewel as an Abyssal Eye. */
+export const WATCHER_EYE_UNIQUE = "watcher_eye";
+
 export type UniqueView = {
   id: string;
   baseGear: string | undefined;
@@ -935,6 +1002,23 @@ export function enchantName(enchantId: string): string {
     ? (enchantId.split(":", 2) as [string, string])
     : ["minecraft", enchantId];
   const name = humanise(path);
+  return namespace === "minecraft" ? name : `${name} (${namespace})`;
+}
+
+/**
+ * A readable name for a vanilla attribute id.
+ *
+ * The same nowhere-to-look-it-up problem {@link enchantName} has, with one extra step: the
+ * vanilla ones are `minecraft:generic.max_health` and the `generic.` is noise in every place a
+ * player reads it. The namespace stays on everything else and is the useful half there —
+ * `kubejs:magic_shield` is a food-diversity benefit rather than anything Minecraft ships, and a
+ * bare "Magic Shield" beside a real stat of that name would read as a duplicate.
+ */
+export function attributeName(attributeId: string): string {
+  const [namespace, path] = attributeId.includes(":")
+    ? (attributeId.split(":", 2) as [string, string])
+    : ["minecraft", attributeId];
+  const name = humanise(path.replace(/^generic\./, ""));
   return namespace === "minecraft" ? name : `${name} (${namespace})`;
 }
 

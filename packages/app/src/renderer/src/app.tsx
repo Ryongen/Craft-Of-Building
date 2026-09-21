@@ -148,6 +148,7 @@ export function App(): ReactNode {
   const newBuild = useBuild((s) => s.newBuild);
   const loadBuild = useBuild((s) => s.loadBuild);
   const markSaved = useBuild((s) => s.markSaved);
+  const switchStage = useBuild((s) => s.switchStage);
   const pinBaseline = useBuild((s) => s.pinBaseline);
   const clearBaseline = useBuild((s) => s.clearBaseline);
   const restoreBaseline = useBuild((s) => s.restoreBaseline);
@@ -464,6 +465,37 @@ export function App(): ReactNode {
                 )}
               </button>
             ))}
+
+            {/*
+              Which stage the character is showing, where a build has more than one.
+
+              On the tab row rather than in the topbar for two reasons. It belongs to the same
+              rank as the tabs — both answer "what am I looking at" — and the topbar is full: an
+              eighth field there pushed the Save buttons onto a second row at 1600px.
+
+              It has to be visible from every tab, not just the Tree one where the list lives,
+              because the stage owns the **level** and the point spends too. A build with four
+              stages where you cannot see which one is loaded is a character sheet you cannot
+              account for. Absent entirely for a build with one stage, which is most of them.
+            */}
+            {(doc.stages?.length ?? 0) > 1 && (
+              <div className="tab-stage">
+                <label htmlFor="stage-switch">Stage</label>
+                <select
+                  id="stage-switch"
+                  value={doc.activeStage ?? ""}
+                  onChange={(event) => switchStage(event.target.value)}
+                  title="The saved trees, points and level of this build — the full list is on the Tree tab"
+                >
+                  {doc.stages?.map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {stage.name}
+                      {stage.main === true ? " ★" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/*

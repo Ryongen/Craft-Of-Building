@@ -15,6 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   extract,
   extractAssets,
+  ASSET_INDEX_VERSION,
   fingerprintInstall,
   fingerprintsMatch,
   gearItemIds,
@@ -126,13 +127,14 @@ function normalizeSnapshot(snapshot: Snapshot): { snapshot: Snapshot; json: stri
 function toPayload(inspected: CandidateInspection): SnapshotPayload {
   const assetsDir = inspected.candidate.assetsDir ?? null;
   activeAssetsDir = assetsDir;
-  const index = assetsDir ? readAssetIndex(assetsDir) : { assets: {}, items: {} };
+  const index = assetsDir ? readAssetIndex(assetsDir) : { assets: {}, items: {}, version: 0 };
   return {
     json: inspected.json,
     path: inspected.candidate.snapshotPath,
     assetsDir,
     assets: index.assets,
     itemIcons: index.items,
+    assetIndexVersion: index.version,
   };
 }
 
@@ -213,16 +215,33 @@ export function loadSnapshot(): SnapshotPayload | null {
   return null;
 }
 
-type AssetIndexes = { assets: Record<string, string>; items: Record<string, string> };
+type AssetIndexes = {
+  assets: Record<string, string>;
+  items: Record<string, string>;
+  /**
+   * `index.json`'s own `version`, or 0 where it has none or could not be read.
+   *
+   * Carried so {@link dataStatus} can say when the textures are older than the code expects.
+   * The snapshot and the assets are written by two separate flags and drift apart routinely —
+   * which is invisible without this, because a key the index does not hold degrades to the
+   * generic icon and looks exactly like a texture the pack ships none of.
+   */
+  version: number;
+};
 
 function readAssetIndex(assetsDir: string): AssetIndexes {
+  const empty: AssetIndexes = { assets: {}, items: {}, version: 0 };
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(assetsDir, "index.json"), "utf8"));
-    if (parsed === null || typeof parsed !== "object") return { assets: {}, items: {} };
+    if (parsed === null || typeof parsed !== "object") return empty;
     const index = parsed as Partial<AssetIndex>;
-    return { assets: stringMap(index.assets), items: stringMap(index.items) };
+    return {
+      assets: stringMap(index.assets),
+      items: stringMap(index.items),
+      version: typeof index.version === "number" ? index.version : 0,
+    };
   } catch {
-    return { assets: {}, items: {} };
+    return empty;
   }
 }
 
@@ -357,6 +376,25 @@ export function dataStatus(): DataStatus {
       staleReason: `This snapshot uses an older schema format (v${version}, expected v${SNAPSHOT_VERSION})${
         missing.length > 0 ? ` and is missing registries: ${missing.join(", ")}` : ""
       }. Please re-extract.`,
+    };
+  }
+
+  /*
+    The textures, which are extracted by their own flag and drift on their own schedule.
+
+    Reported before the snapshot's own drift check because it is a different question with a
+    different fix: the snapshot can be perfectly current while `data/assets` is a vintage behind,
+    and the symptom — icons quietly falling back to a generic plate — is indistinguishable from
+    the ~56 icons this pack really does ship no texture for. `--assets` is the fix and it is not
+    the one `--out` performs.
+  */
+  if (payload.assetIndexVersion > 0 && payload.assetIndexVersion < ASSET_INDEX_VERSION) {
+    return {
+      ...status,
+      staleReason:
+        `The extracted textures are v${payload.assetIndexVersion}, and this build expects ` +
+        `v${ASSET_INDEX_VERSION}. Icons added since will fall back to a generic one. ` +
+        `Re-extract with \`--assets\` to pick them up.`,
     };
   }
 

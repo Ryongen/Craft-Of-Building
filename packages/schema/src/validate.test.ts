@@ -1198,6 +1198,44 @@ test("a jewel's style narrows its affix pool, so an off-style affix is not a rea
   assert.ok(!codes(assumed, "error").includes("affix-not-allowed-on-jewel"));
 });
 
+test("an Abyssal Eye's Augment lines are not affixes and are not checked as ones", () => {
+  const eye = (auraStats: { affixId: string; rollPercent: number; itemLevel: number }[]) =>
+    build({ jewels: [{ rarity: "unique", itemLevel: 100, auraStats }] });
+
+  // No tier, a roll anywhere in 0-100, its own level — `armor_eye` on a `str` jewel is legal
+  // even though the affix declares `jewel_int`, because no tag is consulted for these.
+  const legal = validateBuild(eye([{ affixId: "armor_eye", rollPercent: 73, itemLevel: 100 }]), standardSnapshot());
+  // `too-many-jewels` is this build's own problem — it allocates no socket — and is not about
+  // the line.
+  assert.deepEqual(
+    codes(legal).filter((code) => code !== "too-many-jewels"),
+    [],
+  );
+
+  // A `jewel` affix in the list is not an Augment line at all.
+  const wrongType = validateBuild(
+    eye([{ affixId: "any_jewel_affix", rollPercent: 50, itemLevel: 100 }]),
+    standardSnapshot(),
+  );
+  assert.ok(codes(wrongType, "error").includes("affix-type-mismatch"));
+
+  // The blueprint re-rolls rather than repeating one, and every eye affix is only_one_per_item.
+  const twice = validateBuild(
+    eye([
+      { affixId: "armor_eye", rollPercent: 10, itemLevel: 100 },
+      { affixId: "armor_eye", rollPercent: 90, itemLevel: 100 },
+    ]),
+    standardSnapshot(),
+  );
+  assert.ok(codes(twice, "error").includes("duplicate-eye-line"));
+
+  const outOfBand = validateBuild(
+    eye([{ affixId: "armor_eye", rollPercent: 140, itemLevel: 100 }]),
+    standardSnapshot(),
+  );
+  assert.ok(codes(outOfBand, "error").includes("roll-outside-tier-band"));
+});
+
 test("an unknown play style is reported rather than quietly treated as str", () => {
   // `PlayStyle.fromID` falls back to STR, which would make this a jewel with the wrong name
   // and the wrong pool — exactly the silent default this validator exists to refuse.
@@ -1206,4 +1244,77 @@ test("an unknown play style is reported rather than quietly treated as str", () 
     standardSnapshot(),
   );
   assert.ok(codes(diagnostics).includes("unknown-jewel-style"));
+});
+
+// ---------------------------------------------------------------------------
+// Saved stages
+// ---------------------------------------------------------------------------
+
+test("a stage is held to the same rules as the allocation on the character", () => {
+  const snapshot = standardSnapshot();
+
+  // `[2, 4]` is `armor_flat`, one hop from the start at `[2, 2]` — legal only with the start.
+  const doc = build({
+    tree: { talents: [[2, 2], [2, 4]] },
+    stages: [
+      { id: "s1", name: "Now", main: true, level: 30, talents: [[2, 2], [2, 4]] },
+      { id: "s2", name: "Later", level: 30, talents: [[2, 4]] },
+    ],
+    activeStage: "s1",
+  });
+
+  const diagnostics = validateBuild(doc, snapshot);
+  assert.deepEqual(codes(diagnostics, "error"), ["no-entry-allocated"]);
+  // Reported against the stage that is wrong, not against the character.
+  assert.ok(diagnostics.every((d) => d.path.startsWith("stages[1]")));
+});
+
+test("the active stage is not checked twice", () => {
+  const legal: [number, number][] = [[2, 2], [2, 4]];
+  const doc = build({
+    tree: { talents: legal },
+    stages: [{ id: "s1", name: "Now", main: true, level: 30, talents: legal }],
+    activeStage: "s1",
+  });
+  assert.deepEqual(validateBuild(doc, standardSnapshot()), []);
+});
+
+test("a stage list needs ids, names and exactly one main", () => {
+  const doc = build({
+    tree: { talents: [[2, 2]] },
+    stages: [
+      { id: "s1", name: "One", main: true, level: 30, talents: [[2, 2]] },
+      { id: "s1", name: " ", main: true, level: 30 },
+    ],
+    activeStage: "s1",
+  });
+  assert.deepEqual(codes(validateBuild(doc, standardSnapshot()), "error"), [
+    "duplicate-stage-id",
+    "many-main-stages",
+    "stage-without-name",
+  ]);
+});
+
+test("a stage's level is a level, and an active stage that disagrees with the character warns", () => {
+  const snapshot = standardSnapshot();
+
+  const badLevel = build({
+    stages: [{ id: "s1", name: "One", main: true, level: 0 }],
+    activeStage: "s1",
+  });
+  assert.ok(codes(validateBuild(badLevel, snapshot), "error").includes("stage-level-out-of-range"));
+
+  // The character is at 30 with a talent allocated; the stage claims neither.
+  const stale = build({
+    tree: { talents: [[2, 2]] },
+    stages: [{ id: "s1", name: "One", main: true, level: 30 }],
+    activeStage: "s1",
+  });
+  assert.deepEqual(codes(validateBuild(stale, snapshot), "warning"), ["stage-out-of-sync"]);
+
+  const orphaned = build({
+    stages: [{ id: "s1", name: "One", main: true, level: 30 }],
+    activeStage: "s9",
+  });
+  assert.deepEqual(codes(validateBuild(orphaned, snapshot), "warning"), ["unknown-active-stage"]);
 });

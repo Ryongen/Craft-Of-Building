@@ -56,6 +56,8 @@ import { mainSkillIndex, useDerived } from "../../state/derived.js";
 import { vitalsOf } from "../../state/compare.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
 import { useWorld } from "../../state/snapshot.js";
+import { useSpellTooltip } from "../../ui/SpellTooltip.js";
+import { spellCard } from "../../ui/spell-stats.js";
 import { Fact } from "../../ui/Fact.js";
 import { NumberField, useRollDraft } from "../../ui/fields.js";
 import { GemRarityRoll, bestGemPreset, gemBand, gemRarities, type GemPreset } from "../../ui/GemRoll.js";
@@ -591,6 +593,27 @@ function SkillCard({
     skill.level !== undefined && resolvedRank !== undefined && resolvedRank !== skill.level;
   const description = spellDesc(world.snapshot, skill.spellId);
 
+  /*
+    The game's own tooltip for this skill, on the icon beside the picker.
+
+    The ranks are handed over rather than re-derived: `shownLevel` is what this card's own Level
+    field shows, which is the pinned number, or the rank the class taught plus whatever gear
+    added, and working any of that out a second time inside the tooltip would be a second answer
+    to a question this component has already answered carefully above.
+  */
+  const spellTipCard = useMemo(
+    () =>
+      spellCard(world.snapshot, skill.spellId, {
+        level: shownLevel,
+        natural: maxRank,
+        ceiling: rankCeiling,
+        characterLevel: doc.character.level,
+      }),
+    [world.snapshot, skill.spellId, shownLevel, maxRank, rankCeiling, doc.character.level],
+  );
+  const spellTip = useSpellTooltip(spellTipCard);
+  const spellIcon = world.icon(`mmorpg:textures/gui/spells/icons/${skill.spellId}.png`);
+
   /**
    * A skill this build already holds that the picker no longer offers — see
    * `SnapshotWorld.spellIds`. Either the hired companion's, or one the pack has retired.
@@ -703,6 +726,19 @@ function SkillCard({
       )}
 
       <div className="row wrap mb-3">
+        {/*
+          The skill's own art, and the anchor for its tooltip.
+
+          Not on the picker itself: hovering a control you are about to open would put a card
+          over the list it is about to show. A 32px frame beside it is a place to *rest* the
+          pointer, and it also puts the spell's icon on the panel, which until now showed the
+          one thing in the pack a build is named after with no picture of it anywhere.
+        */}
+        <span className="tt-anchor" {...spellTip.props}>
+          {spellIcon !== null && <img className="tt-spell-icon" src={spellIcon} alt="" />}
+          {spellTip.node}
+        </span>
+
         <Picker
           options={cardSpellOptions}
           value={skill.spellId}
@@ -836,10 +872,40 @@ function SkillCard({
       <ResolvedFacts index={index} />
 
 
-      {description !== undefined && (
-        <p className="faint text-sm" style={{ margin: "0 0 10px", userSelect: "text" }}>
-          {description}
-        </p>
+      {/*
+        The pack's own description, with its numbers in it.
+
+        This used to print `spellDesc`, which is the raw lang string with the § codes stripped
+        and nothing else — so the line a player reads to find out what a skill *does* said
+        "dealing [calc:tailwind_sweep] ☆ Physical Damage", the data's variable name and all. The
+        tooltip resolves it (`spell-stats.ts`), so this reads the same text from the same place
+        rather than keeping a second, worse copy.
+      */}
+      {spellTipCard !== undefined && spellTipCard.description.length > 0 ? (
+        <div className="skill-desc">
+          {spellTipCard.description.map((spans, i) => (
+            <p key={i}>
+              {spans.map((span, j) => (
+                <span
+                  key={j}
+                  style={{
+                    color: span.colour,
+                    fontWeight: span.bold ? 700 : undefined,
+                    fontStyle: span.italic ? "italic" : undefined,
+                  }}
+                >
+                  {span.text}
+                </span>
+              ))}
+            </p>
+          ))}
+        </div>
+      ) : (
+        description !== undefined && (
+          <p className="faint text-sm" style={{ margin: "0 0 10px", userSelect: "text" }}>
+            {description}
+          </p>
+        )
       )}
 
       <div className="section-title">

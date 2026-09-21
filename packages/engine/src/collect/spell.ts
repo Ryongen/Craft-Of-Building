@@ -26,7 +26,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, SkillSetup } from "@cte2/schema";
-import { CATEGORY, activeSupportLinks, entry, learnedSpells } from "@cte2/schema";
+import { CATEGORY, entry, isSupportEnabled, learnedSpells, supportLinks } from "@cte2/schema";
 
 import type { Balance } from "../balance.js";
 import { context, type Env, type StatContext } from "../context.js";
@@ -119,13 +119,21 @@ export function supportSocketsFor(
  */
 function collectSupportGems(env: Env, skill: SkillSetup, path: string): StatContext[] {
   const out: StatContext[] = [];
-  // `activeSupportLinks` rather than `supportLinks`: a link switched off in the planner is an
-  // empty socket, so it contributes nothing here. The index the diagnostic path names is still
-  // the link's place in the document, which is what a validator finding has to point at.
-  const links = activeSupportLinks(skill);
+  /*
+    `supportLinks` and a skip, rather than `activeSupportLinks`.
+
+    A link switched off in the planner is an empty socket and contributes nothing, which is what
+    the filter was for — but filtering first renumbers what is left, and the index in the path is
+    load-bearing twice over. A validator finding has to point at the link's place in the
+    *document*, and so does the planner: `provenanceOf` parses `skills[0].supports[2]` back into
+    `doc.skills[0].supports[2]` to price the hover card at that gem's own roll. With one gem
+    disabled above it, every path below shifted up by one and the card described the wrong gem.
+  */
+  const links = supportLinks(skill);
   if (links.length === 0) return out;
 
   links.forEach((link, i) => {
+    if (!isSupportEnabled(link)) return;
     const at = `${path}.supports[${i}]`;
     const data = entry(env.snapshot, CATEGORY.supportGem, link.id)?.data;
     if (!data) {

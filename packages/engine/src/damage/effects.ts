@@ -250,10 +250,15 @@ function modifyStatLayer(
     return;
   }
 
-  let num = numberValue(ctx, data["number_provider"], subject, side);
+  const raw = numberValue(ctx, data["number_provider"], subject, side);
+  let num = raw;
+  // Kept as its own scalar rather than folded into `num`, so the trace can say what the layer
+  // got was the stat times the skill's effectiveness and not a number out of nowhere.
+  let effectiveness = 1;
   for (const modifier of modifiersOf(data["number_modifiers"])) {
     if (modifier === "SPELL_DAMAGE_EFFECTIVENESS_MULTI") {
-      num = ctx.event.data.getNumber(EVENT.DMG_EFFECTIVENESS, 1) * num;
+      effectiveness = ctx.event.data.getNumber(EVENT.DMG_EFFECTIVENESS, 1);
+      num = effectiveness * num;
     }
   }
 
@@ -262,8 +267,11 @@ function modifyStatLayer(
     num *= weight;
   }
 
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
   if ((stringAt(data, "modification") ?? "ADD").toUpperCase() === "REDUCE") layer.reduce(num);
   else layer.add(num);
+  recorder?.scaledSince(before, raw, effectiveness);
 
   if (subject.multiUseType === "MULTIPLICATIVE_DAMAGE") {
     ctx.event.addMoreMulti(subject.statId, numberId, subject.dmgMulti);

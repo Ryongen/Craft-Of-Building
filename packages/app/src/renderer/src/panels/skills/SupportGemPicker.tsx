@@ -41,6 +41,8 @@ import { supportGemAffectsSheet } from "@cte2/engine";
 import { useRanking, type Ranked, type Vitals } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
 import type { GemPreset } from "../../ui/GemRoll.js";
+import { useGemTooltip } from "../../ui/SpellTooltip.js";
+import { supportGemCard } from "../../ui/spell-stats.js";
 import { percent, round, signGlyph, smart } from "../../ui/format.js";
 
 /** Below this the two figures are the same number and the difference is float noise. */
@@ -264,6 +266,7 @@ export function SupportGemPicker({
               selected={row.id === value}
               linked={alreadyLinked.has(row.id)}
               costMulti={manaMulti(world.snapshot, row.id)}
+              preset={preset}
               onPick={() => {
                 if (alreadyLinked.has(row.id)) return;
                 onChange(row.id);
@@ -283,6 +286,7 @@ function GemRow({
   selected,
   linked,
   costMulti,
+  preset,
   onPick,
 }: {
   row: Ranked<string>;
@@ -290,9 +294,12 @@ function GemRow({
   /** Already in another socket of this skill, so illegal here. */
   linked: boolean;
   costMulti: number;
-  onPick: () => void;
+  /** The rarity and roll every row was priced at, so the card shows the same numbers. */
+  preset: GemPreset | undefined;
+  onPick: (event: React.MouseEvent) => void;
 }): ReactNode {
   const world = useWorld();
+  const characterLevel = useBuild((s) => s.doc.character.level);
   const dps = row.comparison.headline.find((d) => d.key === "dps");
   const full = row.comparison.headline.find((d) => d.key === "fullDps");
 
@@ -311,28 +318,56 @@ function GemRow({
   const tone = nothing ? "" : moved.good ? "up" : "down";
   const isDps = !nothing && moved === dps;
 
-  return (
-    <div
-      className={`picker-option gem-rank-row${selected ? " active" : ""}${linked ? " linked" : ""}`}
-      onMouseDown={onPick}
-      title={
-        linked
-          ? "Already linked to this skill in another socket. One Skill may not hold two of the " +
-            "same support gem."
-          : selected
-            ? "The gem in this socket now — the figure every other row is measured against."
-            : nothing
-          ? "This gem's stats do not reach this skill: nothing it grants is read by any of " +
-            "the skill's damage sources, its cooldown or the buff it applies."
-          : isDps
+  /*
+    What this row is claiming, said on the card rather than in a `title`.
+
+    The two cannot both be up: a browser tooltip and a card over the same row are two boxes
+    racing for the same corner of the screen. The card is the one worth keeping — it carries the
+    gem's actual stats, which is the question the ranking number provokes — so the ranking's own
+    note becomes a line on it.
+  */
+  const note = linked
+    ? "Already linked to this skill in another socket. One Skill may not hold two of the same " +
+      "support gem."
+    : selected
+      ? "The gem in this socket now — the figure every other row is measured against."
+      : nothing
+        ? "This gem's stats do not reach this skill: nothing it grants is read by any of the " +
+          "skill's damage sources, its cooldown or the buff it applies."
+        : isDps
           ? `${signGlyph(moved.change)}${smart(Math.round(Math.abs(moved.change)))} DPS on this skill` +
             (full === undefined
               ? ""
               : `, ${signGlyph(full.change)}${smart(Math.round(Math.abs(full.change)))} on the rotation`)
           : `${moved.label} ${signGlyph(moved.change)}${smart(round(Math.abs(moved.change)))}` +
-            " — this gem changes nothing about the hit"
-      }
+            " — this gem changes nothing about the hit";
+
+  /*
+    Priced at the same roll the ranking used.
+
+    A card showing the gem at 100% beside a row priced at the preset's 40% would be two different
+    gems on one line. `preset` is the control at the top of the panel, and it governs both.
+  */
+  const card = useMemo(
+    () =>
+      supportGemCard(world.snapshot, row.id, {
+        rollPercent: preset?.rollPercent ?? 100,
+        characterLevel,
+      }),
+    [world.snapshot, row.id, preset?.rollPercent, characterLevel],
+  );
+  const tip = useGemTooltip(card === undefined ? undefined : { ...card, note });
+
+  return (
+    <div
+      className={`picker-option gem-rank-row${selected ? " active" : ""}${linked ? " linked" : ""}`}
+      onMouseDown={(event) => {
+        tip.clear();
+        onPick(event);
+      }}
+      {...tip.props}
     >
+      {tip.node}
       <span className="ellipsis gem-rank-name">{supportGemName(world.snapshot, row.id)}</span>
 
       {linked ? (

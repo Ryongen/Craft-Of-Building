@@ -665,13 +665,28 @@ function buffScenario({
   potionDur = -1,
   buffCooldownTicks = 40,
   buffDamages = false,
-}: { potionDur?: number; buffCooldownTicks?: number; buffDamages?: boolean } = {}) {
+  onTarget = false,
+  buffTags = ["magic", "buff"],
+}: {
+  potionDur?: number;
+  buffCooldownTicks?: number;
+  buffDamages?: boolean;
+  /**
+   * Put the effect on the pack instead of on yourself — a curse rather than a stance.
+   *
+   * `curse_of_damnation` is the shape: `damnation` on everything within four blocks for 200
+   * ticks, behind a 60-tick cooldown. Which side the effect lands on is read off the enclosing
+   * part's target selector and nothing else, which is why this is the only field that changes.
+   */
+  onTarget?: boolean;
+  buffTags?: string[];
+} = {}) {
   const strike = spellEntry("strike", "Physical", "hit100", {
     config: { tags: { tags: ["melee"] }, use_support_gems_from: "", cooldown_ticks: 0, cast_time_ticks: 0, cast_speed_ticks: 20 },
   });
   const stance = spellEntry("stance", "Physical", "hit100", {
     config: {
-      tags: { tags: ["magic", "buff"] },
+      tags: { tags: buffTags },
       use_support_gems_from: "",
       cooldown_ticks: buffCooldownTicks,
       cast_time_ticks: 5,
@@ -689,7 +704,9 @@ function buffScenario({
             },
           ],
           ifs: [],
-          targets: [{ type: "self", map: {} }],
+          targets: onTarget
+            ? [{ type: "aoe", map: { radius: 4, selection_type: "RADIUS", en_predicate: "enemies" } }]
+            : [{ type: "self", map: {} }],
           en_preds: [],
         },
         // `power_surge` and `mirror_image` are the pack's own buffs that also hit, and both are
@@ -1433,4 +1450,35 @@ test("the Shatter pool converges on one shatter's worth of hits as the decay sto
   assert.ok(fast.ailmentHit < ceiling, "the decay always takes something");
   assert.ok(fast.ailmentHit > ceiling * 0.95, "but almost nothing at a fast cast rate");
   assert.ok(slow.ailmentHit < fast.ailmentHit * 0.5, "a ten-second cast leaks most of the pool");
+});
+
+test("a curse is paced by how long it sits on the pack, not by its cooldown", () => {
+  // The `curse_of_damnation` shape: 200 ticks on the enemy behind a 60-tick cooldown. Nobody
+  // re-curses three times over, and a pass that charged three casts said they did.
+  const snapshot = buffScenario({ potionDur: 200, buffCooldownTicks: 60, onTarget: true, buffTags: ["area", "curse", "magic"] });
+  const full = simulateFullDps(
+    build({ skills: [ROTATION, { spellId: "stance", includeInFullDps: true }] } as Partial<BuildDoc>),
+    snapshot,
+  );
+
+  const entry = full.skills.find((e) => e.skill.spellId === "stance");
+  assert.ok(entry);
+  assert.equal(entry.role, "upkeep");
+  assert.equal(entry.upkeepHolder, "target", "the effect is on the pack, so the pack's clock paces it");
+  // Ten seconds of debuff, not the 3.25s the cast plus cooldown would have claimed.
+  closeTo(entry.upkeepSeconds ?? 0, 10);
+  closeTo(entry.upkeepDurationSeconds ?? 0, 10);
+});
+
+test("a curse's own cooldown does not stretch the pass", () => {
+  // A 400-tick cooldown next to a 1s attack. As a rotation step the pass waited 20s for it.
+  const snapshot = buffScenario({ potionDur: 400, buffCooldownTicks: 400, onTarget: true, buffTags: ["area", "curse", "magic"] });
+  const alone = simulateFullDps(build({ skills: [ROTATION] } as Partial<BuildDoc>), snapshot);
+  const cursed = simulateFullDps(
+    build({ skills: [ROTATION, { spellId: "stance", includeInFullDps: true }] } as Partial<BuildDoc>),
+    snapshot,
+  );
+
+  assert.ok(cursed.rotationSeconds < alone.rotationSeconds * 1.02);
+  assert.ok(!cursed.diagnostics.some((d) => d.code === "full-dps-cooldown-bound"));
 });
