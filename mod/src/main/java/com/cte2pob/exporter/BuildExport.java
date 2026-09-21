@@ -332,6 +332,10 @@ public final class BuildExport {
             JsonObject out = new JsonObject();
             out.addProperty("rarity", jewel.rar);
             out.addProperty("itemLevel", jewel.lvl);
+            // `JewelItemData.style` — a PlayStyle id. It names the jewel (Meteorite, Viridian
+            // or Stardust) and it decides which affixes could have rolled on it, so a capture
+            // without it reads back as a str jewel and a Stardust one looks illegal.
+            out.addProperty("style", jewel.style);
 
             JsonArray affixes = affixArray(jewel.affixes);
             if (affixes.size() > 0) {

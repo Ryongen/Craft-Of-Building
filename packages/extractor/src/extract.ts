@@ -891,14 +891,31 @@ function asMessage(err: unknown): string {
 }
 
 /**
- * Every Minecraft item id a gear base can roll as, for the item-icon pass.
+ * The four jewels, which no registry lists.
  *
- * `possible_items` is a weighted list per base — 171 distinct ids across five namespaces in
- * this pack — and they belong to other mods, which is why resolving their sprites needs the
- * whole of `mods/` rather than just Mine and Slash.
+ * A jewel is not a `mmorpg_base_gear_types` entry — it has no base at all — so the sweep below
+ * cannot find it. `JewelItemData.getItem()` picks one of four hard-coded `SlashItems` instead,
+ * and these are their registry paths. All four sprites are in the Mine and Slash jar under
+ * `textures/item/jewel/`; the fifth model there, `unique_crafted`, belongs to an item the
+ * document has no way to describe, so it is left out rather than extracted unused.
+ */
+const JEWEL_ITEM_IDS = [
+  "mmorpg:jewel/str",
+  "mmorpg:jewel/dex",
+  "mmorpg:jewel/int",
+  "mmorpg:jewel/watcher_eye",
+];
+
+/**
+ * Every Minecraft item id the app draws a sprite for.
+ *
+ * Mostly what a gear base can roll as: `possible_items` is a weighted list per base — 171
+ * distinct ids across five namespaces in this pack — and they belong to other mods, which is
+ * why resolving their sprites needs the whole of `mods/` rather than just Mine and Slash. The
+ * jewels are added on top because they are items without bases; see {@link JEWEL_ITEM_IDS}.
  */
 export function gearItemIds(snapshot: Snapshot): string[] {
-  const ids = new Set<string>();
+  const ids = new Set<string>(JEWEL_ITEM_IDS);
   for (const entry of Object.values(snapshot.registries["mmorpg_base_gear_types"] ?? {})) {
     const items = entry.data["possible_items"];
     if (!Array.isArray(items)) continue;

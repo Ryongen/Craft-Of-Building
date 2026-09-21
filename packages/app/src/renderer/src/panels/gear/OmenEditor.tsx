@@ -8,10 +8,19 @@
  * "show why this is or is not paying out", which is what the tier list at the bottom is: each
  * bucket, the pieces it needs, whether you have them, and what it gives.
  *
- * The other thing worth making visible is that the stat percent is **not a roll**. There is no
- * slider here because there is nothing to slide: `OmenData.getStatPercent` derives it from how
- * hard the omen is to satisfy, so editing the requirements *is* editing the payout. The header
- * prints the derived number and flags it when it exceeds 100, which the game does not clamp.
+ * The other thing worth making visible is that **nothing on an omen is rolled**. There is no
+ * slider anywhere here because there is nothing to slide: `OmenData.getStatPercent` derives one
+ * percent from how hard the omen is to satisfy, and every stat the omen grants resolves at it —
+ * its own mods and its corruption affixes alike, since `OmenBlueprint` writes that same number
+ * into each `AffixData.p` instead of drawing from the tier's band. So editing the requirements
+ * *is* editing the payout, and it is the only thing that is. The header prints the derived
+ * number and flags it when it exceeds 100, which the game does not clamp.
+ *
+ * The affix rows had a tier dropdown and a roll slider, which is the gear editor's shape and
+ * the wrong one: both fields are the omen's, not the affix's, and a slider offering 86..100 on
+ * a mythic omen whose real percent is 125 was offering numbers the game cannot produce. They
+ * are shown as derived now, and {@link syncAffixes} rewrites what the document stores whenever
+ * a requirement or the rarity moves, the way `UpgradeOmenRarityItemMod` does.
  */
 
 import { balance, parseRolledMods, rollToExact, statIndex } from "@cte2/engine";
@@ -21,8 +30,8 @@ import {
   affix,
   affixName,
   countOmenPieces,
-  gearRarity,
   ids,
+  omenAffixRoll,
   omen as omenView,
   omenBuckets,
   omenCountsSlot,
@@ -36,11 +45,12 @@ import {
   type Item,
   type OmenSetup,
 } from "@cte2/schema";
+import type { Snapshot } from "@cte2/extractor";
 import { useMemo, type ReactNode } from "react";
 
 import { applyPatch, type Patch } from "../../state/patch.js";
 import { useWorld } from "../../state/snapshot.js";
-import { NumberField, RollSlider, smart } from "../../ui/fields.js";
+import { NumberField, smart } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 
@@ -96,7 +106,11 @@ export function OmenEditor({
 
   // `Patch` rather than `Partial`: the repo compiles with `exactOptionalPropertyTypes`, and
   // clearing a field means passing an explicit `undefined` for `applyPatch` to delete.
-  const patch = (next: Patch<OmenSetup>): void => onChange(applyPatch(omen, next));
+  //
+  // Every edit goes through `syncAffixes`, because three of the fields on this form are inputs
+  // to what the affixes store.
+  const patch = (next: Patch<OmenSetup>): void =>
+    onChange(syncAffixes(snapshot, applyPatch(omen, next)));
 
   return (
     <div className="card">
@@ -158,7 +172,7 @@ export function OmenEditor({
 
       <Requirements omen={omen} patch={patch} />
       <SlotRequirements omen={omen} patch={patch} />
-      <OmenAffixes omen={omen} view={view} patch={patch} />
+      <OmenAffixes omen={omen} view={view} percent={percent} patch={patch} />
 
       <div className="section-title">What it grants</div>
       {buckets.length === 0 ? (
@@ -178,7 +192,7 @@ export function OmenEditor({
               </div>
               <BucketStats
                 mods={bucket.mods}
-                statPercent={bucket.statPercent ?? 0}
+                statPercent={bucket.statPercent}
                 affixRoll={bucket.affix}
                 itemLevel={omen.itemLevel}
               />
@@ -188,6 +202,36 @@ export function OmenEditor({
       )}
     </div>
   );
+}
+
+/**
+ * Rewrite every stored affix tier and roll from the omen they belong to.
+ *
+ * `UpgradeOmenRarityItemMod` is the precedent and says why this is not tidying:
+ *
+ *     omen.rar = newRar.GUID();
+ *     int newPerc = OmenData.getStatPercent(omen.rarities, omen.slot_req, newRar);
+ *     for (AffixData aff : omen.aff) {
+ *         aff.rar = newRar.GUID();
+ *         aff.p = newPerc;
+ *     }
+ *
+ * The rarity and the requirements are not properties of the omen that its affixes happen to
+ * sit beside — they are the two things those affixes are computed from, and the game rewrites
+ * the stored copies the moment either moves. `omenBuckets` re-derives regardless, so nothing
+ * the planner shows depends on this; what it buys is that the saved document, and anything
+ * reading it later, says the same thing the game would have saved.
+ */
+function syncAffixes(snapshot: Snapshot, setup: OmenSetup): OmenSetup {
+  const affixes = setup.affixes;
+  if (affixes === undefined || affixes.length === 0) return setup;
+  const percent = omenStatPercent(
+    snapshot,
+    setup.requires,
+    (setup.slotRequirements ?? []).length,
+    setup.rarity,
+  );
+  return { ...setup, affixes: affixes.map((roll) => omenAffixRoll(roll, setup, percent)) };
 }
 
 /** `OmenData.rarities` — how many pieces of each `GearRarityType` are needed. */
@@ -315,18 +359,24 @@ function SlotRequirements({
  *
  * The pool is the omen's own `affix_types`, which is `chaos_stat` throughout this pack. It is
  * not filtered by any base's tags, because an omen is not gear and has none.
+ *
+ * The only thing the player chooses about one of these is **which affix it is**. Its tier is
+ * the omen's rarity and its magnitude is the omen's derived percent, so both are printed
+ * rather than offered.
  */
 function OmenAffixes({
   omen,
   view,
+  percent,
   patch,
 }: {
   omen: OmenSetup;
   view: ReturnType<typeof omenView>;
+  /** The derived `getStatPercent`, which is also every affix's roll. */
+  percent: number;
   patch: (next: Patch<OmenSetup>) => void;
 }): ReactNode {
-  const world = useWorld();
-  const { snapshot } = world;
+  const { snapshot } = useWorld();
   const affixes = omen.affixes ?? [];
 
   // An omen has no base gear type, so `affixesFor` cannot filter by tags — take every affix of
@@ -346,16 +396,6 @@ function OmenAffixes({
     [pool, snapshot],
   );
 
-  const tiers = useMemo(
-    () =>
-      ids(snapshot, CATEGORY.gearRarity)
-        .map((id) => gearRarity(snapshot, id))
-        .filter((r) => r !== undefined && !r.isUniqueItem)
-        .map((r) => r!.id)
-        .sort(),
-    [snapshot],
-  );
-
   const update = (next: AffixRoll[]): void =>
     patch({ affixes: next.length === 0 ? undefined : next });
 
@@ -364,74 +404,53 @@ function OmenAffixes({
       <div className="section-title">
         Corruption affixes <span className="faint">({affixes.length} — each unlocks one piece earlier)</span>
       </div>
-      {affixes.map((roll, index) => {
-        // Omen affixes carry a tier like an item's do; the fallback covers only the optional
-        // field, which exists for tierless implicits.
-        const band =
-          (roll.tier === undefined ? undefined : world.rarity(roll.tier)?.statPercents) ??
-          { min: 0, max: 100 };
-        return (
-          <div key={index} className="row mb-2">
-            <Picker
-              options={options}
-              value={roll.affixId}
-              onChange={(id) =>
-                id !== undefined && update(affixes.map((r, i) => (i === index ? { ...r, affixId: id } : r)))
-              }
-              width={200}
-            />
-            <select
-              value={roll.tier}
-              onChange={(event) => {
-                const tier = event.target.value;
-                const next = world.rarity(tier)?.statPercents ?? { min: 0, max: 100 };
-                update(
-                  affixes.map((r, i) =>
-                    i === index
-                      ? { ...r, tier, rollPercent: Math.min(Math.max(r.rollPercent, next.min), next.max) }
-                      : r,
-                  ),
-                );
-              }}
-            >
-              {tiers.map((tier) => (
-                <option key={tier} value={tier}>
-                  {tier}
-                </option>
-              ))}
-            </select>
-            <RollSlider
-              value={roll.rollPercent}
-              min={band.min}
-              max={band.max}
-              onChange={(rollPercent) =>
-                update(affixes.map((r, i) => (i === index ? { ...r, rollPercent } : r)))
-              }
-            />
-            <button onClick={() => update(affixes.filter((_, i) => i !== index))}>✕</button>
-          </div>
-        );
-      })}
+      {affixes.map((roll, index) => (
+        <div key={index} className="row mb-2">
+          <Picker
+            options={options}
+            value={roll.affixId}
+            onChange={(id) =>
+              id !== undefined && update(affixes.map((r, i) => (i === index ? { ...r, affixId: id } : r)))
+            }
+            width={200}
+          />
+          {/* Both of these were controls. `adata.rar = rar.GUID()` and
+              `adata.p = OmenData.getStatPercent(...)` — the omen fills them in, so the row
+              reports them and the two omen fields above are where they are changed. */}
+          <span className="badge" title="AffixData.rar — an omen's affix takes the omen's rarity">
+            {omen.rarity}
+          </span>
+          <span className="badge" title="AffixData.p — the same derived percent as the omen's own mods">
+            at {percent}%
+          </span>
+          <div className="grow" />
+          <button onClick={() => update(affixes.filter((_, i) => i !== index))}>✕</button>
+        </div>
+      ))}
       {/* `pool[0]` was whichever affix the registry ordered first. The tier and roll it arrives
-          with are the same ones the row's own controls start at: the first legal tier, at the
-          floor of that tier's band — `tier: "common"` and `rollPercent: 0` were literals, and
-          nothing guarantees this pack has a rarity called `common` or that its band starts at 0. */}
+          with are not a starting point to adjust — they are the only ones the affix can have,
+          so they come from the omen rather than from literals that assumed a rarity called
+          `common` and a band starting at 0. */}
       <AddPicker
         label="Add affix"
         placeholder="Which corruption?"
         options={options}
         width={240}
-        onAdd={(affixId) => {
-          const tier = tiers[0] ?? "common";
-          const band = world.rarity(tier)?.statPercents ?? { min: 0, max: 100 };
-          update([...affixes, { affixId, tier, rollPercent: band.min }]);
-        }}
+        onAdd={(affixId) =>
+          update([...affixes, omenAffixRoll({ affixId, rollPercent: percent }, omen, percent)])
+        }
       />
     </>
   );
 }
 
-/** One bucket's stats, resolved through the engine so they match the sheet. */
+/**
+ * One bucket's stats, resolved through the engine so they match the sheet.
+ *
+ * Both kinds of bucket resolve at the same `statPercent`, because an omen has one percent:
+ * `OmenSet` maps its own mods through `ToExactStat(perc, lvl)` and each affix through
+ * `GetAllStats(lvl)`, whose `p` the blueprint set to that same `perc`.
+ */
 function BucketStats({
   mods,
   statPercent,
@@ -449,10 +468,9 @@ function BucketStats({
     const index = statIndex(snapshot);
     const bal = balance(snapshot);
     const source = mods ?? affix(snapshot, affixRoll?.affixId ?? "")?.stats ?? [];
-    const percent = mods !== undefined ? statPercent : (affixRoll?.rollPercent ?? 0);
 
     return parseRolledMods(source as Record<string, unknown>[]).map((mod) => {
-      const exact = rollToExact(mod, percent, itemLevel, index.shapeOf(mod.statId), bal);
+      const exact = rollToExact(mod, statPercent, itemLevel, index.shapeOf(mod.statId), bal);
       const name = statName(snapshot, mod.statId);
       const suffix = mod.type === "PERCENT" ? `% Increased ${name}` : mod.type === "MORE" ? `% More ${name}` : ` ${name}`;
       return `${exact.value >= 0 ? "+" : ""}${smart(exact.value)}${suffix}`;

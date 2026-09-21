@@ -34,6 +34,7 @@ import {
   type TreeCoord,
   type TreeKey,
 } from "./build-doc.js";
+import { DEFAULT_JEWEL_STYLE } from "./display.js";
 import { ELEMENT_GUIDS } from "./elements.js";
 import { isTargetPresetId } from "./target-presets.js";
 import {
@@ -50,12 +51,15 @@ import {
   omen,
   omenCountsSlot,
   omenMinLevel,
+  omenStatPercent,
   isGearRarityType,
   GEAR_RARITY_TYPES,
   has,
   isAffixType,
+  isJewelStyle,
   isKnownReqType,
   isTwoHanded,
+  jewelTags,
   maxBonusSpellLevels,
   maxLevel,
   maxOfOneAffixType,
@@ -861,6 +865,25 @@ function validateTier(
   // roll came from (`AffixData.getMinMax` returns `getRarity().stat_percents`), and the band
   // check below still holds the roll to it.
 
+  // An infusion is the one "affix" that does not roll at all. `GearInfusionData` saves `en` and
+  // `rar` and derives the rest —
+  //
+  //     public int getPercent() { return ExileDB.GearRarities().get(rar).stat_percents.max; }
+  //
+  // — so the top of the band is not merely the best value it can have, it is the *only* one. A
+  // document saying otherwise describes an item the game cannot produce, and the fix is one
+  // number rather than a re-roll, which is why this reports rather than refuses.
+  if (expectedType === "enchant" && roll.rollPercent !== tier.statPercents.max) {
+    add(
+      "warning",
+      "infusion-roll-not-tier-max",
+      `${path}.rollPercent`,
+      `An infusion has no roll — GearInfusionData.getPercent() is its rarity's ` +
+        `\`stat_percents.max\`, so a "${tier.id}" one is always ${tier.statPercents.max}, not ` +
+        `${roll.rollPercent}.`,
+    );
+  }
+
   const band = tier.statPercents;
   if (!Number.isFinite(roll.rollPercent) || roll.rollPercent < band.min || roll.rollPercent > band.max) {
     add(
@@ -1193,6 +1216,17 @@ function validateJewel(jewel: Jewel, snapshot: Snapshot, path: string, add: Add)
   if (!Number.isInteger(jewel.itemLevel) || jewel.itemLevel < 0) {
     add("error", "bad-item-level", `${path}.itemLevel`, `Must be a non-negative integer, got ${jewel.itemLevel}.`);
   }
+  // `PlayStyle.fromID` falls back to STR rather than throwing, so an unknown style is a real
+  // jewel with the wrong name and the wrong affix pool — worth saying out loud, not silently
+  // defaulting, per this file's no-silent-defaults rule.
+  if (jewel.style !== undefined && !isJewelStyle(jewel.style)) {
+    add(
+      "error",
+      "unknown-jewel-style",
+      `${path}.style`,
+      `"${jewel.style}" is not a PlayStyle id. Expected "str", "dex" or "int".`,
+    );
+  }
 
   for (const [i, roll] of (jewel.affixes ?? []).entries()) {
     const at = `${path}.affixes[${i}]`;
@@ -1209,6 +1243,31 @@ function validateJewel(jewel: Jewel, snapshot: Snapshot, path: string, add: Add)
         "affix-type-mismatch",
         at,
         `"${view.id}" is a "${view.type}" affix and cannot appear on a jewel.`,
+      );
+    } else if (view.type === "jewel" && !affixAllowedOnTags(view, jewelTags(jewel.style))) {
+      // `generateAffixes` rolls from `any_jewel` plus the style's own tag and nothing else, so
+      // an affix outside that pool is an item the game cannot produce — the jewel equivalent
+      // of an affix on a base whose tags it does not accept.
+      //
+      // Unless the document never said which style it is. `JewelItemData.style` defaults to
+      // `str` in Java, so reading an absent field as `str` is what the game does; but a
+      // document that omits it is usually a capture taken before the exporter recorded it
+      // rather than a claim about the jewel, and calling a real Stardust Jewel illegal on that
+      // basis would be the validator asserting something it has not been told. Stated style,
+      // error; assumed style, warning — the same split this file uses everywhere else.
+      const stated = jewel.style !== undefined;
+      add(
+        stated ? "error" : "warning",
+        "affix-not-allowed-on-jewel",
+        at,
+        `"${view.id}" does not roll on a "${jewel.style ?? DEFAULT_JEWEL_STYLE}" jewel: ` +
+          `it needs one of [${view.tagRequirements.flatMap((r) => r.included).join(", ")}] ` +
+          `and the jewel carries [${jewelTags(jewel.style).join(", ")}].` +
+          (stated
+            ? ""
+            : ` No \`style\` is recorded, so "${DEFAULT_JEWEL_STYLE}" was assumed — set it to the` +
+              ` jewel's real play style, or re-export with a build of the companion mod that` +
+              ` records it.`),
       );
     }
     // A jewel affix is an `AffixData` like any other, tier and all — only implicits are
@@ -1568,6 +1627,22 @@ function validateReferences(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
         "unknown-condition",
         `config.conditions.${conditionId}`,
         "No mmorpg_stat_condition entry with this id.",
+      );
+    }
+  }
+
+  // A health fraction is a fraction. `getHealth() / getMaxHealth() * 100` cannot leave 0..100, so
+  // anything outside it would silently settle every threshold in the pack the same way — which
+  // is the quiet answer this package exists to refuse.
+  for (const field of ["targetHealthPercent", "selfHealthPercent"] as const) {
+    const value = doc.config?.[field];
+    if (value === undefined) continue;
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      add(
+        "error",
+        "health-percent-out-of-range",
+        `config.${field}`,
+        `A share of maximum health is 0..100, got ${value}.`,
       );
     }
   }
@@ -1987,6 +2062,10 @@ function validateSchools(doc: BuildDoc, snapshot: Snapshot, balanceId: string, a
  * combination outside a band is suspicious rather than impossible. The things that *are*
  * errors are the ones no code path can produce: an unknown id, a rarity type that is not one
  * of the three, a negative count.
+ *
+ * The affixes are the same shape of check, for the same reason: they do not roll either, so
+ * the only thing to say about a stored tier or roll is whether it still agrees with what the
+ * requirements derive. See {@link validateOmenAffixRoll}.
  */
 function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   const setup = doc.omen;
@@ -2088,6 +2167,12 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   // The omen's affix pool is its own: `Omen.affix_types` is `chaos_stat` throughout this pack,
   // which is the corruption pool rather than the prefix/suffix one.
   const legalTypes = view?.affixTypes ?? [];
+  const derived = omenStatPercent(
+    snapshot,
+    setup.requires,
+    (setup.slotRequirements ?? []).length,
+    setup.rarity,
+  );
   for (const [i, roll] of (setup.affixes ?? []).entries()) {
     const at = `omen.affixes[${i}]`;
     const affixView = affix(snapshot, roll.affixId);
@@ -2103,9 +2188,13 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
         `"${roll.affixId}" is a ${affixView.type}; "${setup.id}" accepts ${legalTypes.join(", ")}.`,
       );
     }
-    // An omen's affixes carry their own tier and roll exactly as an item's do; the omen's
-    // rarity bounds them the same way an item's rarity bounds its affixes.
-    validateTier(roll, "chaos_stat", snapshot, rarity, at, add);
+    // `validateTier` is deliberately not used here, and was. It holds a roll inside its tier's
+    // `stat_percents`, which is right for gear and wrong for an omen: an omen's affix does not
+    // roll, so its `p` is free to sit outside the band its `rar` names. A legendary omen at the
+    // bottom of its generator's bands derives 55 against a legendary band of 69..85, and a
+    // mythic one at the top derives 125 against 86..100 — both were `roll-outside-tier-band`
+    // errors on omens the game had just produced.
+    validateOmenAffixRoll(roll, setup.rarity, derived, at, add);
   }
 
   const affixBand = omenBand(snapshot, setup.rarity, "affixes");
@@ -2116,6 +2205,48 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
       "omen-affix-count-outside-band",
       "omen.affixes",
       `A "${setup.rarity}" omen generates ${affixBand.min}..${affixBand.max} affixes, not ${affixCountOnOmen}.`,
+    );
+  }
+}
+
+/**
+ * An omen affix's stored tier and roll against the two the omen derives.
+ *
+ * Neither is an input. `OmenBlueprint.generate` writes the omen's own rarity into `adata.rar`
+ * and `OmenData.getStatPercent(...)` into `adata.p`, and both currencies that edit an omen
+ * rewrite them from the same two sources — so a document where they disagree is one nothing
+ * in the game could have saved.
+ *
+ * Reported as **warnings** rather than errors because nothing depends on them: `omenBuckets`
+ * re-derives both, so a stale pair changes no number the planner shows. What it does mean is
+ * that something wrote the document without re-deriving — an older capture, a hand edit — and
+ * that is worth saying once rather than refusing over.
+ */
+function validateOmenAffixRoll(
+  roll: AffixRoll,
+  omenRarity: string,
+  derived: number,
+  path: string,
+  add: Add,
+): void {
+  if (roll.tier !== omenRarity) {
+    add(
+      "warning",
+      "omen-affix-tier-not-omen-rarity",
+      `${path}.tier`,
+      `An omen's affix takes the omen's own rarity as its tier (\`adata.rar = rar.GUID()\`), ` +
+        `so this should be "${omenRarity}", not "${roll.tier ?? "(none)"}". Ignored — the tier ` +
+        `is re-derived.`,
+    );
+  }
+  if (roll.rollPercent !== derived) {
+    add(
+      "warning",
+      "omen-affix-roll-not-derived",
+      `${path}.rollPercent`,
+      `An omen's affix has no roll: \`adata.p = OmenData.getStatPercent(...)\`, which these ` +
+        `requirements make ${derived}, not ${roll.rollPercent}. Ignored — the percent is ` +
+        `re-derived.`,
     );
   }
 }

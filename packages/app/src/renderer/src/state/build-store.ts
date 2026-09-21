@@ -117,6 +117,13 @@ export type BuildState = {
 
   // -- character ----------------------------------------------------------
   setLevel(level: number): void;
+  /**
+   * Whether the campaign's epilogue is finished, which is +4 passive and +10 spell points.
+   *
+   * See `BuildDoc.character.questsComplete`. Unset rather than `false` when it is off, so a
+   * hand-authored document says nothing rather than asserting an unfinished campaign.
+   */
+  setQuestsComplete(done: boolean): void;
   setName(name: string): void;
   setSchool(school: string | undefined): void;
   setAscendancy(ascendancy: string | undefined): void;
@@ -250,6 +257,14 @@ export type BuildState = {
   setExileEffects(effects: ExileEffectSetup[]): void;
   setEnemy(enemy: EnemySetup): void;
   setCondition(id: string, active: boolean | undefined): void;
+  /**
+   * How much health a side has left, as a percent of its maximum.
+   *
+   * One number rather than a switch per threshold, because the thresholds are not independent —
+   * see `BuildConfig.targetHealthPercent`. `undefined` returns it to unstated, which is not the
+   * same as full: unstated leaves every health condition reported as underivable.
+   */
+  setHealthPercent(side: "self" | "target", percent: number | undefined): void;
   setEnemyLevel(level: number | undefined): void;
   /** Tick a skill into the Full DPS rotation, or untick it. */
   setIncludeInFullDps(index: number, include: boolean): void;
@@ -442,6 +457,14 @@ export const useBuild = create<BuildState>((set) => ({
 
   setLevel: (level) =>
     edit(set, (doc) => ({ ...doc, character: { ...doc.character, level } })),
+
+  setQuestsComplete: (done) =>
+    edit(set, (doc) => {
+      const character = { ...doc.character };
+      if (done) character.questsComplete = true;
+      else delete character.questsComplete;
+      return { ...doc, character };
+    }),
 
   setName: (name) =>
     edit(
@@ -796,6 +819,13 @@ export const useBuild = create<BuildState>((set) => ({
         conditions: Object.keys(conditions).length === 0 ? undefined : conditions,
       });
     }),
+
+  setHealthPercent: (side, percent) =>
+    edit(set, (doc) =>
+      withConfig(doc, {
+        [side === "self" ? "selfHealthPercent" : "targetHealthPercent"]: percent,
+      }),
+    ),
 }));
 
 /** Whether the document is at the version this build of the app writes. */

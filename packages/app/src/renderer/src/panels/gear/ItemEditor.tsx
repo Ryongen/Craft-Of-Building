@@ -43,11 +43,13 @@ import {
   gearTypeName,
   gem,
   gemName,
+  infusionRollPercent,
   isTwoHanded,
   enchantCompats,
   enchantName,
   maxOfOneAffixType,
   modifierLine,
+  rarityLadder,
   rune,
   runeName,
   runeword,
@@ -632,21 +634,19 @@ export function ItemEditor({
         enchantments are two unrelated things that both used to be called an enchant here, one
         directly above the other — so the editor had two sections with the same name granting
         different stats by different rules. This one is the Mine and Slash affix.
+
+        Offered on a unique too. `CraftedInfusionItem.canBeModified` checks the currency's level
+        band and the base's `SlotFamily` and nothing else — the item's rarity never comes into
+        it — so hiding this for uniques described a restriction the game does not have. The AMFK
+        capture wears an infused unique, which is what the old guard made unrepresentable.
       */}
-      {!isUnique && (
-        <Accordion title="Infusions" count={item.enchant === undefined ? 0 : 1}>
-          <AffixList
-            label="Infusion"
-            type="enchant"
-            baseId={item.base}
-            itemLevel={item.itemLevel}
-            tiers={tierOptions}
-            rolls={item.enchant === undefined ? [] : [item.enchant]}
-            max={1}
-            onChange={(rolls) => patch({ enchant: rolls[0] })}
-          />
-        </Accordion>
-      )}
+      <Accordion
+        title="Infusions"
+        count={item.enchant === undefined ? 0 : 1}
+        summary={item.enchant?.tier}
+      >
+        <Infusion item={item} patch={patch} />
+      </Accordion>
 
       <Accordion
         title="Enchantments"
@@ -1051,6 +1051,139 @@ function UniqueRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) =
   );
 }
 
+/**
+ * The item's infusion: one affix, one rarity, and no roll at all.
+ *
+ * Not an {@link AffixList} of one, which is what this was, because an infusion is not stored the
+ * way an affix is. `GearInfusionData` has two fields —
+ *
+ *     public String en = "";
+ *     public String rar = IRarity.COMMON_ID;
+ *
+ * — and derives its percent rather than saving one:
+ *
+ *     public int getPercent() {
+ *         return ExileDB.GearRarities().get(rar).stat_percents.max;
+ *     }
+ *
+ * (GearInfusionData.java:63-65, confirmed in the 6.4.13 jar). **Always the top of the band**, so
+ * a common infusion of `ench_pants_damage_when_hit` — a 10-to-30 affix — is 13.4 every time, and
+ * the slider the old editor drew offered a hundred values of which ninety-nine described an item
+ * the game cannot produce. Every infusion across the captures in `fixtures/local` sits exactly on
+ * its tier's maximum, which is the same statement measured from the other end.
+ *
+ * So the rarity *is* the roll, and it is the only control here besides the affix. The ladder it
+ * is picked from is `rarityLadder` rather than the item's own `allowedAffixTiers`: infusing is a
+ * currency that walks common → mythic one step at a time (`canUpgradeToRarity` refuses any other
+ * step), and it never asks what rarity the item under it is.
+ */
+function Infusion({
+  item,
+  patch,
+}: {
+  item: Item;
+  patch: (next: Patch<Item>) => void;
+}): ReactNode {
+  const world = useWorld();
+  const { snapshot } = world;
+  const pool = world.affixPool(item.base, "enchant");
+  const roll = item.enchant;
+
+  const options = useMemo<PickerOption[]>(
+    () =>
+      pool.map((a) => {
+        const detail = modDetail(snapshot, a.stats);
+        return {
+          id: a.id,
+          label: affixLabel(snapshot, a.id),
+          keywords: modKeywords(snapshot, a.stats),
+          ...(detail === undefined ? {} : { detail }),
+        };
+      }),
+    [pool, snapshot],
+  );
+
+  const ladder = useMemo(() => rarityLadder(snapshot), [snapshot]);
+  const view = roll === undefined ? undefined : affix(snapshot, roll.affixId);
+  const tier = roll?.tier ?? ladder[0] ?? "common";
+  const percent = infusionRollPercent(snapshot, tier) ?? 0;
+
+  /** One shape for both halves: the tier decides the percent, so they are never set apart. */
+  const set = (next: { affixId?: string; tier?: string }): void => {
+    const affixId = next.affixId ?? roll?.affixId;
+    if (affixId === undefined) return;
+    const at = next.tier ?? tier;
+    patch({ enchant: { affixId, tier: at, rollPercent: infusionRollPercent(snapshot, at) ?? 0 } });
+  };
+
+  if (pool.length === 0) {
+    return (
+      <span className="faint text-sm">
+        No <code>enchant</code> affix in the pack lists this base&apos;s slot, so it cannot be
+        infused.
+      </span>
+    );
+  }
+
+  if (roll === undefined) {
+    return (
+      <div className="row wrap gap-3">
+        <AddPicker
+          label="Add infusion"
+          placeholder="Which infusion?"
+          options={options}
+          width={280}
+          onAdd={(affixId) => set({ affixId })}
+        />
+        <span className="faint text-sm" style={{ alignSelf: "center" }}>
+          one per item — <code>only_one_per_item</code>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3">
+      <div className="row">
+        <Picker
+          options={options}
+          value={roll.affixId}
+          onChange={(id) => id !== undefined && set({ affixId: id })}
+          width={230}
+        />
+        <select
+          className={`rarity-${tier}`}
+          value={tier}
+          onChange={(event) => set({ tier: event.target.value })}
+          title="The infusion's own rarity, which is not the item's — it is what the stat rolls at"
+        >
+          {ladder.map((id) => (
+            <option key={id} value={id}>
+              {id} — {infusionRollPercent(snapshot, id) ?? 0}%
+            </option>
+          ))}
+        </select>
+        {/* The same sentence the gem row makes, for the same reason: an absent control reads as
+            a control the editor forgot rather than as a value the game does not roll. */}
+        <span className="faint text-sm">fixed at {percent}% — an infusion does not roll</span>
+        <span className="grow" />
+        <button onClick={() => patch({ enchant: undefined })}>✕</button>
+      </div>
+      {view !== undefined && (
+        <StatLines
+          mods={view.stats}
+          rollPercent={roll.rollPercent}
+          band={{ min: percent, max: percent }}
+          itemLevel={item.itemLevel}
+          // No `onRoll`: there is no roll to type a value back into. `StatLines` renders the
+          // resolved number as text when this is absent, which is exactly what a fixed line is.
+          onRoll={undefined}
+        />
+      )}
+    </div>
+  );
+}
+
 function AffixList({
   label,
   type,
@@ -1409,6 +1542,22 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
 
   return (
     <>
+      {/*
+        The runeword first, because on a runed base it is the decision the rest of this section
+        carries out. Picking one *fills the runes in* — `applyRuneword` replaces the list — so
+        offering it last put the outcome of a choice above the choice itself, and the only way to
+        find it was to scroll past six rune rows it was about to overwrite.
+      */}
+      {rarity.canHaveRunewords && (
+        <Runewords
+          item={item}
+          runewords={runewords}
+          runes={runes}
+          onPick={applyRuneword}
+          onRoll={(runewordRoll) => patch({ runewordRoll })}
+        />
+      )}
+
       <div className="faint text-xs mb-2">
         {filled} of {rarity.sockets.max} filled
         {gemsAllowed
@@ -1540,15 +1689,6 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
         )}
       </div>
 
-      {rarity.canHaveRunewords && (
-        <Runewords
-          item={item}
-          runewords={runewords}
-          runes={runes}
-          onPick={applyRuneword}
-          onRoll={(runewordRoll) => patch({ runewordRoll })}
-        />
-      )}
     </>
   );
 }
@@ -1578,7 +1718,7 @@ function Runewords({
 
   return (
     <>
-      <div className="faint text-xs mt-2 mb-1">
+      <div className="faint text-xs mb-1">
         Runewords — {runewords.length} fit this slot
       </div>
 

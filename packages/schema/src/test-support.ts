@@ -93,13 +93,16 @@ export function rarity(
   };
 }
 
+// `higher_rar` is the ladder a currency walks, stated in the data rather than derived from
+// `item_tier` — `mythic` names nothing, and neither `unique` nor `runeword` is named by anybody,
+// which is what keeps them out of it. See `rarityLadder`.
 export const RARITIES: Record<string, Record<string, unknown>> = {
-  common: rarity("common", 0, 1, { min: 0, max: 17 }, { sockets: { min: 0, max: 2 }, max_runes: 2 }),
-  uncommon: rarity("uncommon", 1, 2, { min: 18, max: 34 }, { sockets: { min: 0, max: 2 }, max_runes: 2 }),
-  rare: rarity("rare", 2, 3, { min: 35, max: 51 }),
-  epic: rarity("epic", 3, 4, { min: 52, max: 68 }, { min_lvl: 10 }),
-  legendary: rarity("legendary", 4, 5, { min: 69, max: 85 }, { min_lvl: 25 }),
-  mythic: rarity("mythic", 5, 6, { min: 86, max: 100 }, { min_lvl: 50 }),
+  common: rarity("common", 0, 1, { min: 0, max: 17 }, { sockets: { min: 0, max: 2 }, max_runes: 2, higher_rar: "uncommon" }),
+  uncommon: rarity("uncommon", 1, 2, { min: 18, max: 34 }, { sockets: { min: 0, max: 2 }, max_runes: 2, higher_rar: "rare" }),
+  rare: rarity("rare", 2, 3, { min: 35, max: 51 }, { higher_rar: "epic" }),
+  epic: rarity("epic", 3, 4, { min: 52, max: 68 }, { min_lvl: 10, higher_rar: "legendary" }),
+  legendary: rarity("legendary", 4, 5, { min: 69, max: 85 }, { min_lvl: 25, higher_rar: "mythic" }),
+  mythic: rarity("mythic", 5, 6, { min: 86, max: 100 }, { min_lvl: 50, higher_rar: "" }),
   unique: rarity("unique", 5, 0, { min: 0, max: 100 }, { is_unique_item: true, type: "UNIQUE" }),
   // The only `RUNED` rarity, and the only one that may carry a runeword. `max_gems: 0` is the
   // pack's own value and is load-bearing: it is what `GemItem.canBeModified` reads to refuse a
@@ -165,6 +168,11 @@ export const BALANCE: Record<string, unknown> = {
     ASCENDANCY: { type: "ASCENDANCY", base_points: 0, max_bonus_points: 9, max_total_points: 10, points_per_lvl: 0 },
     ATLAS: { type: "ATLAS", base_points: 0, max_bonus_points: 200, max_total_points: 200, points_per_lvl: 0 },
     STATS: { type: "STATS", base_points: 0, max_bonus_points: 50, max_total_points: 300, points_per_lvl: 1 },
+    // The two pools the campaign's epilogue tops up. Half a passive point per level is the
+    // pack's number and the reason a level-100 character has 50 of them before quests and 54
+    // after — see `EPILOGUE_BONUS_POINTS`.
+    PASSIVES: { type: "PASSIVES", base_points: 0, max_bonus_points: 10, max_total_points: 75, points_per_lvl: 0.5 },
+    SPELLS: { type: "SPELLS", base_points: 0, max_bonus_points: 10, max_total_points: 150, points_per_lvl: 1 },
   },
 };
 
@@ -228,6 +236,14 @@ export function standardSnapshot(): Snapshot {
         one_of_a_kind: "resist_group",
       }),
       boots_implicit: affixEntry("boots_implicit", "implicit", [includesAny(["boots"])]),
+      // The corruption pool, which is the only pool an omen draws from — `Omen.affix_types`
+      // is `chaos_stat` on all nine. No tag requirement, because an omen is not gear and has
+      // no tags for one to match against.
+      chaos_armor: affixEntry("chaos_armor", "chaos_stat", []),
+      // Jewels have a tag space of their own that no gear base carries. `any_jewel` rolls on
+      // all three styles; `jewel_int_only` rolls on a Stardust Jewel and nowhere else.
+      any_jewel_affix: affixEntry("any_jewel_affix", "jewel", [includesAny(["any_jewel"])]),
+      jewel_int_only: affixEntry("jewel_int_only", "jewel", [includesAny(["jewel_int"])]),
       // An unimplemented requirement mode must fail loud rather than be assumed true.
       weird_prefix: affixEntry("weird_prefix", "prefix", [
         { req_type: "SOMETHING_NEW", included: ["armor_family"], excluded: [] },

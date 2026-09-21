@@ -26,13 +26,20 @@
  * behaviour is in deciding *which* of its stats are live, which is
  * {@link countOmenPieces} and {@link omenBuckets} in `@cte2/schema`.
  *
- * ## The stat percent can exceed 100, and is not clamped
+ * ## Nothing on an omen is rolled
  *
  * `OmenData.getStatPercent` derives a percent from the omen's difficulty rather than rolling
- * one, and a mythic omen with heavy requirements reaches 125. `ExactStatData.fromStatModifier`
- * is a bare `min + (max - min) * percent / 100F` with no clamp, so those mods land a quarter
- * above their declared maximum. `rollToExact` does not clamp either, which is deliberate —
- * this is a behaviour to reproduce, not a bug to correct.
+ * one, and that single number is what **everything** on the omen resolves at — its own mods
+ * and its corruption affixes alike, because `OmenBlueprint` sets each `AffixData.p` to the
+ * same call rather than to a draw from the tier's band. So this collector never reads a roll
+ * off the document: {@link omenBuckets} hands it the derived percent for every bucket.
+ *
+ * ## And it can exceed 100, and is not clamped
+ *
+ * A mythic omen with heavy requirements reaches 125. `ExactStatData.fromStatModifier` is a
+ * bare `min + (max - min) * percent / 100F` with no clamp, so those stats land a quarter above
+ * their declared maximum. `rollToExact` does not clamp either, which is deliberate — this is a
+ * behaviour to reproduce, not a bug to correct.
  */
 
 import type { BuildDoc } from "@cte2/schema";
@@ -65,10 +72,11 @@ export function collectOmen(env: Env, build: BuildDoc): StatContext[] {
     paidOut++;
 
     if (bucket.mods !== undefined) {
-      const percent = bucket.statPercent ?? 0;
       for (const mod of parseRolledMods(bucket.mods)) {
         // The omen's own level, not the character's — `x.ToExactStat(perc, data.lvl)`.
-        stats.push(rollToExact(mod, percent, setup.itemLevel, env.index.shapeOf(mod.statId), env.balance));
+        stats.push(
+          rollToExact(mod, bucket.statPercent, setup.itemLevel, env.index.shapeOf(mod.statId), env.balance),
+        );
       }
     }
 
@@ -83,11 +91,13 @@ export function collectOmen(env: Env, build: BuildDoc): StatContext[] {
         );
         continue;
       }
+      // `affix.GetAllStats(data.lvl)` maps over `x.ToExactStat(p, lvl)`, and `p` on an omen's
+      // affix is the derived percent the blueprint stored there — not a roll of its own.
       for (const mod of parseRolledMods(affixView.stats)) {
         stats.push(
           rollToExact(
             mod,
-            bucket.affix.rollPercent,
+            bucket.statPercent,
             setup.itemLevel,
             env.index.shapeOf(mod.statId),
             env.balance,

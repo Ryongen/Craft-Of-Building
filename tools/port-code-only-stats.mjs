@@ -181,6 +181,24 @@ function shapeOf(cls, classes) {
     assign("max", new RegExp(String.raw`this\.max\s*=\s*${NUM}\s*;`, "g"));
     assign("base", new RegExp(String.raw`this\.base\s*=\s*${NUM}\s*;`, "g"));
     assign("isPerc", /this\.is_perc\s*=\s*(true|false)\s*;/g, (v) => v === "true");
+    // `IsPercent()` is a **method**, and most of these classes override it with a literal
+    // rather than assigning the field:
+    //
+    //     public boolean IsPercent() { return true; }   // PhysicalDamageTakenAs.java:60-63
+    //
+    // At runtime the override wins outright — `Stat.IsPercent()` is the only thing that reads
+    // `is_perc`, and an override replaces it — so this is read after the field and allowed to
+    // beat it. An override that returns the field itself (`return is_perc;`, which is what
+    // `Stat` and `BaseDatapackStat` do) states nothing and is deliberately not matched.
+    //
+    // Reading the field alone is why `phys_taken_as_water` and `damage_absorbed_by_mana`
+    // printed as bare numbers everywhere in the app: every surface that decides whether to draw
+    // a `%` reads `StatShape.isPerc`, and those two declare it through the method only.
+    assign(
+      "isPerc",
+      /public\s+boolean\s+IsPercent\s*\(\s*\)\s*\{\s*return\s+(true|false)\s*;/g,
+      (v) => v === "true",
+    );
     assign("scaling", /this\.scaling\s*=\s*StatScaling\.(\w+)\s*;/g, String);
 
     // Nothing in the mod calls `setSoftCap` — grep the tree and the only hit is the setter's

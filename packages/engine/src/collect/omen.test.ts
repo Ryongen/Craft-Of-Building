@@ -51,6 +51,20 @@ function snapshot() {
         exact("armor", "FLAT", 100),
       ]),
     },
+    // An omen draws from the corruption pool and nowhere else — `Omen.affix_types` is
+    // `chaos_stat` on all nine — and has no tags for a requirement to match against.
+    mmorpg_affixes: {
+      chaos_armor: {
+        guid: "chaos_armor",
+        type: "chaos_stat",
+        eye_aura_req: "",
+        one_of_a_kind: "",
+        only_one_per_item: false,
+        requirements: { tag_requirements: [] },
+        stats: [rolled("armor", "PERCENT", 10, 50)],
+        weight: 1000,
+      },
+    },
     mmorpg_omen: {
       blood: {
         id: "blood",
@@ -141,6 +155,22 @@ test("a derived stat percent above 100 is not clamped", () => {
   // 7 requirement pieces * 10 = 70, no slot requirements, `rare`'s stat_multi of 1.
   // health 5..25 at 70% is +19%, against a base of 100.
   closeTo(result.stats.get("health")?.value, 119);
+});
+
+test("an omen's affix resolves at the derived percent, not at the roll the document stored", () => {
+  // `OmenBlueprint` writes the same `getStatPercent` into every `AffixData.p` and never calls
+  // `RerollNumbers` — an omen's affix does not roll. This document claims mythic at 100%,
+  // which is what the old editor's slider could produce; the omen derives 20 and that is what
+  // the game would use.
+  const omen = {
+    ...OMEN,
+    affixes: [{ affixId: "chaos_armor", tier: "mythic", rollPercent: 100 }],
+  };
+  // Two required pieces is a bucket at 2 for the mods and at 1 for the affix, so both are
+  // live: armour takes the omen's own 2..10 at 20% (+3.6%) and the affix's 10..50 at 20%
+  // (+18%), against a base of 100.
+  const result = calculate(build([HELMET, BOOTS], omen), snapshot());
+  closeTo(result.stats.get("armor")?.value, 121.6);
 });
 
 test("no omen means no context and no complaint", () => {

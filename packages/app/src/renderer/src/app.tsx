@@ -6,7 +6,7 @@
  * number is never a tab away.
  */
 
-import { maxLevel, type BuildDoc, type Observation } from "@cte2/schema";
+import { EPILOGUE_BONUS_POINTS, maxLevel, type BuildDoc, type Observation } from "@cte2/schema";
 import { ATTACK_SPEED_ATTRIBUTE, baseAttackSpeedFrom } from "@cte2/engine";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 
@@ -19,7 +19,6 @@ import { useDerived } from "./state/derived.js";
 import { useCaptureCheck } from "./state/capture.js";
 import { useWorld } from "./state/snapshot.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.js";
-import { ItemDiffCard } from "./ui/ItemDiffCard.js";
 import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
@@ -32,6 +31,21 @@ import { RecentBuilds } from "./ui/RecentBuilds.js";
  * sessions never open. They are code-split instead; `Suspense` below covers the one frame a first
  * visit costs.
  */
+/**
+ * The two levels worth a button: where a plan starts, and where it ends.
+ *
+ * `"max"` rather than 100 so the label follows `GameBalanceConfig.MAX_LEVEL` if a pack moves it,
+ * which is the same number the field's own bound comes from.
+ */
+const LEVEL_STOPS = [1, "max"] as const;
+
+const EPILOGUE_TITLE =
+  "Tick when the campaign's epilogue is done. `PlayerPointsType.getFreePoints` adds " +
+  "`getBonusPoints` — quest and item rewards — on top of what levelling grants, and no document " +
+  "can derive it: at level 100 that is 54 passive points rather than 50, and 110 spell points " +
+  "rather than 100. A build imported from the game carries the game's own totals and ignores " +
+  "this.";
+
 const CalcsPanel = lazy(() => import("./panels/stats/CalcsPanel.js").then((m) => ({ default: m.CalcsPanel })));
 const ConfigPanel = lazy(() => import("./panels/config/ConfigPanel.js").then((m) => ({ default: m.ConfigPanel })));
 const DamagePanel = lazy(() => import("./panels/damage/DamagePanel.js").then((m) => ({ default: m.DamagePanel })));
@@ -129,6 +143,7 @@ export function App(): ReactNode {
   const undo = useBuild((s) => s.undo);
   const redo = useBuild((s) => s.redo);
   const setLevel = useBuild((s) => s.setLevel);
+  const setQuestsComplete = useBuild((s) => s.setQuestsComplete);
   const setName = useBuild((s) => s.setName);
   const newBuild = useBuild((s) => s.newBuild);
   const loadBuild = useBuild((s) => s.loadBuild);
@@ -300,6 +315,18 @@ export function App(): ReactNode {
           />
         </div>
 
+        {/*
+          Level, and the two things a plan needs to say about it that a number cannot.
+
+          `commitAs="type"` because this is the one number in the app people arrive at a value
+          for rather than explore towards. Everywhere else the field holds what you typed until
+          you leave it, so a half-typed roll never re-runs the engine mid-keystroke; here the
+          only value anyone wants is the one they are typing, and waiting for a blur that never
+          comes is what made a level look like it could only be walked up with the steppers.
+
+          `LEVEL_STOPS` is beside it for the same reason a tree has a "max" button: 1 and 100 are
+          where a plan starts and ends, and neither is worth typing.
+        */}
         <div className="field">
           <label>Level</label>
           <NumberField
@@ -307,9 +334,45 @@ export function App(): ReactNode {
             min={1}
             max={maxLevel(world.snapshot)}
             width={58}
+            commitAs="type"
             onChange={setLevel}
           />
+          {LEVEL_STOPS.map((stop) => {
+            const level = stop === "max" ? maxLevel(world.snapshot) : stop;
+            return (
+              <button
+                key={stop}
+                className="nudge word"
+                disabled={doc.character.level === level}
+                title={`Set the character to level ${level}`}
+                onClick={() => setLevel(level)}
+              >
+                {stop}
+              </button>
+            );
+          })}
         </div>
+
+        {/*
+          The quest reward, which is the rest of the answer to "how many points does this
+          character have".
+
+          `getBonusPoints` is quest and item rewards and nothing derivable from a level reaches
+          it, so a planner that only counts `points_per_lvl` is four passive points and ten spell
+          points short of any finished character — see `EPILOGUE_BONUS_POINTS`. It sits beside the
+          level because it is the same question asked twice: what has this character done.
+        */}
+        <label className="field" title={EPILOGUE_TITLE}>
+          <input
+            type="checkbox"
+            checked={doc.character.questsComplete === true}
+            onChange={(event) => setQuestsComplete(event.target.checked)}
+          />
+          <span>Epilogue</span>
+          <span className="faint text-xs">
+            +{EPILOGUE_BONUS_POINTS.PASSIVES} passive · +{EPILOGUE_BONUS_POINTS.SPELLS} spell
+          </span>
+        </label>
 
         {/* The figures a build is chosen on, in the chrome rather than inside a tab — so swapping
             a ring on the Gear tab shows its effect without changing tab and losing the number you
@@ -431,11 +494,6 @@ export function App(): ReactNode {
           {/* The sheet and the breakdown read the same engine result the panels do, so they can
               fail on their own and must not take the panel with them. */}
           <ErrorBoundary what="the stat sheet">
-            {/* What the gear tab is looking at, priced against what it would replace. It sits
-                above the sheet because it is about a choice being made right now, and the sheet
-                is about the character as it stands; it renders nothing at all when no item is
-                selected, which is every tab but Items. */}
-            <ItemDiffCard />
             <div className="sheet">
               <VitalsBlock focus={focus} onFocus={setFocus} />
             </div>

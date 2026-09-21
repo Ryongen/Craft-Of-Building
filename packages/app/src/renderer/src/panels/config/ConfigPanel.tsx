@@ -13,9 +13,11 @@
  */
 
 import {
+  CATEGORY,
   FOOD_BUFF_SLOTS,
   SINGLE_ELEMENTS,
   TARGET_PRESETS,
+  entry,
   isFoodBuffEnabled,
   mobAffixName,
   serverConfigNumber,
@@ -59,6 +61,9 @@ export function ConfigPanel(): ReactNode {
     <div className="panel">
       <EnemySection />
       <ServerSection />
+      {/* The health scenario sits above the conditions list because it *is* the answer to nine of
+          the entries that list used to carry — see `HealthScenario`. */}
+      <HealthScenario />
       <ConditionsSection />
       {/* Augments live on the Items tab: they are socketed gems, not settings, and a player
           looks for them beside the gear. One editor, one place — two would be two ideas about
@@ -351,15 +356,127 @@ function EnemySection(): ReactNode {
 }
 
 /**
+ * The scenario the fight is in: how much health each side has left.
+ *
+ * This pack gates stats on the target being under 50%, under 25%, above 70% and above 30%, and on
+ * the character being under 50% or under 25% — nine conditions across two sides. Offered as nine
+ * switches they could be set to a fight that cannot happen: a mob at 20% health *and* near full,
+ * so "Vital Points" and every execute bonus paid out at the same time. A percentage answers all
+ * nine at once and can only answer them consistently, which is the whole reason it is a slider
+ * and not a list of toggles.
+ *
+ * The comparisons are the game's, strict in both directions — `perc < hp%` for above, `perc >
+ * hp%` for under — so the readout beside each control names the conditions it actually satisfies
+ * rather than the ones it nearly does.
+ *
+ * **Unstated is not full.** Left alone, the health conditions stay underivable and get reported,
+ * because assuming a full-health target would quietly switch off every low-life bonus in the
+ * pack. The "not stated" button is how you get back there.
+ */
+const HEALTH_STOPS = [100, 70, 50, 25, 10] as const;
+
+function HealthScenario(): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const setHealthPercent = useBuild((s) => s.setHealthPercent);
+  const config = doc.config;
+
+  const rows = [
+    {
+      side: "target" as const,
+      label: "Enemy health",
+      value: config?.targetHealthPercent,
+      note: "Execute and opener bonuses — is_target_low_hp, is_target_near_full_hp, is_target_low.",
+    },
+    {
+      side: "self" as const,
+      label: "Your health",
+      value: config?.selfHealthPercent,
+      note: "Low-life bonuses — is_source_low_hp, is_source_very_low_hp.",
+    },
+  ];
+
+  return (
+    <>
+      <div className="section-title">Health</div>
+      <div className="card">
+        {rows.map((row) => (
+          <div key={row.side} className="mb-3">
+            <div className="row wrap gap-3">
+              <span className="field" style={{ width: 110 }}>
+                {row.label}
+              </span>
+              {/*
+                `RollSlider` rather than a bare range input, for the reason its own docstring
+                gives: a range emits a move event per pixel, and every one of those would be a
+                full engine pass — sheet, damage, rotation and defence — on a value nobody is
+                reading yet. It holds the drag and commits when the thumb is let go, and it
+                brings the number box and the unit steppers with it.
+
+                `showBand` off: the band is 0–100 and saying so beside a percentage is noise.
+              */}
+              <RollSlider
+                value={row.value ?? 100}
+                min={0}
+                max={100}
+                showBand={false}
+                onChange={(next) => setHealthPercent(row.side, next)}
+              />
+              {HEALTH_STOPS.map((stop) => (
+                <button
+                  key={stop}
+                  className="nudge word"
+                  disabled={row.value === stop}
+                  onClick={() => setHealthPercent(row.side, stop)}
+                >
+                  {stop}
+                </button>
+              ))}
+              <button
+                disabled={row.value === undefined}
+                title="Back to unstated, where every health condition is reported as underivable rather than answered"
+                onClick={() => setHealthPercent(row.side, undefined)}
+              >
+                not stated
+              </button>
+            </div>
+            <div className="faint text-sm">
+              {row.value === undefined ? (
+                <>
+                  Not stated — every condition below that reads it is treated as inactive and
+                  reported. {row.note}
+                </>
+              ) : (
+                row.note
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
  * Conditions the engine could not answer, offered as three-state overrides.
  *
- * `unknown-condition` is the diagnostic code the pipeline emits once per distinct id when it
- * meets an `is_*_not_on_cd`, `is_in_combat`, `is_day` or health-threshold condition. Anything
- * derivable from the build (spell tags, weapon type, element match) never appears here because
- * the engine answers it from the data.
+ * `condition-not-derivable` is the code the damage pipeline emits once per distinct id when it
+ * meets an `is_in_combat`, `is_day`, `light_level` or `is_undead`. Anything derivable from the
+ * build (spell tags, weapon type, element match) never appears here because the engine answers it
+ * from the data, and the health thresholds no longer appear once {@link HealthScenario} has
+ * stated a fraction for their side.
+ *
+ * ## Split by which side the condition is about
+ *
+ * `mmorpg_stat_condition.side` is `Source` or `Target`, and that is the honest axis: a condition
+ * about the *target* gates something you are doing to it, a condition about *you* gates something
+ * being done to you or a state you are in. Listed as one pile, "is the mob undead" and "is it
+ * daytime" sat between two settings a defensive build cares about, and the pile was read by
+ * scanning ids. It is deliberately not labelled "offensive/defensive": a low-life bonus is a
+ * condition about you that buys damage, and pretending otherwise would put it in the wrong group.
  */
 function ConditionsSection(): ReactNode {
   const doc = useBuild((s) => s.doc);
+  const world = useWorld();
   const derived = useDerived();
   const setCondition = useBuild((s) => s.setCondition);
   const forced = doc.config?.conditions ?? {};
@@ -367,7 +484,13 @@ function ConditionsSection(): ReactNode {
   const unanswered = useMemo(() => {
     const ids = new Set<string>();
     for (const diagnostic of derived.diagnostics) {
-      if (diagnostic.code !== "unknown-condition") continue;
+      // Two codes, one list. `condition-not-derivable` is the damage pipeline's, raised while a
+      // hit is being simulated; `unknown-condition` is the validator's, for an id forced in the
+      // document that no longer exists in the pack. Reading only the second is why this section
+      // was empty on every real build — it is the one the engine never emits.
+      if (diagnostic.code !== "condition-not-derivable" && diagnostic.code !== "unknown-condition") {
+        continue;
+      }
       // The message names the id in backticks; that is the only place it appears.
       const match = /`([^`]+)`/.exec(diagnostic.message);
       if (match?.[1] !== undefined) ids.add(match[1]);
@@ -375,6 +498,36 @@ function ConditionsSection(): ReactNode {
     for (const id of Object.keys(forced)) ids.add(id);
     return [...ids].sort();
   }, [derived.diagnostics, forced]);
+
+  const groups = useMemo(() => {
+    const buckets: { id: string; title: string; note: string; ids: string[] }[] = [
+      {
+        id: "Target",
+        title: "About the target",
+        note: "What the thing you are hitting is like, or what you have already done to it.",
+        ids: [],
+      },
+      {
+        id: "Source",
+        title: "About you",
+        note: "What state you are in when the stat is read.",
+        ids: [],
+      },
+      {
+        id: "other",
+        title: "About the world",
+        note: "The time of day, the light level, how the attack was made — neither side owns these.",
+        ids: [],
+      },
+    ];
+    for (const id of unanswered) {
+      const data = entry(world.snapshot, CATEGORY.statCondition, id)?.data;
+      const side = typeof data?.["side"] === "string" ? (data["side"] as string) : undefined;
+      const bucket = buckets.find((b) => b.id === side) ?? buckets[2]!;
+      bucket.ids.push(id);
+    }
+    return buckets.filter((b) => b.ids.length > 0);
+  }, [unanswered, world.snapshot]);
 
   return (
     <>
@@ -389,22 +542,26 @@ function ConditionsSection(): ReactNode {
             These depend on the world or on what happened a moment ago, which no static document
             records. Left alone they are treated as inactive.
           </div>
-          {unanswered.map((id) => (
-            <div key={id} className="row" style={{ marginBottom: 3 }}>
-              <span className="grow mono ellipsis text-md">
-                {id}
-              </span>
-              <select
-                value={forced[id] === undefined ? "" : forced[id] ? "on" : "off"}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setCondition(id, value === "" ? undefined : value === "on");
-                }}
-              >
-                <option value="">inactive (default)</option>
-                <option value="on">force on</option>
-                <option value="off">force off</option>
-              </select>
+          {groups.map((group) => (
+            <div key={group.id} className="mb-4">
+              <div className="vitals-title">{group.title}</div>
+              <div className="faint text-xs mb-2">{group.note}</div>
+              {group.ids.map((id) => (
+                <div key={id} className="row" style={{ marginBottom: 3 }}>
+                  <span className="grow mono ellipsis text-md">{id}</span>
+                  <select
+                    value={forced[id] === undefined ? "" : forced[id] ? "on" : "off"}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setCondition(id, value === "" ? undefined : value === "on");
+                    }}
+                  >
+                    <option value="">inactive (default)</option>
+                    <option value="on">force on</option>
+                    <option value="off">force off</option>
+                  </select>
+                </div>
+              ))}
             </div>
           ))}
         </div>

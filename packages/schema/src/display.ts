@@ -32,8 +32,9 @@
 
 import type { Snapshot } from "@cte2/extractor";
 
+import type { Item, Jewel } from "./build-doc.js";
 import { CODE_ONLY_STATS } from "./code-only-stats.generated.js";
-import { CATEGORY, entry } from "./queries.js";
+import { CATEGORY, affix, entry, unique } from "./queries.js";
 
 // ---------------------------------------------------------------------------
 // Lang access
@@ -67,6 +68,18 @@ export const LANG_KEY = {
   rune: (id: string) => `item.mmorpg.runes.${id}`,
   statLayer: (id: string) => `mmorpg.stat_layer.${id}`,
   word: (id: string) => `mmorpg.word.${id}`,
+  /**
+   * `Formatter`'s own lang entries — the `%1$s`-style templates that assemble a name out of
+   * its parts. Craft to Exile 2 ships all of them, so {@link formatted} reads the pack's
+   * wording rather than the jar's defaults.
+   */
+  formatter: (id: string) => `mmorpg.formatter.${id}`,
+  /**
+   * A jewel's name is its *item's* name, not a registry entry's — `JewelItemData.getItem()`
+   * picks one of four `SlashItems` by play style, and the stack's hover name is what the
+   * tooltip prints. The ids are the item paths: `str`, `dex`, `int`, `watcher_eye`.
+   */
+  jewelItem: (id: string) => `item.mmorpg.jewel.${id}`,
 } as const;
 
 /**
@@ -434,6 +447,174 @@ export function runeName(snapshot: Snapshot, id: string): string {
  */
 export function statBuffName(_snapshot: Snapshot, id: string): string {
   return humanise(id);
+}
+
+// ---------------------------------------------------------------------------
+// Item names
+// ---------------------------------------------------------------------------
+
+/**
+ * Fills a `Formatter` template — `%1$s`, `%2$s`, ... — with the parts it orders.
+ *
+ * The templates are lang entries rather than constants because that is the whole point of
+ * `Formatter`: a translator reorders a name by rewriting `mmorpg.formatter.gear_item_name_all`,
+ * and Craft to Exile 2 ships every one of them. `jarDefault` is the wording the enum declares,
+ * used only if the pack has dropped the key.
+ *
+ * A placeholder with no matching part becomes the empty string, exactly as `String.format`
+ * with an empty `MutableComponent` does — which is what puts the stray spaces in
+ * {@link itemName}'s output before it trims them.
+ */
+export function formatted(
+  snapshot: Snapshot,
+  formatterId: string,
+  jarDefault: string,
+  parts: readonly string[],
+): string {
+  const raw = text(snapshot, LANG_KEY.formatter(formatterId)) ?? jarDefault;
+  return stripGlossaryMarkup(stripFormatting(raw)).replace(
+    /%(\d+)\$s/g,
+    (_match, digits: string) => parts[Number(digits) - 1] ?? "",
+  );
+}
+
+/**
+ * The strongest roll in a list — `sorted(comparingInt(x -> -x.p)).findFirst()`.
+ *
+ * Highest `rollPercent` wins and a tie goes to the earlier entry, because `Stream.sorted` is
+ * stable. That matters: two prefixes rolled at the same percent must always name the item the
+ * same way, or the label flickers as unrelated edits reorder the list.
+ */
+function strongest(rolls: readonly { affixId: string; rollPercent: number }[] | undefined):
+  | string
+  | undefined {
+  let best: { affixId: string; rollPercent: number } | undefined;
+  for (const roll of rolls ?? []) {
+    if (best === undefined || roll.rollPercent > best.rollPercent) best = roll;
+  }
+  return best?.affixId;
+}
+
+/**
+ * The middle component of an item's name — `GearItemData.uniqueChecker`.
+ *
+ * Two surprises live here, both confirmed against `Mine_and_Slash-1.20.1-6.4.13.jar` and not
+ * only against the fork:
+ *
+ *  1. **An implicit replaces the base's name outright.** Not "Ring with an implicit" — the
+ *     name *becomes* the implicit's:
+ *
+ *         var base = GetBaseGearType().locName();
+ *         if (imp.has()) { base = imp.get().locName(); }
+ *
+ *     All 64 `implicit` affixes in the pack are named, and they are named as bases —
+ *     "Amethyst Ring", "Amber Amulet", "Recurve Bow". That is the entire reason two rings can
+ *     be told apart at a glance, and it is why {@link itemName} is worth having at all.
+ *
+ *  2. **A unique does not always replace the base.** `UniqueGear.replaces_name` defaults to
+ *     `true` and 296 of the pack's 310 uniques take it, but the 14 that do not render as
+ *     `UNIQUE_NAME_FORMAT` over both halves — "Windrunner Amethyst Ring".
+ *
+ * `imp.has()` is `isRegistered(imp)`, so the test is whether the affix exists, not whether it
+ * is named; an existing-but-unnamed implicit still displaces the base, falling back to its
+ * humanised id the way every other name in this file does.
+ */
+export function itemBaseName(snapshot: Snapshot, item: Item): string {
+  const implicit = strongest(item.implicits);
+  const base =
+    implicit !== undefined && affix(snapshot, implicit) !== undefined
+      ? affixName(snapshot, implicit)
+      : gearTypeName(snapshot, item.base);
+
+  if (item.unique === undefined) return base;
+
+  const name = uniqueName(snapshot, item.unique);
+  if (unique(snapshot, item.unique)?.replacesName !== false) return name;
+  return formatted(snapshot, "unique_name_format", "%1$s %2$s", [name, base]);
+}
+
+/**
+ * What the game calls this item — "Giant Amethyst Ring of Penetration".
+ *
+ * `GearItemData.getFullAffixedName` assembles three components and picks one of four templates
+ * by which of them are non-empty: prefix + base + suffix, base alone, prefix + base, and a
+ * catch-all that is only ever reached by the suffix-without-prefix case. The strongest prefix
+ * and the strongest suffix are the two that get to speak; the rest of the affixes do not
+ * appear in the name at all.
+ *
+ * ## The trim
+ *
+ * The catch-all branch formats `("", base, suffix)` through `"%1$s %2$s %3$s"`, so in game a
+ * suffix-only item really does render with a leading space — the class comments as much, above
+ * a `processStrings` helper that was abandoned for trying to fix it. That space is a rendering
+ * artefact rather than part of the name, so it is collapsed here. Nothing else about the
+ * assembly is changed.
+ */
+export function itemName(snapshot: Snapshot, item: Item): string {
+  const prefix = strongest(item.prefixes);
+  const suffix = strongest(item.suffixes);
+  const pre = prefix === undefined ? "" : affixName(snapshot, prefix);
+  const base = itemBaseName(snapshot, item);
+  const suf = suffix === undefined ? "" : affixName(snapshot, suffix);
+
+  const name =
+    pre !== "" && base !== "" && suf !== ""
+      ? formatted(snapshot, "gear_item_name_all", "%1$s %2$s %3$s", [pre, base, suf])
+      : pre === "" && base !== "" && suf === ""
+        ? formatted(snapshot, "gear_item_name_only_gear", "%1$s", [base])
+        : pre !== "" && base !== "" && suf === ""
+          ? formatted(snapshot, "gear_item_name_pre_gear", "%1$s %2$s", [pre, base])
+          : formatted(snapshot, "gear_item_name_another", "%1$s %2$s %3$s", [pre, base, suf]);
+
+  return name.replace(/\s+/g, " ").trim();
+}
+
+/** The four `SlashItems` jewels, keyed by `JewelItemData.style` — `PlayStyle.id`. */
+const JEWEL_STYLE_ITEM: Record<string, string> = { str: "str", dex: "dex", int: "int" };
+
+/** `PlayStyle.STR.id`, which is `JewelItemData.style`'s own default. */
+export const DEFAULT_JEWEL_STYLE = "str";
+
+/**
+ * What the game calls this jewel — "Viridian Jewel", not "Jewel 2".
+ *
+ * A jewel has no `GearItemData` and so no affixed name; its name is simply its item's, and
+ * `JewelItemData.getItem()` chooses the item:
+ *
+ *     var s = getStyle();
+ *     if (!auraStats.isEmpty()) { return SlashItems.WATCHER_EYE_JEWEL.get(); }
+ *     if (s == PlayStyle.DEX)   { return SlashItems.DEX_JEWEL.get(); }
+ *     if (s == PlayStyle.INT)   { return SlashItems.INT_JEWEL.get(); }
+ *     return SlashItems.STR_JEWEL.get();
+ *
+ * Note the order: aura stats win over the style, so a Watcher's Eye is "Abyssal Eye, Divine
+ * Jewel" whatever style it was rolled at. A crafted unique jewel is *not* checked, so it keeps
+ * its style's name — the unique is in the tooltip, not the title.
+ *
+ * An unrecognised style falls back to `str`, as `PlayStyle.fromID` does.
+ */
+export function jewelName(snapshot: Snapshot, jewel: Jewel): string {
+  const item = jewelItem(jewel);
+  return named(snapshot, LANG_KEY.jewelItem(item), `${item}_jewel`);
+}
+
+/** Which of the four it is — the `SlashItems` path, shared by the name and the sprite. */
+function jewelItem(jewel: Jewel): string {
+  return (jewel.auraStats ?? []).length > 0
+    ? "watcher_eye"
+    : JEWEL_STYLE_ITEM[jewel.style ?? DEFAULT_JEWEL_STYLE] ?? DEFAULT_JEWEL_STYLE;
+}
+
+/**
+ * The Minecraft item id this jewel is, for its sprite.
+ *
+ * The lang key `item.mmorpg.jewel.str` and the item id `mmorpg:jewel/str` are the same item
+ * spelled two ways, so {@link jewelItem} decides which of the four it is once and the two
+ * callers differ only in the spelling. The namespace is Mine and Slash's own — all four jewels
+ * are its items, unlike gear, whose bases roll as items from five other mods.
+ */
+export function jewelItemId(jewel: Jewel): string {
+  return `mmorpg:jewel/${jewelItem(jewel)}`;
 }
 
 // ---------------------------------------------------------------------------

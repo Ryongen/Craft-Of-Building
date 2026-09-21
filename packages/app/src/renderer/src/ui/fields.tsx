@@ -10,6 +10,19 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
  * Binding a number field straight to the store makes it impossible to clear the box or type a
  * leading minus — the store rewrites it mid-keystroke. This holds the text locally and only
  * pushes a valid, clamped number up.
+ *
+ * ## When "committed" is
+ *
+ * `commitAs` picks between the two, and the default is the conservative one:
+ *
+ *  - **`"blur"`** — on leaving the box or pressing Enter. Right for a field you *explore* with,
+ *    which is most of them: an item level or a roll is dragged towards an answer, and a store
+ *    write per keystroke is a full engine pass per keystroke on values nobody is reading yet.
+ *  - **`"type"`** — as soon as what is in the box parses to a number in range. Right for a field
+ *    you already know the answer for. The character level is the one: typing `100` there and
+ *    watching nothing happen reads as a field that only the steppers drive, which is exactly how
+ *    it was reported. Out-of-range and half-typed text (`""`, `"-"`) still wait for the blur, so
+ *    clearing the box does not write a 1 into the document on the way to `12`.
  */
 export function NumberField({
   value,
@@ -19,6 +32,7 @@ export function NumberField({
   step = 1,
   width = 70,
   disabled = false,
+  commitAs = "blur",
 }: {
   value: number;
   onChange: (value: number) => void;
@@ -34,11 +48,19 @@ export function NumberField({
   step?: number;
   width?: number;
   disabled?: boolean;
+  commitAs?: "blur" | "type";
 }): ReactNode {
   const [text, setText] = useState(String(value));
 
   // Re-sync when the value changes from elsewhere (undo, loading a build).
   useEffect(() => setText(String(value)), [value]);
+
+  const clamp = (n: number): number => {
+    let next = n;
+    if (min !== undefined) next = Math.max(min, next);
+    if (max !== undefined) next = Math.min(max, next);
+    return next;
+  };
 
   const commit = (raw: string): void => {
     const parsed = Number(raw);
@@ -46,11 +68,26 @@ export function NumberField({
       setText(String(value));
       return;
     }
-    let next = parsed;
-    if (min !== undefined) next = Math.max(min, next);
-    if (max !== undefined) next = Math.min(max, next);
+    const next = clamp(parsed);
     setText(String(next));
     if (next !== value) onChange(next);
+  };
+
+  /**
+   * What `commitAs: "type"` does on each keystroke.
+   *
+   * Only a value that is already legal is published — the clamp is *not* applied here. Clamping
+   * mid-type is what would make `1` unreachable in a field whose minimum is 10: the keystroke
+   * before `12` would be rewritten to `10` and the caret would be left after it. An illegal or
+   * half-typed box simply waits for the blur, which does clamp.
+   */
+  const typed = (raw: string): void => {
+    setText(raw);
+    if (commitAs !== "type") return;
+    const parsed = Number(raw);
+    if (raw.trim() === "" || !Number.isFinite(parsed)) return;
+    if (parsed !== clamp(parsed)) return;
+    if (parsed !== value) onChange(parsed);
   };
 
   return (
@@ -62,7 +99,7 @@ export function NumberField({
       min={min}
       max={max}
       disabled={disabled}
-      onChange={(event) => setText(event.target.value)}
+      onChange={(event) => typed(event.target.value)}
       onBlur={(event) => commit(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter") commit((event.target as HTMLInputElement).value);
@@ -260,7 +297,9 @@ export function RollSlider({
       >
         −
       </button>
-      <NumberField value={current} min={min} max={max} width={48} onChange={(next) => onChange(clamp(next))} />
+      {/* 56, not 48: a roll reaches 100 and three digits plus the spinner clipped the last
+          one, which read as "10" — a legal roll, and the wrong one. */}
+      <NumberField value={current} min={min} max={max} width={56} onChange={(next) => onChange(clamp(next))} />
       <button
         className="nudge"
         title={`+1% (max ${max})`}

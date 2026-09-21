@@ -224,7 +224,18 @@ export type OmenSetup = {
    * each.
    */
   slotRequirements?: { slot: string; rarityType: string }[];
-  /** `OmenData.aff` — corruption affixes, each unlocking one piece earlier than the last. */
+  /**
+   * `OmenData.aff` — corruption affixes, each unlocking one piece earlier than the last.
+   *
+   * Only `affixId` is an input. An omen's affix does not roll: `OmenBlueprint.generate` sets
+   * `adata.rar` to the omen's own rarity and `adata.p` to
+   * `OmenData.getStatPercent(rarities, slot_req, rar)` — the same number the omen's own mods
+   * resolve at — rather than calling `AffixData.RerollNumbers`, and the two currencies that
+   * edit an omen in place rewrite both from those same sources. So the `tier` and
+   * `rollPercent` recorded here are copies of the omen's, kept because the exporter writes
+   * what the game stored; `omenBuckets` re-derives them, and the validator reports a copy that
+   * has fallen out of step.
+   */
   affixes?: AffixRoll[];
 };
 
@@ -232,6 +243,20 @@ export type OmenSetup = {
 export type Jewel = {
   rarity: string;
   itemLevel: number;
+  /**
+   * `JewelItemData.style` — a `PlayStyle` id: `str`, `dex` or `int`. Defaults to `str`, as
+   * the Java field does.
+   *
+   * It looks cosmetic and is not. It decides two things:
+   *
+   *  - **which item the jewel is**, and so what it is called — Meteorite, Viridian or
+   *    Stardust Jewel (`JewelItemData.getItem()`);
+   *  - **which affixes may roll on it.** `generateAffixes` filters the pool to
+   *    `any_jewel` plus the style's own tag, so of the pack's 53 `jewel` affixes a Viridian
+   *    jewel may carry 44 and a Meteorite one 45. A jewel with `jewel_mana_regen` and
+   *    `style: "str"` is not an item the game can produce.
+   */
+  style?: string;
   affixes?: AffixRoll[];
   /** `JewelItemData.cor` — corruption affixes, kept apart from the rolled ones. */
   corruptions?: AffixRoll[];
@@ -590,6 +615,38 @@ export type BuildConfig = {
   /** Condition id -> whether it is considered active. */
   conditions?: Record<string, boolean>;
   /**
+   * How much health the target has left, as a percent of its maximum.
+   *
+   * One number instead of seven toggles, and the reason is that the seven are not independent.
+   * This pack gates stats on the target being under 50%, under 25%, above 70% and above 30%, and
+   * a build screen that offered each as its own switch let you say the mob was on 20% health and
+   * near full at the same time — so "Vital Points" and "Swift Killer" both paid out at once, on
+   * a mob that cannot exist. A percentage answers all seven at once and can only answer them
+   * consistently.
+   *
+   * Compared exactly as the game compares it, strict either way:
+   *
+   *     is_hp_above:  return perc < en.getHealth() / en.getMaxHealth() * 100;
+   *     is_hp_under:  return perc > en.getHealth() / en.getMaxHealth() * 100;
+   *
+   * — IsHealthAbove/BellowPercentCondition.java. So a target stated at exactly 50% satisfies
+   * neither `is_target_low_hp` nor an `is_hp_above` of 50.
+   *
+   * **Unset means unstated**, not full: the conditions then resolve to `unknown` and are reported
+   * the way they always were, because a planner that quietly assumed a full-health target would
+   * be turning every execute bonus in the pack off without saying so. `config.conditions` still
+   * overrides an individual one.
+   */
+  targetHealthPercent?: number;
+  /**
+   * The same, for the character's own health — `is_source_low_hp` and `is_source_very_low_hp`.
+   *
+   * "While on low life" is a build choice rather than an accident, which is why it is stated here
+   * rather than derived: a build *plays* at 30% health on purpose, and the damage it is worth
+   * there is the number its owner wants.
+   */
+  selfHealthPercent?: number;
+  /**
    * Exile effect id -> how many stacks of it are up, for the effects the build can produce.
    *
    * `true` means "up, at the cap", `false` means off, and a number pins the stacks. Anything the
@@ -729,6 +786,20 @@ export type BuildDoc = {
      * being reported as having overspent.
      */
     pointTotals?: Record<string, number>;
+    /**
+     * Whether the campaign's epilogue is done, which is worth four passive points and ten
+     * spell points — `EPILOGUE_BONUS_POINTS` in `queries.ts` has both numbers and where
+     * they came from.
+     *
+     * A statement about progression rather than about the character sheet, and it has to be one:
+     * `getBonusPoints` is quest and item rewards, and no amount of levelling derives it. Without
+     * it a level-100 plan is four passives and ten spell points short of the character it is
+     * planning, which is the difference between a tree that fits and one that does not.
+     *
+     * Ignored outright where {@link pointTotals} is present — a document the companion mod
+     * produced carries the game's own finished count, and a checkbox cannot improve on it.
+     */
+    questsComplete?: boolean;
     /**
      * `PlayerData.omensFilled` — how many equipped pieces the game counted as satisfying the
      * omen's requirements.

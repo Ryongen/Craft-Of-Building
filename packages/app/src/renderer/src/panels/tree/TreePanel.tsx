@@ -26,6 +26,9 @@ import {
 } from "@cte2/schema";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import type { Snapshot } from "@cte2/extractor";
+import { balance, parseSourceMod, sourceToExact, statIndex } from "@cte2/engine";
+
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
@@ -287,11 +290,48 @@ function candidateFor(
   return { ...doc, tree: nextTree };
 }
 
+/**
+ * A perk's stat lines, at the character's level.
+ *
+ * Perk stats are the `{ type, stat, v1, scale_to_lvl }` shape, and 40 of this pack's 1,497 set
+ * `scale_to_lvl` — the flats the game grows with the holder, which is `energy_on_hit`,
+ * `health_regen`, `accuracy`, `blood_on_kill` and the rest of what a player reads as "scales
+ * with level". `modifierLine` is documented as the *un-levelled* preview, so the tooltip
+ * printed `energy_regen_percent_big` as "+2 Energy Regen" against the much larger number the
+ * same node had just put on the sheet.
+ *
+ * `sourceToExact` is the call `collectPerks` makes, so the line and the delta underneath it
+ * come from one number rather than two.
+ */
+function perkLines(snapshot: Snapshot, perkId: string, level: number): string[] {
+  const raw = perkData(snapshot, perkId)?.["stats"];
+  if (!Array.isArray(raw)) return [];
+  const index = statIndex(snapshot);
+  const curves = balance(snapshot);
+
+  return raw
+    .filter(
+      (s): s is Record<string, unknown> => s !== null && typeof s === "object" && !Array.isArray(s),
+    )
+    .map((mod) => {
+      const source = parseSourceMod(mod);
+      if (source === undefined) return modifierLine(snapshot, mod);
+      const exact = sourceToExact(source, level, index.shapeOf(source.statId), curves);
+      // `modifierLine` words the stat; feeding the resolved value back as a fixed `v1` keeps
+      // the wording — templates, "More"/"Increased", the percent suffix — and swaps the number.
+      return modifierLine(snapshot, { stat: exact.statId, type: exact.type, v1: exact.value });
+    });
+}
+
 function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): ReactNode {
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
   const data = perkData(world.snapshot, hover.perkId);
-  const stats = Array.isArray(data?.["stats"]) ? (data["stats"] as unknown[]) : [];
+  const level = doc.character.level;
+  const lines = useMemo(
+    () => perkLines(world.snapshot, hover.perkId, level),
+    [world.snapshot, hover.perkId, level],
+  );
   const type = typeof data?.["type"] === "string" ? (data["type"] as string) : undefined;
   const oneKind = typeof data?.["one_kind"] === "string" ? (data["one_kind"] as string) : undefined;
   const maxLevels = typeof data?.["max_lvls"] === "number" ? (data["max_lvls"] as number) : 1;
@@ -347,14 +387,12 @@ function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): Reac
         {isEntry && <span className="badge">entry</span>}
         <span className="badge mono">{hover.perkId}</span>
       </div>
-      {stats.length === 0 && <div className="faint">Grants no stats.</div>}
-      {stats.map((mod, index) =>
-        mod !== null && typeof mod === "object" ? (
-          <div key={index} className="tt-line">
-            {modifierLine(world.snapshot, mod as Record<string, unknown>)}
-          </div>
-        ) : null,
-      )}
+      {lines.length === 0 && <div className="faint">Grants no stats.</div>}
+      {lines.map((line, index) => (
+        <div key={index} className="tt-line">
+          {line}
+        </div>
+      ))}
       {/* The game prints the same caution on its own tooltip (`Perk.java:135-139`). */}
       {oneKind !== undefined && (
         <div className="tt-line" style={{ marginTop: 5 }}>

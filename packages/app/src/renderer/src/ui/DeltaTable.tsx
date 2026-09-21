@@ -14,9 +14,18 @@
  * colour. The list is ranked, so those collect at the bottom, and a build is read by what
  * moved *enough to matter* — a wall of ten equally bright rows makes the reader find that
  * boundary themselves, every time.
+ *
+ * ## Why a row is an element
+ *
+ * The label column takes the slack and the numbers are pinned right, so a wide card leaves a
+ * long gap between a stat's name and its number, and twenty of those stacked is a list the eye
+ * loses its place in. Three loose cells per row cannot be striped or hovered together, so each
+ * row is its own `subgrid` across all three tracks — the columns stay aligned across every row,
+ * and the row gains a box to band and to light up under the pointer. See `.delta-row`.
  */
 
-import type { ReactNode } from "react";
+import { useCallback, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import type { Comparison, Delta } from "../state/compare.js";
 import { USABLE_NOUN, num, percent, round, signGlyph, smart, usable } from "./format.js";
@@ -59,23 +68,37 @@ export function DeltaTable({
 }
 
 function DeltaRow({ delta }: { delta: Delta }): ReactNode {
-  // A change from zero has no fraction and is never minor: it is a figure the build did not
-  // have at all, which is the largest kind of change there is.
-  const minor = delta.fraction !== undefined && Math.abs(delta.fraction) < MINOR;
-  const tone = `${delta.good ? "up" : "down"}${minor ? " minor" : ""}`;
+  const [at, setAt] = useState<At | null>(null);
+  const track = useCallback((event: React.MouseEvent) => {
+    setAt({ x: event.clientX, y: event.clientY });
+  }, []);
+  const clear = useCallback(() => setAt(null), []);
+  const tone = toneOf(delta);
+
   return (
-    <>
-      <span className="delta-label ellipsis" title={delta.key}>
-        {delta.label}
-      </span>
-      <span className={`delta-change ${tone}`} title={stateOf(delta)}>
-        {signedChange(delta)}
-      </span>
+    // The hover is on the row rather than on the number alone, so following a line with the
+    // pointer — which is what the row highlight is for — also brings up what the figure was and
+    // what it became.
+    <div className="delta-row" onMouseEnter={track} onMouseMove={track} onMouseLeave={clear}>
+      <span className="delta-label ellipsis">{delta.label}</span>
+      <span className={`delta-change ${tone}`}>{signedChange(delta)}</span>
       <span className={`delta-pct ${tone}`}>
         {delta.fraction === undefined ? "" : percent(delta.fraction)}
       </span>
-    </>
+      {at !== null && createPortal(<DeltaTip delta={delta} at={at} />, document.body)}
+    </div>
   );
+}
+
+/**
+ * Green or red, and how loudly.
+ *
+ * A change from zero has no fraction and is never minor: it is a figure the build did not have
+ * at all, which is the largest kind of change there is.
+ */
+function toneOf(delta: Delta): string {
+  const minor = delta.fraction !== undefined && Math.abs(delta.fraction) < MINOR;
+  return `${delta.good ? "up" : "down"}${minor ? " minor" : ""}`;
 }
 
 /**
@@ -96,14 +119,66 @@ function signedChange(delta: Delta): string {
   return `${signGlyph(moved)}${num(Math.abs(moved), 2)}% (${flat})`;
 }
 
-/** The hover: what the figure *was*, and what it is now, in the same shape the sheet prints. */
-function stateOf(delta: Delta): string {
-  const plain = `${formatDelta(delta.before, delta.kind)} → ${formatDelta(delta.after, delta.kind)}`;
-  if (delta.beforeUsable === undefined || delta.afterUsable === undefined) return plain;
-  const noun = USABLE_NOUN[delta.key] ?? "effective";
+type At = { x: number; y: number };
+
+/**
+ * The card's assumed size, for flipping it near the edge of the window.
+ *
+ * Assumed rather than measured, the same bargain `ItemTooltip` makes: measuring would cost a
+ * second render on every mouse move, and being a few dozen pixels out only ever matters within a
+ * card's width of an edge.
+ */
+const TIP = { width: 260, height: 64 };
+
+/**
+ * The hover: what the row is about, and what its figure *was* and is now.
+ *
+ * A card of the app's own rather than a `title` attribute. The browser's tooltip arrives half a
+ * second late in the desktop's colours, and — the reason it had to go — it takes one flat string,
+ * so a stat's name and its two values could only be stacked as lines of the same text. Here the
+ * name is a heading over the change.
+ *
+ * The name is the label the row already carries, which for a sheet stat is the in-game one
+ * `statDisplay` resolves. The stat id used to be printed under it, and an id on screen reads as
+ * the variable name having leaked out of the data — which is what it was.
+ */
+function DeltaTip({ delta, at }: { delta: Delta; at: At }): ReactNode {
+  const { beforeUsable, afterUsable } = delta;
+  // The five `IUsableStat` families print what the rating bought as well as the rating itself,
+  // because the rating alone is not a figure anyone can price — see `usable`.
+  const priced = beforeUsable !== undefined && afterUsable !== undefined;
+  const before = priced ? usable(beforeUsable, delta.before) : formatDelta(delta.before, delta.kind);
+  const after = priced ? usable(afterUsable, delta.after) : formatDelta(delta.after, delta.kind);
+
   return (
-    `${usable(delta.beforeUsable, delta.before)} → ${usable(delta.afterUsable, delta.after)} ${noun}`
+    <div className="delta-tip" style={tipStyle(at)}>
+      <div className="delta-tip-name">{delta.label}</div>
+      <div className="delta-tip-change">
+        <span className="was">{before}</span>
+        <span className="arrow">→</span>
+        <span className={toneOf(delta)}>{after}</span>
+      </div>
+      {priced && <div className="delta-tip-noun">{USABLE_NOUN[delta.key] ?? "effective"}</div>}
+    </div>
   );
+}
+
+/**
+ * Where to put the card, given the pointer.
+ *
+ * Flipped towards the inside of the window when it would otherwise run off the right or the
+ * bottom edge. Delta rows live in panels down the right-hand side and at the foot of cards, so
+ * that is the common case here rather than the edge case.
+ */
+function tipStyle(at: At): CSSProperties {
+  const flipX = at.x > window.innerWidth - TIP.width - 24;
+  const flipY = at.y > window.innerHeight - TIP.height - 24;
+  return {
+    left: flipX ? undefined : at.x + 14,
+    right: flipX ? window.innerWidth - at.x + 14 : undefined,
+    top: flipY ? undefined : at.y + 18,
+    bottom: flipY ? window.innerHeight - at.y + 18 : undefined,
+  };
 }
 
 /**

@@ -39,6 +39,14 @@ const CONDITIONS = {
   }),
   random_roll: condition("random_roll", "random_roll"),
   is_daytime: condition("is_daytime", "is_day"),
+  // The pack's own thresholds, with its own ids: an execute at half health, an opener above
+  // seventy percent, and a low-life bonus on the caster.
+  is_target_low_hp: condition("is_target_low_hp", "is_hp_under", { perc: 50, side: "Target" }),
+  is_target_near_full_hp: condition("is_target_near_full_hp", "is_hp_above", {
+    perc: 70,
+    side: "Target",
+  }),
+  is_source_low_hp: condition("is_source_low_hp", "is_hp_under", { perc: 50, side: "Source" }),
 };
 
 const EFFECTS = {
@@ -396,4 +404,72 @@ test("the character sheet is unchanged when no skill is supplied", () => {
   assert.ok(withSkill);
   // Support gems and innate spell stats are the only difference, and `strike` has neither.
   assert.equal(withSkill.hit.total, 100);
+});
+
+// ---------------------------------------------------------------------------
+// The health scenario
+// ---------------------------------------------------------------------------
+
+/** A hit whose damage doubles while the named condition holds. */
+function gatedOn(conditionId: string) {
+  return scenario(
+    {
+      gated_damage: statEntry("gated_damage", {
+        effect: [effectBlock("before_damage_layers", ["add_additive"], [conditionId])],
+      }),
+    },
+    [exact("gated_damage", "FLAT", 100)],
+  );
+}
+
+test("a stated target health answers every threshold at once, and consistently", () => {
+  // The point of stating a fraction rather than toggling each condition: 20% health cannot also
+  // be "near full", so the execute pays and the opener does not. Toggled one at a time, a
+  // document could claim both and collect both.
+  const low = { config: { targetHealthPercent: 20 } };
+  const execute = simulateHit(build(low), gatedOn("is_target_low_hp"));
+  const opener = simulateHit(build(low), gatedOn("is_target_near_full_hp"));
+  assert.ok(execute && opener);
+  closeTo(execute.hit.total, 200, "under 50% \u2014 the execute bonus applies");
+  assert.equal(opener.hit.total, 100, "and the above-70% bonus cannot apply to the same mob");
+
+  const full = { config: { targetHealthPercent: 100 } };
+  const execute2 = simulateHit(build(full), gatedOn("is_target_low_hp"));
+  const opener2 = simulateHit(build(full), gatedOn("is_target_near_full_hp"));
+  assert.ok(execute2 && opener2);
+  assert.equal(execute2.hit.total, 100);
+  closeTo(opener2.hit.total, 200);
+});
+
+test("both health comparisons are strict, so the threshold itself satisfies neither", () => {
+  // `perc > hp%` and `perc < hp%` — IsHealthBellow/AbovePercentCondition. 50 is the threshold
+  // seven of this pack's nine health conditions use, and a round number is what somebody types.
+  const at = { config: { targetHealthPercent: 50 } };
+  const under = simulateHit(build(at), gatedOn("is_target_low_hp"));
+  assert.ok(under);
+  assert.equal(under.hit.total, 100);
+});
+
+test("the two sides are stated separately", () => {
+  // `side` on the condition picks which fraction answers it. A mob at death's door says nothing
+  // about the character swinging at it.
+  const snapshot = gatedOn("is_source_low_hp");
+  const enemyLow = simulateHit(build({ config: { targetHealthPercent: 10 } }), snapshot);
+  assert.ok(enemyLow);
+  assert.equal(enemyLow.hit.total, 100, "the target's health does not answer a Source condition");
+
+  const youLow = simulateHit(build({ config: { selfHealthPercent: 10 } }), snapshot);
+  assert.ok(youLow);
+  closeTo(youLow.hit.total, 200);
+});
+
+test("unstated health stays unanswerable and is reported, rather than assumed full", () => {
+  // The standing rule about silent defaults. Assuming a full-health target would switch every
+  // low-life bonus in the pack off without a word.
+  const result = simulateHit(build(), gatedOn("is_target_low_hp"));
+  assert.ok(result);
+  assert.equal(result.hit.total, 100);
+  const reported = result.diagnostics.find((d) => d.code === "condition-not-derivable");
+  assert.ok(reported);
+  assert.match(reported.message, /targetHealthPercent/);
 });

@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   affixCount,
   affixesFor,
+  jewelAffixesFor,
+  jewelTags,
   allowedAffixTiers,
   basesForSlot,
   enchantCompats,
@@ -14,8 +16,12 @@ import {
   meetsTagRequirement,
   perk,
   perksOfKind,
+  EPILOGUE_BONUS_POINTS,
+  infusionRollPercent,
   PACK_MAX_BONUS_POINTS,
   pointBudget,
+  pointsAvailable,
+  rarityLadder,
   treeGrid,
   uniquesForBase,
 } from "./queries.js";
@@ -78,6 +84,21 @@ test("affixesFor filters by type and by the base's tags", () => {
   assert.deepEqual(bootPrefixes, ["armor_prefix", "group_a_prefix", "leather_boots_prefix", "solo_prefix"]);
 
   assert.deepEqual(affixesFor(snapshot, "necklace", "prefix"), []);
+});
+
+test("jewelAffixesFor narrows the pool to the jewel's own play style", () => {
+  const snapshot = standardSnapshot();
+
+  // A jewel is not a gear base, so `affixesFor` cannot answer this: no base carries
+  // `any_jewel` or `jewel_int`, and the tags come from the style instead.
+  assert.deepEqual(jewelAffixesFor(snapshot, "int").map((a) => a.id).sort(), [
+    "any_jewel_affix",
+    "jewel_int_only",
+  ]);
+  assert.deepEqual(jewelAffixesFor(snapshot, "str").map((a) => a.id), ["any_jewel_affix"]);
+  // `PlayStyle.fromID` falls back to STR, and so does an absent style.
+  assert.deepEqual(jewelAffixesFor(snapshot, undefined).map((a) => a.id), ["any_jewel_affix"]);
+  assert.deepEqual(jewelTags("dex"), ["any_jewel", "jewel_dex"]);
 });
 
 test("allowed affix tiers exclude uniques and anything above the item", () => {
@@ -438,4 +459,82 @@ test("an enchantment's name keeps the namespace when it is not vanilla's", () =>
   assert.equal(enchantName("wrd:reinforced"), "Reinforced (wrd)");
   // An id with no namespace at all is vanilla's, which is how the registry spells some of them.
   assert.equal(enchantName("looting"), "Looting");
+});
+
+// ---------------------------------------------------------------------------
+// The rarity ladder, and what an infusion rolls at
+// ---------------------------------------------------------------------------
+
+test("the rarity ladder is the `higher_rar` chain, not an item_tier sort", () => {
+  const snapshot = standardSnapshot();
+  // `unique` shares mythic's item_tier and `runeword` sits above it at 10, so sorting on the
+  // tier would put one or both in the ladder. Nothing links to either, and `mythic` links to
+  // nothing, so walking the chain leaves exactly the six a currency can climb.
+  assert.deepEqual(rarityLadder(snapshot), [
+    "common",
+    "uncommon",
+    "rare",
+    "epic",
+    "legendary",
+    "mythic",
+  ]);
+  assert.deepEqual(rarityLadder(snapshot, "legendary"), ["legendary", "mythic"]);
+  assert.deepEqual(rarityLadder(snapshot, "mythic"), ["mythic"]);
+  // A rarity outside the chain is its own one-entry ladder rather than an error: `runeword`
+  // names no higher rarity and nothing names it.
+  assert.deepEqual(rarityLadder(snapshot, "runeword"), ["runeword"]);
+});
+
+test("an infusion does not roll: it is its rarity's band maximum", () => {
+  const snapshot = standardSnapshot();
+  // `GearInfusionData.getPercent()` returns `stat_percents.max` and the class stores no percent
+  // of its own, so these are the only six values an infusion can ever resolve at. Common's 17 is
+  // why `ench_pants_damage_when_hit`, a 10-to-30 affix, is always exactly 13.4 in game.
+  assert.deepEqual(
+    rarityLadder(snapshot).map((id) => infusionRollPercent(snapshot, id)),
+    [17, 34, 51, 68, 85, 100],
+  );
+  assert.equal(infusionRollPercent(snapshot, "nonesuch"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// The epilogue's point reward
+// ---------------------------------------------------------------------------
+
+test("finishing the epilogue is +4 passive and +10 spell points", () => {
+  const snapshot = standardSnapshot();
+  const plain = { level: 100 };
+  const done = { level: 100, questsComplete: true };
+
+  // `points_per_lvl` alone: 0.5/level and 1/level.
+  assert.equal(pointsAvailable(snapshot, plain, "PASSIVES").total, 50);
+  assert.equal(pointsAvailable(snapshot, plain, "SPELLS").total, 100);
+
+  // The two numbers the game reports on a finished character, which is where they came from.
+  assert.equal(pointsAvailable(snapshot, done, "PASSIVES").total, 54);
+  assert.equal(pointsAvailable(snapshot, done, "SPELLS").total, 110);
+
+  // Neither is `recorded`: it is still a level-derived budget, just one with the quest in it.
+  assert.equal(pointsAvailable(snapshot, done, "PASSIVES").recorded, false);
+
+  // A pool the quest does not touch is unmoved.
+  assert.equal(
+    pointsAvailable(snapshot, plain, "TALENTS").total,
+    pointsAvailable(snapshot, done, "TALENTS").total,
+  );
+  assert.equal(EPILOGUE_BONUS_POINTS.TALENTS, undefined);
+});
+
+test("the epilogue bonus is clamped by max_total_points, and loses to a recorded total", () => {
+  const snapshot = standardSnapshot();
+  // PASSIVES caps at 75. At level 150 the level alone gives 75, so the quest's four have
+  // nowhere to go: `Math.min(current + getBonusPoints(p), data.max_total_points)`.
+  assert.equal(pointsAvailable(snapshot, { level: 150, questsComplete: true }, "PASSIVES").total, 75);
+
+  // A document the companion mod produced carries the game's own count, and a checkbox cannot
+  // improve on it — `pointTotals` wins outright, ticked or not.
+  const captured = { level: 100, questsComplete: true, pointTotals: { PASSIVES: 54 } };
+  const answer = pointsAvailable(snapshot, captured, "PASSIVES");
+  assert.equal(answer.total, 54);
+  assert.equal(answer.recorded, true);
 });

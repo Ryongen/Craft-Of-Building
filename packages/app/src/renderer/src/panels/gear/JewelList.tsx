@@ -20,12 +20,14 @@
  */
 
 import {
-  CATEGORY,
+  DEFAULT_JEWEL_STYLE,
+  JEWEL_STYLES,
   affix,
   affixName,
   allowedAffixTiers,
   gearRarity,
-  ids,
+  jewelAffixesFor,
+  jewelName,
   modifierLine,
   type AffixRoll,
   type Jewel,
@@ -41,6 +43,7 @@ import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { exactModSummary, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
+import { useJewelTooltip } from "../../ui/ItemTooltip.js";
 
 /** `JewelSocketStat`'s GUID, which is also the id of the talent that grants it. */
 const JEWEL_SOCKET_STAT = "jewel_socket";
@@ -59,17 +62,26 @@ export function JewelList(): ReactNode {
   // `(int)` cast does.
   const sockets = Math.trunc(derived.stats.get(JEWEL_SOCKET_STAT)?.value ?? 0);
 
-  const pool = useMemo<PickerOption[]>(
-    () =>
-      ids(snapshot, CATEGORY.affix)
-        .map((id) => affix(snapshot, id))
-        .filter((a): a is NonNullable<typeof a> => a !== undefined && a.type === "jewel")
+  /**
+   * The affix pool, per play style — three of them, because the style narrows it.
+   *
+   * `JewelItemData.generateAffixes` rolls from `any_jewel` plus the style's own tag, so a
+   * Viridian jewel can carry 44 of the pack's 53 `jewel` affixes and a Meteorite or Stardust
+   * one 45. Offering all 53 regardless, as this used to, let the editor build a jewel the game
+   * cannot drop. Built once for all three rather than per card, so eight jewels do not rebuild
+   * eight identical lists.
+   */
+  const pools = useMemo<Record<string, PickerOption[]>>(() => {
+    const built: Record<string, PickerOption[]> = {};
+    for (const style of JEWEL_STYLES) {
+      built[style] = jewelAffixesFor(snapshot, style)
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((a) => {
-          // The first stat is in the label because a jewel's *name* rarely distinguishes it;
-          // the rest go on the hover, and every stat id and stat name goes in the search
-          // corpus, so a jewel with three mods is findable by any of them rather than only
-          // by the one that happened to be printed.
+          // The first stat is in the label because a jewel's *name* does not distinguish one
+          // from another — every Viridian Jewel is called that — so what it grants has to. The
+          // rest go on the hover, and every stat id and stat name goes in the search corpus,
+          // so a jewel with three mods is findable by any of them rather than only by the one
+          // that happened to be printed.
           const detail = modDetail(snapshot, a.stats);
           return {
             id: a.id,
@@ -79,9 +91,13 @@ export function JewelList(): ReactNode {
             keywords: modKeywords(snapshot, a.stats),
             ...(detail === undefined ? {} : { detail }),
           };
-        }),
-    [snapshot],
-  );
+        });
+    }
+    return built;
+  }, [snapshot]);
+
+  /** Whether the snapshot has any jewel affix at all — if not, "Add jewel" has nothing to add. */
+  const anyAffixes = JEWEL_STYLES.some((style) => (pools[style] ?? []).length > 0);
 
   return (
     <>
@@ -118,7 +134,7 @@ export function JewelList(): ReactNode {
           key={index}
           jewel={jewel}
           nth={index + 1}
-          pool={pool}
+          pool={pools[jewel.style ?? DEFAULT_JEWEL_STYLE] ?? []}
           unsocketed={index >= sockets}
           onChange={(next) => updateJewel(index, next)}
           onRemove={() => removeJewel(index)}
@@ -126,13 +142,17 @@ export function JewelList(): ReactNode {
       ))}
 
       <button
-        disabled={pool.length === 0 || jewels.length >= sockets}
+        disabled={!anyAffixes || jewels.length >= sockets}
         title={
           jewels.length >= sockets
             ? `All ${sockets} jewel socket(s) are used. Allocate another jewel_socket talent to add one.`
             : undefined
         }
-        onClick={() => addJewel({ rarity: "rare", itemLevel: doc.character.level })}
+        // The style is written out rather than left to default, so the card's picker shows a
+        // real value and the document says which of the three jewels this is.
+        onClick={() =>
+          addJewel({ rarity: "rare", itemLevel: doc.character.level, style: DEFAULT_JEWEL_STYLE })
+        }
       >
         Add jewel
       </button>
@@ -143,11 +163,18 @@ export function JewelList(): ReactNode {
 /**
  * One jewel, collapsed to a row that says what it is worth.
  *
- * A jewel has no name of its own — it is a rarity, a level and a handful of affixes — so the
- * row is numbered the way the game numbers its sockets, and what it grants goes beside the
- * number. Expanded, one jewel is three controls plus a block per affix, and a character with
- * four of them filled the Items tab's left column entirely; collapsed, the list answers "what
- * am I wearing" in four lines and still opens onto the editor.
+ * The title is the name the game gives it — Meteorite, Viridian or Stardust Jewel, by play
+ * style, or "Abyssal Eye, Divine Jewel" once it carries aura stats (`JewelItemData.getItem()`).
+ * That names the *kind*, not the copy: three Viridian Jewels are all called that, so the
+ * position still numbers the row and what the jewel grants still sits beside it. Expanded, one
+ * jewel is four controls plus a block per affix, and a character with four of them filled the
+ * Items tab's left column entirely; collapsed, the list answers "what am I wearing" in four
+ * lines and still opens onto the editor.
+ *
+ * Hovering a collapsed row draws the game's own item window — `ui/ItemTooltip`'s `JewelWindow`,
+ * the same card gear gets. The summary on the row is one line and has to fit beside four
+ * badges, so it truncates on any jewel worth wearing; the card is the whole thing, headed and
+ * coloured the way the game heads and colours it, without opening the editor to read it.
  */
 function JewelCard({
   jewel,
@@ -158,7 +185,7 @@ function JewelCard({
   onRemove,
 }: {
   jewel: Jewel;
-  /** Its place in the list, 1-based — the only name a jewel has. */
+  /** Its place in the list, 1-based — jewels of one style share a name, so this disambiguates. */
   nth: number;
   pool: PickerOption[];
   /** Past the last socket — the game unequips it, so the engine counts none of it. */
@@ -171,6 +198,16 @@ function JewelCard({
   const rarity = world.rarity(jewel.rarity);
   const affixes = jewel.affixes ?? [];
   const [open, setOpen] = useState(false);
+
+  /**
+   * The in-game card, on hover — the whole point of a collapsed row.
+   *
+   * The one-line summary below says what the jewel grants and nothing about how; the card says
+   * it the way the game says it, split into the jewel's own stats, its corruptions and its
+   * aura lines, at the rolls the sheet is using. It is why opening a jewel to read it is no
+   * longer the only way.
+   */
+  const tooltip = useJewelTooltip(jewel);
 
   /**
    * Everything this jewel grants, on one line.
@@ -190,6 +227,29 @@ function JewelCard({
   const tiers = useMemo(
     () => (rarity === undefined ? [] : allowedAffixTiers(snapshot, rarity)),
     [snapshot, rarity],
+  );
+
+  /**
+   * Affixes this jewel carries that its style cannot roll.
+   *
+   * Changing the style keeps the affixes rather than quietly dropping them — a roll the player
+   * entered is data, and this file's rule is that nothing is defaulted away in silence. The
+   * validator already reports each one; the badge is here so the count is visible next to the
+   * control that caused it.
+   *
+   * Only `jewel`-type affixes are counted. `affixes` also holds the `crafted_jewel_unique`
+   * ones a Watcher's Eye picks up through `CraftedUniqueJewelData.upgradeUnique`, and those
+   * are drawn from the `crafted_jewel_unique` tag rather than from the style's pool — counting
+   * them put a "3 off-style" badge on a perfectly legal Abyssal Eye.
+   */
+  const stranded = useMemo(
+    () =>
+      affixes.filter(
+        (roll) =>
+          affix(snapshot, roll.affixId)?.type === "jewel" &&
+          !pool.some((option) => option.id === roll.affixId),
+      ).length,
+    [affixes, pool, snapshot],
   );
 
   const setAffixes = (next: AffixRoll[]): void => {
@@ -214,9 +274,27 @@ function JewelCard({
      * cannot be overridden by the `:has()` rule that lifts it, so it had to stop being one.
      */
     <div className={`collapsible${open ? " open" : ""}${unsocketed ? " dimmed" : ""}`}>
-      <div className="collapsible-head" onClick={() => setOpen(!open)}>
+      {/*
+        The card is offered on the collapsed row only. Open, the editor below already says
+        everything it says, and a card pinned to the pointer would be sitting on top of the
+        controls the pointer is on its way to.
+
+        `tooltip.clear()` on the click is not belt and braces: flipping `open` removes these
+        handlers, so the `onMouseLeave` that would normally take the card down never fires and
+        it hangs over the editor that just appeared. Same failure `useItemTooltip` documents
+        for a row that unmounts under the cursor, reached a different way.
+      */}
+      <div
+        className="collapsible-head"
+        onClick={() => {
+          tooltip.clear();
+          setOpen(!open);
+        }}
+        {...(open ? {} : tooltip.props)}
+      >
         <span className="faint caret">{open ? "▾" : "▸"}</span>
-        <strong>Jewel {nth}</strong>
+        <strong>{jewelName(snapshot, jewel)}</strong>
+        <span className="faint text-sm">#{nth}</span>
         <RarityBadge rarity={jewel.rarity} />
         <span className="badge">ilvl {jewel.itemLevel}</span>
         {unsocketed && (
@@ -224,21 +302,34 @@ function JewelCard({
             no socket
           </span>
         )}
-        {/* A jewel has no name, so what it grants *is* its name. On the hover too, because at
-            this width the row shows the first affix and not much else. */}
-        <span className="faint grow ellipsis text-sm" title={summary}>
+        {stranded > 0 && (
+          <span
+            className="badge bad"
+            title={`${stranded} affix(es) cannot roll on a ${jewelName(snapshot, jewel)}. Change the style back or replace them.`}
+          >
+            {stranded} off-style
+          </span>
+        )}
+        {/* Every jewel of a style shares its name, so what it grants is what tells two apart.
+            The rest of it is on the hover card, which carries no `title` of its own: a native
+            tooltip and the item window would both answer the same hover, one of them late and
+            in the wrong typeface. */}
+        <span className="faint grow ellipsis text-sm">
           {summary.length === 0 ? "no affixes" : summary}
         </span>
         <button
           title="Remove this jewel"
           onClick={(event) => {
             event.stopPropagation();
+            // The row is about to unmount under the cursor, so its `onMouseLeave` never fires.
+            tooltip.clear();
             onRemove();
           }}
         >
           ✕
         </button>
       </div>
+      {tooltip.node}
 
       {!open ? null : (
       <div className="collapsible-body">
@@ -259,6 +350,28 @@ function JewelCard({
             </option>
           ))}
         </select>
+        {/*
+          `JewelItemData.style`. It picks the item — and so the name — and it narrows the affix
+          pool to `any_jewel` plus its own tag, which is why the picker below shrinks when this
+          changes. The options name the jewel each style would produce rather than showing the
+          bare `str`/`dex`/`int`, since the name is what the player recognises. Still offered on
+          a Watcher's Eye, whose own name comes from its aura stats instead: the style is no
+          longer visible in the title there but it still governs the pool.
+        */}
+        <div className="field">
+          <label>style</label>
+          <select
+            value={jewel.style ?? DEFAULT_JEWEL_STYLE}
+            onChange={(event) => onChange({ ...jewel, style: event.target.value })}
+            title="PlayStyle — decides which jewel this is and which affixes may roll on it"
+          >
+            {JEWEL_STYLES.map((style) => (
+              <option key={style} value={style}>
+                {style} — {jewelName(snapshot, { ...jewel, style, auraStats: [] })}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="field">
           <label>ilvl</label>
           <NumberField

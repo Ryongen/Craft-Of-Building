@@ -279,6 +279,58 @@ export function allowedAffixTiers(snapshot: Snapshot, itemRarity: GearRarityView
     .map((r) => r.id);
 }
 
+/**
+ * The rarity ladder, as `higher_rar` spells it — common, uncommon, rare, epic, legendary, mythic.
+ *
+ * Not the same list as {@link allowedAffixTiers}, and the difference is the point. An affix's
+ * tier is bounded by the *item's* rarity; a ladder is a chain the data states outright:
+ *
+ *     public boolean hasHigherRarity() { return ExileDB.GearRarities().isRegistered(higher_rar); }
+ *     public GearRarity getHigherRarity() { return ExileDB.GearRarities().get(higher_rar); }
+ *
+ * — GearRarity.java:193-202. Walking it rather than sorting on `item_tier` is what leaves
+ * `unique` and `runeword` out without naming them: nothing links to either, and `mythic` links
+ * to nothing, so the chain is exactly the six a currency can climb.
+ *
+ * This is what an **infusion** is graded on. `GearInfusionData.rar` is its own rarity, separate
+ * from the item's, and `CraftedInfusionItem.canBeModified` refuses any step but the next one up:
+ *
+ *     if (!data.ench.canUpgradeToRarity(rar)) return ExplainedResult.failure(...)
+ *
+ * so a mythic infusion is six successful infusings, on an item of any rarity at all.
+ */
+export function rarityLadder(snapshot: Snapshot, from: string = "common"): string[] {
+  const chain: string[] = [];
+  let id: string | undefined = from;
+  while (id !== undefined && id.length > 0 && !chain.includes(id)) {
+    const d = data(snapshot, CATEGORY.gearRarity, id);
+    if (!d) break;
+    chain.push(id);
+    id = str(d, "higher_rar");
+  }
+  return chain;
+}
+
+/**
+ * What an infusion of this rarity rolls at — always the top of its band, never anything else.
+ *
+ *     public int getPercent() {
+ *         return ExileDB.GearRarities().get(rar).stat_percents.max;
+ *     }
+ *
+ * — GearInfusionData.java:63-65, confirmed in the 6.4.13 jar. `GearInfusionData` stores `en` and
+ * `rar` and **no percent at all**, so an infusion does not roll: a common one on
+ * `ench_pants_damage_when_hit` (10-30) is 13.4 every time, because common's band tops out at 17.
+ *
+ * The document still records a `rollPercent` alongside the tier, because an `AffixRoll` is one
+ * shape everywhere and an infusion is stored as one. This is the only value that shape may
+ * legally carry, which is why the editor writes it rather than offering a slider and the
+ * validator reports anything else.
+ */
+export function infusionRollPercent(snapshot: Snapshot, tier: string): number | undefined {
+  return gearRarity(snapshot, tier)?.statPercents.max;
+}
+
 // ---------------------------------------------------------------------------
 // Base gear types and affixes
 // ---------------------------------------------------------------------------
@@ -437,11 +489,67 @@ export function affixesFor(snapshot: Snapshot, baseId: string, type: AffixType):
     .filter((a) => a.type === type && affixAllowedOnTags(a, base.tags));
 }
 
+/**
+ * `PlayStyle` ids — what `JewelItemData.style` holds, and the three jewels there are.
+ *
+ * `PlayStyle.fromID` falls back to `STR` on anything it does not know, and so does everything
+ * here that takes one.
+ */
+export const JEWEL_STYLES = ["str", "dex", "int"] as const;
+
+export type JewelStyle = (typeof JEWEL_STYLES)[number];
+
+export function isJewelStyle(value: string): value is JewelStyle {
+  return (JEWEL_STYLES as readonly string[]).includes(value);
+}
+
+/**
+ * The tag a jewel of this style carries, so an affix can ask for it — `SlotTags.jewel_str`
+ * and friends, via `PlayStyle.getJewelAffixTag()`.
+ */
+export function jewelTags(style: string | undefined): string[] {
+  return ["any_jewel", `jewel_${isJewelStyle(style ?? "") ? style : "str"}`];
+}
+
+/**
+ * Every `jewel` affix a jewel of this style may roll — the pool a jewel editor offers.
+ *
+ * Mirrors the filter in `JewelItemData.generateAffixes`:
+ *
+ *     x -> x.type == Affix.AffixSlot.jewel
+ *          && (x.getAllTagReq().contains(SlotTags.any_jewel.GUID())
+ *              || x.getAllTagReq().contains(getStyle().getJewelAffixTag().GUID()))
+ *
+ * The Java asks whether the affix *mentions* either tag rather than evaluating the
+ * requirement, which is the same question only because all 53 jewel affixes declare a single
+ * `INCLUDES_ANY` with nothing excluded. {@link affixAllowedOnTags} therefore agrees with it
+ * exactly, and it is the one that stays right if the pack ever ships a `HAS_ALL` jewel affix.
+ *
+ * Of the 53, 36 are `any_jewel`: a Viridian jewel may carry 44 and a Meteorite or Stardust 45.
+ */
+export function jewelAffixesFor(snapshot: Snapshot, style: string | undefined): AffixView[] {
+  const tags = jewelTags(style);
+  return ids(snapshot, CATEGORY.affix)
+    .map((id) => affix(snapshot, id))
+    .filter((a): a is AffixView => a !== undefined)
+    .filter((a) => a.type === "jewel" && affixAllowedOnTags(a, tags));
+}
+
 export type UniqueView = {
   id: string;
   baseGear: string | undefined;
   minDropLvl: number;
   rarity: string | undefined;
+  /**
+   * `UniqueGear.replaces_name` — whether the unique's name stands alone or sits in front of
+   * the base's.
+   *
+   * The Java field initialiser is `true`, so an entry that omits the key replaces the name;
+   * only an explicit `false` keeps the base. 296 of the pack's 310 uniques replace it and the
+   * 14 that do not are all `*_deprecated`, which is why nothing noticed until item names
+   * started being assembled properly.
+   */
+  replacesName: boolean;
   uniqueStats: Record<string, unknown>[];
 };
 
@@ -453,6 +561,7 @@ export function unique(snapshot: Snapshot, id: string): UniqueView | undefined {
     baseGear: str(d, "base_gear"),
     minDropLvl: num(d, "min_drop_lvl", 0),
     rarity: str(d, "rarity"),
+    replacesName: bool(d, "replaces_name", true),
     uniqueStats: arr(d, "unique_stats").filter(
       (s): s is Record<string, unknown> => s !== null && typeof s === "object" && !Array.isArray(s),
     ),
@@ -1325,6 +1434,29 @@ export const PACK_MAX_BONUS_POINTS: Partial<Record<PlayerPointType, number>> = {
   ATLAS: 104,
 };
 
+/**
+ * What finishing the campaign's epilogue is worth, per pool.
+ *
+ * `getBonusPoints` is quest and item rewards, and nothing derivable from a level reaches it — so
+ * without this a level-100 planner offered 50 passive points and 100 spell points while the game
+ * offers **54 and 110**. Four passives and ten spell points is not a rounding error on a 50-point
+ * tree; it is four nodes you cannot plan for.
+ *
+ * Stated rather than derived, for the reason {@link PACK_MAX_BONUS_POINTS} is: the reward lives
+ * in the quest chain, which is not in any datapack this snapshot reads. Both numbers are read off
+ * the finished character — 0.5/level gives 50 passives at 100 and the game reports 54; 1/level
+ * gives 100 spell points and the game reports 110 — and both sit inside the balance file's own
+ * `max_bonus_points` of 10, which is the ceiling `pointsAvailable` still clamps to.
+ *
+ * `TALENTS`, `STATS` and `ASCENDANCY` are absent because their bonuses are not this quest:
+ * `character.pointTotals` on a finished character reports the talent tree's 126 as 101 from
+ * levelling plus its own 25, which the tree screen already reads off the capture.
+ */
+export const EPILOGUE_BONUS_POINTS: Partial<Record<PlayerPointType, number>> = {
+  PASSIVES: 4,
+  SPELLS: 10,
+};
+
 export function playerPointBudget(
   snapshot: Snapshot,
   type: PlayerPointType,
@@ -1381,7 +1513,12 @@ export type PointsAvailable = {
 
 export function pointsAvailable(
   snapshot: Snapshot,
-  character: { level: number; pointTotals?: Record<string, number> },
+  character: {
+    level: number;
+    pointTotals?: Record<string, number>;
+    /** See `BuildDoc.character.questsComplete` and {@link EPILOGUE_BONUS_POINTS}. */
+    questsComplete?: boolean;
+  },
   type: PlayerPointType,
   balanceId: string = DEFAULT_BALANCE_ID,
 ): PointsAvailable {
@@ -1390,7 +1527,18 @@ export function pointsAvailable(
   if (typeof recorded === "number" && Number.isFinite(recorded) && recorded >= 0) {
     return { total: Math.floor(recorded), recorded: true, budget };
   }
-  return { total: budget?.fromLevel ?? 0, recorded: false, budget };
+  // The quest reward is a `getBonusPoints` grant like any other, so it is bounded by the same two
+  // numbers the game bounds one by — `max_bonus_points` and then `max_total_points`:
+  //
+  //     int total = Math.min(current + getBonusPoints(p), data.max_total_points);
+  //
+  // Not a third rule beside the budget, which is why it goes through `maxBonus` rather than being
+  // added to `fromLevel` and returned.
+  const fromLevel = budget?.fromLevel ?? 0;
+  if (character.questsComplete !== true) return { total: fromLevel, recorded: false, budget };
+  const bonus = Math.min(EPILOGUE_BONUS_POINTS[type] ?? 0, budget?.maxBonus ?? 0);
+  const total = budget === undefined ? fromLevel : Math.min(fromLevel + bonus, budget.maxTotal);
+  return { total, recorded: false, budget };
 }
 
 /** `points_per_lvl` for a pool — the SPELLS one drives the per-level cost of a school perk. */
@@ -1618,17 +1766,44 @@ export function omenCountsSlot(snapshot: Snapshot, slotId: string): boolean {
  * affixes can unlock together.
  *
  * Returned as buckets rather than resolved stats because resolving means level scaling, which
- * is the engine's job. `mods` are the omen's own ranges plus the percent they resolve at;
- * `affix` entries carry their own stored roll.
+ * is the engine's job.
+ *
+ * ## Nothing on an omen is rolled, including its affixes
+ *
+ * The omen's own mods resolving at {@link omenStatPercent} is the documented half. The other
+ * half is that the **affixes resolve at the same number**, and carry the omen's rarity as
+ * their tier rather than one of their own. `OmenBlueprint.generate` never calls
+ * `AffixData.RerollNumbers`, which is what would have drawn from the tier's band — it assigns
+ * both fields outright (read off the **6.4.13 jar**, not the fork):
+ *
+ *     var adata = new AffixData(affix.type);
+ *     adata.id = affix.GUID();
+ *     adata.rar = rar.GUID();
+ *     adata.p = OmenData.getStatPercent(data.rarities, data.slot_req, rar);
+ *
+ * and the two currencies that edit an omen in place keep it that way:
+ * `RerollOmenStatsItemMod` re-picks the affix ids and re-derives `p` from the same call, and
+ * `UpgradeOmenRarityItemMod` rewrites every `aff.rar` and `aff.p` to match the new rarity. So
+ * `AffixData.p` on an omen is a *cached copy* of the derived percent, never an independent
+ * roll, and there is no state in which the two legitimately differ.
+ *
+ * Which is why the stored {@link AffixRoll.tier} and {@link AffixRoll.rollPercent} are
+ * overwritten here rather than read. Trusting them would let a document — one hand-built in
+ * the planner, or one whose requirements were edited after it was captured — pay out a number
+ * the game cannot produce. The validator reports the disagreement; this returns the game's
+ * answer regardless.
  */
 export type OmenBucket = {
   /** Pieces required for this bucket to pay out. */
   pieces: number;
+  /**
+   * {@link omenStatPercent}. The **same number on every bucket**, the omen's own and the
+   * affixes' alike, because that is the only percent an omen has.
+   */
+  statPercent: number;
   /** The omen's own `mods`, present on exactly one bucket. */
   mods?: Record<string, unknown>[];
-  /** Resolved at {@link omenStatPercent}; meaningless for the affix buckets. */
-  statPercent?: number;
-  /** An affix bucket. */
+  /** An affix bucket, with its tier and roll re-derived rather than taken from the document. */
   affix?: AffixRoll;
 };
 
@@ -1652,9 +1827,22 @@ export function omenBuckets(snapshot: Snapshot, setup: OmenSetup): OmenBucket[] 
 
   let index = max - 1;
   for (const affix of setup.affixes ?? []) {
-    out.push({ pieces: index, affix });
+    // `adata.rar = rar.GUID(); adata.p = getStatPercent(...)` — both come from the omen.
+    out.push({ pieces: index, statPercent: percent, affix: omenAffixRoll(affix, setup, percent) });
     index--;
     if (index < 2) index = 2;
   }
   return out;
+}
+
+/**
+ * One of an omen's affixes as the game stores it: the document's affix id, the omen's own
+ * rarity as the tier, and the derived percent as the roll.
+ *
+ * Exported because the editor writes the same shape back into the document — a stored value
+ * that drifts from this one is a document the game could not have produced, and the cheapest
+ * place to stop that is where it is written.
+ */
+export function omenAffixRoll(roll: AffixRoll, setup: OmenSetup, percent: number): AffixRoll {
+  return { affixId: roll.affixId, tier: setup.rarity, rollPercent: percent };
 }

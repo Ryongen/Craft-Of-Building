@@ -8,6 +8,8 @@ import {
   fillTemplate,
   humanise,
   isTemplate,
+  itemName,
+  jewelName,
   modifierLine,
   modifierValue,
   parseFormatting,
@@ -22,6 +24,7 @@ import {
   stripGlossaryMarkup,
   uniqueName,
 } from "./display.js";
+import type { Item } from "./build-doc.js";
 import { makeSnapshot, standardSnapshot } from "./test-support.js";
 
 /** The real lang shapes: plain names, templated names, and the unique `.name` suffix. */
@@ -163,6 +166,165 @@ test("spellName prefers lang over loc_name, because loc_name is the stale one", 
 
 test("uniqueName reads the `.name` suffix uniques alone carry", () => {
   assert.equal(uniqueName(langSnapshot(), "windrunner"), "Windrunner");
+});
+
+// ---------------------------------------------------------------------------
+// Item names — GearItemData.getFullAffixedName
+// ---------------------------------------------------------------------------
+
+/** A base, two implicits, two prefixes, a suffix and two uniques — one per naming branch. */
+function gearSnapshot(): ReturnType<typeof makeSnapshot> {
+  const snapshot = makeSnapshot({
+    mmorpg_base_gear_types: { ring: { guid: "ring" } },
+    mmorpg_affixes: {
+      amethyst_ring: { guid: "amethyst_ring", type: "implicit" },
+      topaz_ring: { guid: "topaz_ring", type: "implicit" },
+      azure: { guid: "azure", type: "prefix" },
+      boundless: { guid: "boundless", type: "prefix" },
+      of_venom: { guid: "of_venom", type: "suffix" },
+    },
+    mmorpg_unique_gears: {
+      // The overwhelming majority: `replaces_name` absent, and the Java field defaults true.
+      thread_of_hope: { guid: "thread_of_hope", base_gear: "ring" },
+      // The 14 deprecated ones that state it — the unique sits in front of the base.
+      old_ring: { guid: "old_ring", base_gear: "ring", replaces_name: false },
+    },
+  });
+
+  snapshot.lang = {
+    "mmorpg.gear_type.ring": "Ring",
+    "mmorpg.affix.amethyst_ring": "Amethyst Ring",
+    "mmorpg.affix.topaz_ring": "Topaz Ring",
+    "mmorpg.affix.azure": "Azure",
+    "mmorpg.affix.boundless": "Boundless",
+    "mmorpg.affix.of_venom": "of Venom",
+    "mmorpg.unique_gear.thread_of_hope.name": "Thread of Hope",
+    "mmorpg.unique_gear.old_ring.name": "Old Ring",
+    "mmorpg.formatter.gear_item_name_all": "%1$s %2$s %3$s",
+    "mmorpg.formatter.gear_item_name_only_gear": "%1$s",
+    "mmorpg.formatter.gear_item_name_pre_gear": "%1$s %2$s",
+    "mmorpg.formatter.gear_item_name_another": "%1$s %2$s %3$s",
+    "mmorpg.formatter.unique_name_format": "%1$s %2$s",
+    "item.mmorpg.jewel.str": "Meteorite Jewel",
+    "item.mmorpg.jewel.dex": "Viridian Jewel",
+    "item.mmorpg.jewel.int": "Stardust Jewel",
+    "item.mmorpg.jewel.watcher_eye": "Abyssal Eye, Divine Jewel",
+  };
+  return snapshot;
+}
+
+const RING: Item = { base: "ring", rarity: "rare", itemLevel: 60 };
+
+test("each of the four Formatter branches is reached, and the empty slot leaves no gap", () => {
+  const snapshot = gearSnapshot();
+  const pre = { affixId: "azure", rollPercent: 50 };
+  const suf = { affixId: "of_venom", rollPercent: 50 };
+
+  assert.equal(itemName(snapshot, RING), "Ring");
+  assert.equal(itemName(snapshot, { ...RING, prefixes: [pre] }), "Azure Ring");
+  assert.equal(itemName(snapshot, { ...RING, prefixes: [pre], suffixes: [suf] }), "Azure Ring of Venom");
+  // The catch-all branch formats ("", base, suffix) through "%1$s %2$s %3$s", so in game this
+  // renders with a leading space. It is a template artefact, not part of the name.
+  assert.equal(itemName(snapshot, { ...RING, suffixes: [suf] }), "Ring of Venom");
+});
+
+test("only the strongest affix of each kind names the item, ties going to the first", () => {
+  const snapshot = gearSnapshot();
+  assert.equal(
+    itemName(snapshot, {
+      ...RING,
+      prefixes: [
+        { affixId: "azure", rollPercent: 20 },
+        { affixId: "boundless", rollPercent: 80 },
+      ],
+    }),
+    "Boundless Ring",
+  );
+  // `Stream.sorted` is stable, so an equal roll keeps declaration order rather than flipping
+  // the label as unrelated edits reorder the list.
+  assert.equal(
+    itemName(snapshot, {
+      ...RING,
+      prefixes: [
+        { affixId: "azure", rollPercent: 50 },
+        { affixId: "boundless", rollPercent: 50 },
+      ],
+    }),
+    "Azure Ring",
+  );
+});
+
+test("an implicit replaces the base's name outright — this is what tells two rings apart", () => {
+  const snapshot = gearSnapshot();
+  assert.equal(
+    itemName(snapshot, { ...RING, implicits: [{ affixId: "amethyst_ring", rollPercent: 30 }] }),
+    "Amethyst Ring",
+  );
+  assert.equal(
+    itemName(snapshot, {
+      ...RING,
+      implicits: [{ affixId: "topaz_ring", rollPercent: 30 }],
+      prefixes: [{ affixId: "azure", rollPercent: 50 }],
+      suffixes: [{ affixId: "of_venom", rollPercent: 50 }],
+    }),
+    "Azure Topaz Ring of Venom",
+  );
+  // `imp.has()` is `isRegistered`, so an implicit that is not in the registry at all leaves
+  // the base alone rather than displacing it with a humanised id.
+  assert.equal(
+    itemName(snapshot, { ...RING, implicits: [{ affixId: "no_such_affix", rollPercent: 30 }] }),
+    "Ring",
+  );
+});
+
+test("replaces_name defaults to true, and the uniques that decline it keep the base", () => {
+  const snapshot = gearSnapshot();
+  assert.equal(itemName(snapshot, { ...RING, unique: "thread_of_hope" }), "Thread of Hope");
+  assert.equal(itemName(snapshot, { ...RING, unique: "old_ring" }), "Old Ring Ring");
+  // And the implicit still supplies the base half of that pairing.
+  assert.equal(
+    itemName(snapshot, {
+      ...RING,
+      unique: "old_ring",
+      implicits: [{ affixId: "amethyst_ring", rollPercent: 30 }],
+    }),
+    "Old Ring Amethyst Ring",
+  );
+});
+
+test("the pack's Formatter templates are honoured, not hardcoded", () => {
+  const snapshot = gearSnapshot();
+  // A translator who reorders the name reorders it here too — that is what `Formatter` is for.
+  snapshot.lang["mmorpg.formatter.gear_item_name_all"] = "%3$s %1$s %2$s";
+  assert.equal(
+    itemName(snapshot, {
+      ...RING,
+      prefixes: [{ affixId: "azure", rollPercent: 50 }],
+      suffixes: [{ affixId: "of_venom", rollPercent: 50 }],
+    }),
+    "of Venom Azure Ring",
+  );
+});
+
+test("a jewel is named by its play style, and aura stats outrank the style", () => {
+  const snapshot = gearSnapshot();
+  const base = { rarity: "rare", itemLevel: 60 };
+  assert.equal(jewelName(snapshot, base), "Meteorite Jewel");
+  assert.equal(jewelName(snapshot, { ...base, style: "str" }), "Meteorite Jewel");
+  assert.equal(jewelName(snapshot, { ...base, style: "dex" }), "Viridian Jewel");
+  assert.equal(jewelName(snapshot, { ...base, style: "int" }), "Stardust Jewel");
+  // `PlayStyle.fromID` falls back to STR on anything it does not know.
+  assert.equal(jewelName(snapshot, { ...base, style: "nonsense" }), "Meteorite Jewel");
+  // `getItem()` checks `auraStats` before the style, so a Watcher's Eye is one whatever it
+  // rolled at.
+  assert.equal(
+    jewelName(snapshot, {
+      ...base,
+      style: "dex",
+      auraStats: [{ affixId: "chaos_res", rollPercent: 50, itemLevel: 60 }],
+    }),
+    "Abyssal Eye, Divine Jewel",
+  );
 });
 
 test("statDisplay reads the GUI fields off the stat, with Stat's defaults", () => {

@@ -1,29 +1,39 @@
 /**
- * What one item is worth, resolved once and read from three places.
+ * What one item *contains*, worded the way the game words it.
  *
- * The gear panel already answered "what does this piece contribute" for its editor preview, by
- * running the engine's own `collectGear` over a one-item list and summing the contexts. Two more
- * callers now want the same answer — the hover tooltip over a gear row, and the diff that prices
- * a swap against what is already worn — and three copies of that summation would be three
- * opinions about what an item grants.
+ * The lines on the card: what this piece grants, resolved through the engine's own `collectGear`
+ * over a one-item list. Not a walk over the document's fields, for the reason the gear panel's
+ * original preview gave: the collector applies the item-level scaling and the roll interpolation
+ * exactly as the character sheet does, so nothing shown here can disagree with the sidebar. The
+ * rules that fall out for free are the ones people trip over — an item above the character's
+ * level contributes nothing at all, and quality lands on the base roll and nowhere else.
  *
- * `collectGear` rather than a walk over the document's own fields, for the reason the preview
- * gave originally: it applies the item-level scaling and the roll interpolation exactly as the
- * character sheet does, so nothing shown here can disagree with the sidebar. The rules that fall
- * out for free are the ones people trip over — an item above the character's level contributes
- * nothing at all, and quality lands on the base roll and nowhere else.
+ * ## What this is not
+ *
+ * It is not what an item is *worth*. That question needs the rest of the character — the tree's
+ * increases, the curves, the caps — and is answered by computing the build that has the item,
+ * which is `state/compare.ts`'s job and `ItemDiffCard`'s. This module used to carry a `diffItems`
+ * that subtracted one item's lines from another's and called the result a swap; it was a true
+ * statement about two items and the wrong answer to the question anybody was asking.
  *
  * ## Why the three modifier types stay apart
  *
  * `FLAT`, `PERCENT` and `MORE` are not addable. +40 Armor and +40% Armor are different claims
  * about the same stat, and a sum of the two is a number that appears nowhere. So a total is a
- * triple per stat, a *line* is drawn per non-zero member of that triple, and a diff compares
- * members pairwise.
+ * triple per stat and a *line* is drawn per non-zero member of that triple.
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import { balance, collectGear, makeEnv, statIndex } from "@cte2/engine";
-import { statDisplay, statName, type Item } from "@cte2/schema";
+import { balance, collectGear, collectJewels, makeEnv, statIndex } from "@cte2/engine";
+import type { ExactMod } from "@cte2/engine";
+import {
+  fillTemplate,
+  statDisplay,
+  statNameRaw,
+  stripFormatting,
+  type Item,
+  type Jewel,
+} from "@cte2/schema";
 
 import { signed, smart } from "./format.js";
 
@@ -52,125 +62,297 @@ export function itemTotals(
 
   const totals = new Map<string, StatTotal>();
   for (const context of contexts) {
-    for (const mod of context.stats) {
-      let bucket = totals.get(mod.statId);
-      if (bucket === undefined) {
-        bucket = { flat: 0, percent: 0, more: 0 };
-        totals.set(mod.statId, bucket);
-      }
-      if (mod.type === "FLAT") bucket.flat += mod.value;
-      else if (mod.type === "PERCENT") bucket.percent += mod.value;
-      else bucket.more += mod.value;
-    }
+    for (const mod of context.stats) addMod(totals, mod);
   }
   return totals;
 }
 
-/** One stat's contribution as the game words it: "+40 Armor", "+12% Increased Armor". */
-export function totalLines(snapshot: Snapshot, totals: Map<string, StatTotal>): string[] {
-  const lines: string[] = [];
+/** Folds one resolved modifier into a stat-keyed accumulator. */
+function addMod(totals: Map<string, StatTotal>, mod: ExactMod): void {
+  let bucket = totals.get(mod.statId);
+  if (bucket === undefined) {
+    bucket = { flat: 0, percent: 0, more: 0 };
+    totals.set(mod.statId, bucket);
+  }
+  if (mod.type === "FLAT") bucket.flat += mod.value;
+  else if (mod.type === "PERCENT") bucket.percent += mod.value;
+  else bucket.more += mod.value;
+}
+
+/**
+ * One resolved line of an item, with what the game needs to colour it.
+ *
+ * The text alone was not enough. The card paints every number green, which is right for most
+ * lines and a lie for the ones that matter most: a unique carrying −40% Attack Speed as its
+ * downside read as a bonus. {@link StatLine.good} is what fixes it, and it is the game's own
+ * rule rather than the sign of the number — see {@link totalLines}.
+ */
+export type StatLine = {
+  /** The line as the game words it — "+40 Armor", "−40% Attack Speed". */
+  text: string;
+  statId: string;
+  /** The signed value the line is about; `MORE` keeps its sign even though the word is "Less". */
+  value: number;
+  /** True when the line is an improvement. `minus_is_good` applied, never the sign. */
+  good: boolean;
+};
+
+/**
+ * One stat's contribution as the game words it: "+40 Armor", "+75% Cold Resistance".
+ *
+ * ## Which lines are green
+ *
+ * Not the positive ones — the *good* ones, which is the same distinction the game draws:
+ *
+ *     public ChatFormatting numberColor(ChatFormatting format, Stat stat, float val) {
+ *         if (stat.minus_is_good) {
+ *             if (val > 0) { return ChatFormatting.RED; } else { return ChatFormatting.GREEN; }
+ *         } else {
+ *             if (val > 0) { return ChatFormatting.GREEN; } else { return ChatFormatting.RED; }
+ *         }
+ *     }
+ *
+ * — `StatNameRegex.numberColor`, confirmed in the 6.4.13 jar. So −40% Attack Speed on a unique
+ * is red and −15 Mana Cost is green, and neither is decided by the minus sign. It is the rule
+ * `DeltaTable` and the stat sheet already read, so all three agree about which way a cost points.
+ *
+ * ## Why a flat line can still end in a percent
+ *
+ * `FLAT` is the modifier *kind* — it adds to the stat rather than scaling it — and says nothing
+ * about the stat's own unit. Half this pack's stats are percentages in their own right, and the
+ * game prints them with a `%` whether the modifier that granted them was flat or not: a ring
+ * granting `FLAT 75 water_resist` reads "+75% Cold Resistance" on its tooltip, because 75 points
+ * of a resist *is* 75 percent.
+ *
+ * `mmorpg_stat.is_perc` is that fact, and reading it here is what stopped every resist, every
+ * `phys_taken_as_*`, Area of Effect, Area Damage and Song Effect Strength from rendering as a
+ * bare number that could not be told from a rating. The same flag draws the `%` on the stat
+ * sheet, the stat breakdown and the what-if tables, so the item card is no longer the one
+ * surface with its own opinion.
+ *
+ * `PERCENT` and `MORE` carry their `%` unconditionally, as they always did: those are scalings,
+ * and "+12% Increased Armor" is a percent of a rating that is not itself one.
+ *
+ * ## The lines that are whole sentences
+ *
+ * 57 stats in this pack are named with the value *inside* the name — `[VAL1]% Chance to Cast Fan
+ * of Knives on Hit`. The game fills the placeholder and prints nothing else:
+ *
+ *     if (stat.is_long) {
+ *         String txt = stat.locName().getString();
+ *         txt = txt.replace(Stat.VAL1, plusminus + v1s);
+ *         return txt;
+ *     }
+ *
+ * — `StatNameRegex.translate`, and note it returns *before* the `More`/`Less` wording, so a
+ * template wins over the modifier kind. Composing "+27% [VAL1]% Chance to Cast…" the ordinary way
+ * printed the value twice and the placeholder raw, which is the data's variable name on screen.
+ */
+export function totalLines(snapshot: Snapshot, totals: Map<string, StatTotal>): StatLine[] {
+  const lines: StatLine[] = [];
   for (const [statId, bucket] of totals) {
-    const name = statName(snapshot, statId);
-    if (bucket.flat !== 0) lines.push(`${signed(bucket.flat)} ${name}`);
-    if (bucket.percent !== 0) lines.push(`${signed(bucket.percent)}% Increased ${name}`);
+    const display = statDisplay(snapshot, statId);
+    const name = display.name;
+    const unit = display.isPerc ? "%" : "";
+    const line = (text: string, value: number): StatLine => ({
+      text,
+      statId,
+      value,
+      good: display.minusIsGood ? value < 0 : value > 0,
+    });
+
+    if (display.templated) {
+      const raw = statNameRaw(snapshot, statId);
+      for (const value of [bucket.flat, bucket.percent, bucket.more]) {
+        if (value === 0) continue;
+        lines.push(
+          line(
+            raw === undefined
+              ? `${signed(value)}${unit} ${name}`
+              : stripFormatting(fillTemplate(raw, [signed(value)])),
+            value,
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (bucket.flat !== 0) lines.push(line(`${signed(bucket.flat)}${unit} ${name}`, bucket.flat));
+    if (bucket.percent !== 0) {
+      lines.push(line(`${signed(bucket.percent)}% Increased ${name}`, bucket.percent));
+    }
     if (bucket.more !== 0) {
+      // The word carries the sign, so the text reads "20% Less" rather than the game's own
+      // "−20% Less" — but `value` stays signed, because that is what decides the colour.
       lines.push(
-        bucket.more < 0 ? `${smart(-bucket.more)}% Less ${name}` : `${smart(bucket.more)}% More ${name}`,
+        line(
+          bucket.more < 0
+            ? `${smart(-bucket.more)}% Less ${name}`
+            : `${smart(bucket.more)}% More ${name}`,
+          bucket.more,
+        ),
       );
     }
   }
   return lines;
 }
 
-/** Everything one item grants, as lines. The old `useItemPreview` body, shared. */
-export function itemLines(snapshot: Snapshot, item: Item, characterLevel: number): string[] {
-  return totalLines(snapshot, itemTotals(snapshot, item, characterLevel));
-}
-
 /**
- * One line of a swap: a stat, which kind of modifier moved, and by how much.
+ * Which part of an item a line came from.
  *
- * `good` is `minus_is_good` applied rather than the sign of `change`. 38 stats in this pack are
- * better when they go down — every aura cost, every `*_dmg_received` — and painting a swap that
- * cuts your mana cost red would be the panel telling the player the opposite of the truth. It is
- * the same rule `DeltaTable` and the stat list already read, so the three agree.
+ * `ModOrigin["kind"]` names every part except socketed **gems**, and that is not an omission:
+ * `BaseGem` stats are fixed rather than rolled, so `socketStats` never tags them and they arrive
+ * with no origin at all. `"socket"` is the bucket those land in, and nothing else does.
+ *
+ * `"aura"` is the jewel side of the same gap. A Watcher's Eye line is an ordinary affix roll —
+ * `collectJewels` tags it `prefix` like any other — and what makes it conditional is the
+ * *context* it lands in rather than anything on the modifier. See {@link jewelSections}.
  */
-export type ItemDelta = {
-  key: string;
-  statId: string;
+export type ItemSectionKind = NonNullable<ExactMod["from"]>["kind"] | "socket" | "aura";
+
+/** One part of an item, already worded: `{ kind: "prefix", label: "Prefix Stats", lines: [...] }`. */
+export type ItemSection = {
+  kind: ItemSectionKind;
   label: string;
-  kind: ModKind;
-  /** What the currently equipped item gave, or 0 when the slot is empty. */
-  from: number;
-  /** What the candidate gives. */
-  to: number;
-  change: number;
-  good: boolean;
+  lines: StatLine[];
 };
 
 /**
- * A stat's name, worded for the kind of modifier that moved.
+ * The parts a tooltip prints, in the order it prints them.
  *
- * The same wording {@link totalLines} uses — "Increased Armor", not "Armor% increased" — so a
- * diff row and the tooltip line it came from name the same thing the same way. Without it the
- * two halves of one comparison read as two different stats.
+ * Base first, because the base roll is what the item *is* and an affix is what was done to it.
+ * The rest follow `GearItemData.GetAllStatContainers` — see `collect/gear.ts`.
  */
-function kindLabel(kind: ModKind, name: string): string {
-  if (kind === "flat") return name;
-  return `${kind === "percent" ? "Increased" : "More"} ${name}`;
+const ITEM_SECTIONS: readonly { kind: ItemSectionKind; label: string }[] = [
+  { kind: "base", label: "Base Stats" },
+  { kind: "implicit", label: "Implicit Stats" },
+  { kind: "prefix", label: "Prefix Stats" },
+  { kind: "suffix", label: "Suffix Stats" },
+  { kind: "corruption", label: "Corruption Stats" },
+  // "Infusion", not "Enchantment". `enchant` is the affix type's id in the data and stays the
+  // origin tag the engine sets, but the word a player uses for it is Infusion — Minecraft's own
+  // enchantments are a different thing entirely, granted through `mmorpg_stat_compat`, and this
+  // card can show both at once. The item editor has called it an Infusion for a while; this was
+  // the last place that did not.
+  { kind: "enchant", label: "Infusion" },
+  { kind: "unique", label: "Unique Stats" },
+  { kind: "rune", label: "Rune Stats" },
+  { kind: "runeword", label: "Runeword Stats" },
+  { kind: "socket", label: "Socket Stats" },
+];
+
+/**
+ * {@link totalLines}, split by which part of the item produced each line.
+ *
+ * The engine tags every modifier it resolves with its origin (`ExactMod.from`), so the split is
+ * a regroup of what `collectGear` already returned rather than a per-affix re-derivation. That
+ * matters for more than brevity: an implicit and a prefix on the same item can grant the same
+ * stat, and only the tag says which line is which. Stripping the other lists off the item and
+ * re-running the collector — the obvious first attempt — cannot work, because the base stats,
+ * uniques and gems are not affixes and survive every one of those strips, so each group ended up
+ * carrying all of them.
+ *
+ * Sections with no lines are dropped, and a warning the collector raised (an unknown affix, a
+ * missing base roll) surfaces in the caller's diagnostics rather than here.
+ */
+export function itemSections(
+  snapshot: Snapshot,
+  item: Item,
+  characterLevel: number,
+): ItemSection[] {
+  const env = makeEnv(snapshot, statIndex(snapshot), balance(snapshot), characterLevel);
+  const [gear] = collectGear(env, [item]);
+
+  const byKind = new Map<ItemSectionKind, Map<string, StatTotal>>();
+  for (const mod of gear?.stats ?? []) {
+    addTo(byKind, mod.from?.kind ?? "socket", mod);
+  }
+
+  return assemble(snapshot, ITEM_SECTIONS, byKind);
+}
+
+/** Folds one modifier into the bucket for its part of the item, creating the bucket if new. */
+function addTo(
+  byKind: Map<ItemSectionKind, Map<string, StatTotal>>,
+  kind: ItemSectionKind,
+  mod: ExactMod,
+): void {
+  let totals = byKind.get(kind);
+  if (totals === undefined) {
+    totals = new Map<string, StatTotal>();
+    byKind.set(kind, totals);
+  }
+  addMod(totals, mod);
+}
+
+/** The buckets, worded and put in the card's order, with the empty ones dropped. */
+function assemble(
+  snapshot: Snapshot,
+  order: readonly { kind: ItemSectionKind; label: string }[],
+  byKind: ReadonlyMap<ItemSectionKind, Map<string, StatTotal>>,
+): ItemSection[] {
+  return order
+    .map(({ kind, label }) => ({
+      kind,
+      label,
+      lines: totalLines(snapshot, byKind.get(kind) ?? new Map<string, StatTotal>()),
+    }))
+    .filter((section) => section.lines.length > 0);
 }
 
 /**
- * What changes when `to` replaces `from`.
+ * The parts of a *jewel*, which are three of the ten a piece of gear has.
  *
- * `from` is `undefined` for an empty slot, which is the easy case the whole diff also covers:
- * every stat the candidate has is a gain, because there is nothing coming off.
- *
- * Ranked by the size of the change within a kind, biggest first, so the reason to take the swap
- * or leave it is in the first few rows. Stats both items grant equally are dropped — a row
- * reading "no change" is a row that costs a reader attention and pays nothing back.
+ * A jewel has no base, no implicit, no socket and no enchant, and its rolled affixes are not
+ * split into prefixes and suffixes — `JewelItemData` keeps one `affixes` list and one `cor`
+ * list. "Jewel Stats" is therefore the heading over what the game would call prefixes, because
+ * calling them prefixes on an item that has no suffixes would invent a distinction the data
+ * does not draw.
  */
-export function diffItems(
+const JEWEL_SECTIONS: readonly { kind: ItemSectionKind; label: string }[] = [
+  { kind: "prefix", label: "Jewel Stats" },
+  { kind: "corruption", label: "Corruption Stats" },
+  { kind: "aura", label: "While Under Aura" },
+];
+
+/**
+ * {@link itemSections} for a jewel: what it grants, split by which list it came from.
+ *
+ * Through `collectJewels` for the reason the gear card goes through `collectGear` — the sheet
+ * and the card must be the same computation — and that brings the game's two rules with it.
+ * Corruptions resolve alongside the rolled affixes, and a Watcher's Eye line is counted only
+ * while its aura is running, which is why `aurasOn` has to be the build's real set rather than
+ * a convenient "all of them": a card that printed a dormant line would disagree with the sheet
+ * about the one stat the player is squinting at.
+ *
+ * ## Why the aura lines are told apart by their context
+ *
+ * `affixStats` tags every jewel roll `prefix`, aura lines included, so `ExactMod.from.kind`
+ * cannot separate them. What does is the *shape* of what `collectJewels` returns: one context
+ * per live aura line, each pathed `jewels[0].auraStats[n]`, and then one context for the jewel
+ * itself at `jewels[0]`. The path is the discriminator, and it is stable because it is the same
+ * string the validator points its diagnostics at.
+ *
+ * The socket clamp is deliberately not applied. A jewel past the last socket grants nothing,
+ * and the card's job is to say what the jewel *is* — the list already badges it "no socket" and
+ * the panel already carries the notice explaining that the engine drops it.
+ */
+export function jewelSections(
   snapshot: Snapshot,
-  from: Item | undefined,
-  to: Item | undefined,
+  jewel: Jewel,
   characterLevel: number,
-): ItemDelta[] {
-  const before = from === undefined ? new Map<string, StatTotal>() : itemTotals(snapshot, from, characterLevel);
-  const after = to === undefined ? new Map<string, StatTotal>() : itemTotals(snapshot, to, characterLevel);
+  aurasOn: ReadonlySet<string>,
+): ItemSection[] {
+  const env = makeEnv(snapshot, statIndex(snapshot), balance(snapshot), characterLevel);
+  const contexts = collectJewels(env, [jewel], aurasOn);
 
-  const statIds = [...new Set([...after.keys(), ...before.keys()])];
-  const deltas: ItemDelta[] = [];
-
-  for (const statId of statIds) {
-    const a = before.get(statId) ?? { flat: 0, percent: 0, more: 0 };
-    const b = after.get(statId) ?? { flat: 0, percent: 0, more: 0 };
-    const display = statDisplay(snapshot, statId);
-    const name = statName(snapshot, statId);
-
-    for (const kind of MOD_KINDS) {
-      const change = b[kind] - a[kind];
-      if (change === 0) continue;
-      deltas.push({
-        key: `${statId}:${kind}`,
-        statId,
-        label: kindLabel(kind, name),
-        kind,
-        from: a[kind],
-        to: b[kind],
-        change,
-        good: display.minusIsGood ? change < 0 : change > 0,
-      });
+  const byKind = new Map<ItemSectionKind, Map<string, StatTotal>>();
+  for (const context of contexts) {
+    const conditional = context.path !== "jewels[0]";
+    for (const mod of context.stats) {
+      addTo(byKind, conditional ? "aura" : mod.from?.kind ?? "prefix", mod);
     }
   }
 
-  // Biggest mover first. Percentages and flats are not comparable in magnitude, so the sort is
-  // over the absolute change within the list as it stands rather than over a normalised score —
-  // it is a reading order, not a ranking of which stat matters more.
-  return deltas.sort((x, y) => Math.abs(y.change) - Math.abs(x.change));
-}
-
-/** A diff row's number, worded the way the item lines above are. */
-export function deltaText(delta: ItemDelta): string {
-  return `${signed(delta.change)}${delta.kind === "flat" ? "" : "%"}`;
+  return assemble(snapshot, JEWEL_SECTIONS, byKind);
 }

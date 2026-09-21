@@ -1,131 +1,179 @@
 /**
- * What picking this item up would change.
+ * What picking this item up would change — to the character, not to the item list.
  *
  * Choosing gear is a comparison and the panel used to make you hold both halves of it in your
  * head: the editor showed what the candidate grants, the paperdoll showed what you are wearing,
  * and working out whether the swap was an upgrade meant reading two lists of thirty lines and
  * subtracting them yourself.
  *
- * So selecting an item prices it against what is already in its slot. Green is better and red is
- * worse — and better is `minus_is_good` applied rather than the sign of the change, because 38
- * stats in this pack improve as they fall. That rule lives in `diffItems`, beside the stat
- * totals it reads, so this and the delta tables elsewhere in the app cannot disagree about which
- * way a cooldown points.
+ * ## Why the subtraction was not enough
  *
- * ## The three cases it has to read correctly
+ * The first version of this card did that subtraction for you — the candidate's resolved stats
+ * minus the worn piece's, per stat and per modifier kind. That is a true statement about two
+ * items and it is not the question: **what an item grants is not what it is worth.**
  *
- *  - **An empty slot.** Nothing comes off, so every line is a gain. The card says the slot is
- *    empty rather than pretending there was a zero-stat item there.
- *  - **A swap.** Both items' contributions are resolved and subtracted per stat and per modifier
- *    kind, so "+40 Armor" and "+40% Armor" never cancel each other out.
- *  - **The item already worn.** There is nothing to price — selecting your own boots is not a
- *    swap — so it shows what they contribute instead of a diff of the item against itself.
+ * A chest granting 100 flat dodge is worth 200 dodge on a character carrying +100% increased
+ * dodge from the tree, and those 200 points are a different share of a hit at every rating on the
+ * curve — 2% here, a tenth of one there. Armour is the same, the resists cap, added flat damage
+ * runs through increases and mores and crit before it is a DPS figure, and nothing about any of
+ * that is visible in the item's own lines.
+ *
+ * So the card builds the **document each choice would produce** and runs the whole engine over
+ * it, which is what the tree hover and the support gem ranking already do. Every row is therefore
+ * a change to the character sheet with every increase already applied, and the five rating stats
+ * lead with what they bought: `+2.00% (+200)` is two points of dodge chance, from two hundred
+ * points of rating. `DeltaTable` words all of that, so this card, the tree tooltip and the
+ * Compare tab cannot disagree about a number or about which way it is good.
+ *
+ * ## The readings it has to get right
+ *
+ *  - **An empty position.** Nothing comes off, so the candidate document is the build plus one
+ *    piece.
+ *  - **A swap.** The worn piece comes out of `doc.gear` and the candidate goes in, so what is
+ *    priced is the character afterwards rather than a difference of two stat lists.
+ *  - **A position the item is already in.** There is nothing to price it against, so the document
+ *    is the build *without* it and the card prices taking it off. That is the only place this app
+ *    asks what a slot is worth to the build, and it is not a copy of the window beside it: the
+ *    window lists what the piece grants, this says what losing it would cost.
+ *
+ * ## More than one reading of one item
+ *
+ * A ring fits either finger, so a candidate ring has two answers and both are true — one card per
+ * position, stacked, in the paperdoll's order. Which positions exist is the panel's decision
+ * (`showCompare` in `GearPanel`); this only prices them, and `useWhatIfEach` prices the whole set
+ * against one baseline in one debounced pass rather than one timer per card.
+ *
+ * It lives in the Items panel, beside the item window, rather than in the sidebar: the item's own
+ * card and the price of the swap are two halves of one decision, and the sidebar is a long way
+ * from the row that was clicked.
  */
 
-import type { ReactNode } from "react";
-import { gearTypeName, uniqueName, type Item } from "@cte2/schema";
+import { useMemo, type ReactNode } from "react";
+import { itemName, type Item } from "@cte2/schema";
 
 import { useBuild } from "../state/build-store.js";
-import { useItemCompare } from "../state/item-compare.js";
+import { useWhatIfEach, type WhatIf } from "../state/compare.js";
+import { docWithSwap, useItemCompare, type ComparePosition } from "../state/item-compare.js";
 import { useWorld } from "../state/snapshot.js";
+import { ComparisonBlock } from "./DeltaTable.js";
 import { RarityBadge } from "./RarityBadge.js";
-import { deltaText, diffItems, itemLines } from "./item-stats.js";
 
-/** Rows past this are folded into a count. A sidebar is not the place for eighty of them. */
-const MAX_ROWS = 24;
+/**
+ * Sheet rows past this are folded into a count.
+ *
+ * This sits beside a thirty-line stat list, and a price list longer than the thing it is pricing
+ * stops being a comparison. The list is ranked by how much each stat moved relative to itself, so
+ * what is cut is what moved least.
+ */
+const MAX_STAT_ROWS = 12;
 
+/**
+ * Every reading of the selected item, one card each.
+ *
+ * The candidate documents are built here rather than inside each card, because they are priced
+ * together: one baseline, one timer, one engine pass per position. A card is then a renderer for
+ * an answer that has already been computed.
+ */
 export function ItemDiffCard(): ReactNode {
-  const world = useWorld();
-  const { snapshot } = world;
-  const level = useBuild((s) => s.doc.character.level);
   const item = useItemCompare((s) => s.item);
-  const against = useItemCompare((s) => s.against);
-  const where = useItemCompare((s) => s.where);
-  const slotLabel = useItemCompare((s) => s.slotLabel);
+  const source = useItemCompare((s) => s.source);
+  const positions = useItemCompare((s) => s.positions);
+  const doc = useBuild((s) => s.doc);
 
-  if (item === null) return null;
+  const candidates = useMemo(() => {
+    if (item === null || source === null) return undefined;
+    return positions.map((position, i) => ({
+      key: String(i),
+      doc: position.worn
+        ? // Taking it off: the build without it, and nothing going on. `source` is the removal —
+          // a worn position is by definition the entry of `doc.gear` the item already occupies.
+          docWithSwap(doc, { source })
+        : docWithSwap(doc, { item, source, removeIndex: position.againstIndex }),
+    }));
+  }, [item, source, positions, doc]);
 
-  const name = itemName(world.snapshot, item);
-  // A worn item is not a candidate for its own slot, so the honest reading is its contribution
-  // rather than a diff of nothing.
-  const worn = where === "gear";
-  const deltas = worn ? [] : diffItems(snapshot, against ?? undefined, item, level);
-  const lines = worn ? itemLines(snapshot, item, level) : [];
-  const shown = deltas.slice(0, MAX_ROWS);
-  const hidden = deltas.length - shown.length;
+  const priced = useWhatIfEach(candidates);
 
-  const gains = deltas.filter((d) => d.good).length;
-  const losses = deltas.length - gains;
+  if (item === null || source === null) return null;
+
+  return (
+    <>
+      {positions.map((position, i) => (
+        <CompareCard key={i} item={item} position={position} priced={priced?.get(String(i))} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * One reading: this item, priced against one place it could sit.
+ *
+ * `priced` is `undefined` while the debounce is running or when the engine refused the candidate,
+ * and the card says so rather than drawing an empty table — a blank list and "nothing changes"
+ * are different statements and only one of them is ever true.
+ */
+function CompareCard({
+  item,
+  position,
+  priced,
+}: {
+  item: Item;
+  position: ComparePosition;
+  priced: WhatIf | undefined;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const { label, against, worn } = position;
 
   return (
     <div className="item-diff">
       <div className="section-title mt-0">
-        {worn ? "Equipped" : against === null ? "Would add" : "Would replace"}
+        {worn ? "Taking this off" : against === undefined ? "Would add" : "Would replace"}
       </div>
 
       <div className="row wrap gap-2 mb-2">
-        <strong className="ellipsis">{name}</strong>
+        <strong className="ellipsis">{itemName(snapshot, item)}</strong>
         <RarityBadge rarity={item.rarity} />
         <span className="badge">ilvl {item.itemLevel}</span>
-        {slotLabel !== null && <span className="badge good">{slotLabel}</span>}
+        <span className="badge good">{label}</span>
       </div>
 
-      {!worn && against !== null && (
-        <div className="faint text-sm mb-2">
-          in place of <strong>{itemName(world.snapshot, against)}</strong>
-        </div>
-      )}
-      {!worn && against === null && (
-        <div className="faint text-sm mb-2">
-          Its slot is empty, so everything below is a gain.
-        </div>
-      )}
-
       {worn ? (
-        lines.length === 0 ? (
-          <div className="faint text-sm">Grants nothing.</div>
-        ) : (
-          lines.map((line, index) => (
-            <div key={index} className="tt-line">
-              {line}
-            </div>
-          ))
-        )
-      ) : deltas.length === 0 ? (
-        <div className="faint text-sm">
-          Nothing changes — the two grant the same stats at the same values.
+        <div className="faint text-sm mb-2">
+          What the build moves by if you unequip it. A line reading <em>better</em> is a stat this
+          piece is holding back.
+        </div>
+      ) : against !== undefined ? (
+        <div className="faint text-sm mb-2">
+          in place of <strong>{itemName(snapshot, against)}</strong>
         </div>
       ) : (
+        <div className="faint text-sm mb-2">Nothing is in it, so nothing comes off.</div>
+      )}
+
+      {priced === undefined ? (
+        <div className="faint text-sm">Pricing…</div>
+      ) : (
         <>
-          <div className="row gap-3 mb-2 text-sm">
-            <span className="delta-change up">{gains} better</span>
-            <span className="delta-change down">{losses} worse</span>
+          <ComparisonBlock
+            comparison={priced.comparison}
+            statLimit={MAX_STAT_ROWS}
+            emptyNote={
+              worn
+                ? "Nothing changes — this piece is contributing nothing, so taking it off costs nothing."
+                : "Nothing changes — the character sheet lands in exactly the same place."
+            }
+          />
+          {/*
+            Said once per card rather than per row, because it is true of every row: these are
+            sheet totals with the tree's increases already in them, not the item's own lines. The
+            item's own lines are the card immediately to the left.
+          */}
+          <div className="faint text-xs mt-2">
+            Character totals, after every increase — the rating in brackets is the flat change
+            behind it.
           </div>
-          <div className="item-diff-table">
-            {shown.map((delta) => (
-              <div key={delta.key} className="item-diff-row">
-                <span className="delta-label ellipsis" title={delta.statId}>
-                  {delta.label}
-                </span>
-                <span
-                  className={`delta-change ${delta.good ? "up" : "down"}`}
-                  title={`${delta.from} → ${delta.to}`}
-                >
-                  {deltaText(delta)}
-                </span>
-              </div>
-            ))}
-          </div>
-          {hidden > 0 && <div className="faint text-sm mt-1">and {hidden} more</div>}
         </>
       )}
     </div>
   );
-}
-
-/** A unique is known by its own name; everything else by its base. */
-function itemName(snapshot: Parameters<typeof gearTypeName>[0], item: Item): string {
-  return item.unique === undefined
-    ? gearTypeName(snapshot, item.base)
-    : uniqueName(snapshot, item.unique);
 }

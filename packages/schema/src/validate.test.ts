@@ -807,6 +807,46 @@ test("an omen only accepts the affix types it declares", () => {
   assert.ok(codes(diagnostics, "error").includes("affix-type-not-on-omen"));
 });
 
+test("an omen's affix is not held inside its tier's band, because it never rolled", () => {
+  // `OmenBlueprint` writes `adata.p = OmenData.getStatPercent(...)` and never calls
+  // `RerollNumbers`, so nothing puts `p` inside the band `rar` names. One NORMAL piece and one
+  // RUNED derive 20, where `rare` rolls 35..51 — and this is the omen the generator makes, at
+  // the bottom of its own difficulty bands. It used to be a `roll-outside-tier-band` error.
+  const diagnostics = validateBuild(
+    build({
+      omen: {
+        ...legalOmen(),
+        requires: { NORMAL: 1, RUNED: 1 },
+        slotRequirements: [],
+        affixes: [{ affixId: "chaos_armor", tier: "rare", rollPercent: 20 }],
+      },
+    }),
+    standardSnapshot(),
+  );
+  assert.deepEqual(diagnostics.filter((d) => d.path.startsWith("omen")), []);
+});
+
+test("a stored omen affix tier or roll that disagrees with the omen warns, and is ignored", () => {
+  // Both fields are copies: `adata.rar` is the omen's rarity and `adata.p` its derived
+  // percent, and `UpgradeOmenRarityItemMod` rewrites both whenever the rarity moves. So a
+  // disagreement means the document was written without re-deriving — worth saying, not worth
+  // refusing over, since `omenBuckets` re-derives anyway.
+  const diagnostics = validateBuild(
+    build({
+      omen: {
+        ...legalOmen(),
+        requires: { NORMAL: 1, RUNED: 1 },
+        slotRequirements: [],
+        affixes: [{ affixId: "chaos_armor", tier: "mythic", rollPercent: 95 }],
+      },
+    }),
+    standardSnapshot(),
+  );
+  assert.ok(codes(diagnostics, "warning").includes("omen-affix-tier-not-omen-rarity"));
+  assert.ok(codes(diagnostics, "warning").includes("omen-affix-roll-not-derived"));
+  assert.deepEqual(codes(diagnostics, "error").filter((c) => c.startsWith("omen") || c === "roll-outside-tier-band"), []);
+});
+
 test("the stat percent is earned from the requirements, and is not capped at 100", () => {
   const snapshot = standardSnapshot();
   // (2 + 1) * 10 + 1 slot req * 10 = 40, times `rare`'s stat_multi of 1.
@@ -888,6 +928,23 @@ test("buckets put the omen's own mods at the full requirement and each affix one
   );
   assert.ok(buckets[0]!.mods !== undefined, "the omen's own mods sit at the full requirement");
   assert.equal(buckets[1]!.affix?.affixId, "armor_suffix");
+});
+
+test("every bucket carries the one derived percent, affixes included", () => {
+  // (2 + 1) * 10 for the requirements + 10 for the slot requirement, times `rare`'s
+  // `stat_multi` of 1. The document says `mythic` at 95 on both affixes and neither survives:
+  // `adata.rar` and `adata.p` are the omen's, so `omenBuckets` re-derives them.
+  const buckets = omenBuckets(standardSnapshot(), {
+    ...legalOmen(),
+    affixes: [
+      { affixId: "chaos_armor", tier: "mythic", rollPercent: 95 },
+      { affixId: "chaos_armor", tier: "mythic", rollPercent: 95 },
+    ],
+  });
+  assert.deepEqual(buckets.map((b) => b.statPercent), [40, 40, 40]);
+  for (const bucket of buckets.slice(1)) {
+    assert.deepEqual(bucket.affix, { affixId: "chaos_armor", tier: "rare", rollPercent: 40 });
+  }
 });
 
 test("the affix index floors at two, so surplus affixes collide there", () => {
@@ -1106,4 +1163,47 @@ test("a benched item contributes nothing, so it cannot complete anything either"
   const benched = validateBuild(build({ itemPool: [legalBoots()] }), standardSnapshot());
   assert.deepEqual(worn, []);
   assert.deepEqual(benched, []);
+});
+
+test("a jewel's style narrows its affix pool, so an off-style affix is not a real item", () => {
+  const withAffix = (affixId: string, style?: string) =>
+    build({
+      jewels: [
+        {
+          rarity: "rare",
+          itemLevel: 30,
+          ...(style === undefined ? {} : { style }),
+          affixes: [{ affixId, tier: "rare", rollPercent: 40 }],
+        },
+      ],
+    });
+
+  // `generateAffixes` rolls from `any_jewel` plus the style's own tag and nothing else, so
+  // `jewel_int_only` on a Meteorite (str) jewel is something the game cannot drop.
+  const offStyle = validateBuild(withAffix("jewel_int_only", "str"), standardSnapshot());
+  assert.ok(codes(offStyle, "error").includes("affix-not-allowed-on-jewel"));
+
+  // The same affix on a Stardust jewel is legal.
+  const onStyle = validateBuild(withAffix("jewel_int_only", "int"), standardSnapshot());
+  assert.ok(!codes(onStyle).includes("affix-not-allowed-on-jewel"));
+
+  // `any_jewel` rolls on every style, including the default one a document may omit.
+  const anyStyle = validateBuild(withAffix("any_jewel_affix"), standardSnapshot());
+  assert.ok(!codes(anyStyle).includes("affix-not-allowed-on-jewel"));
+
+  // A document that never stated a style is not claiming `str`, it is a capture taken before
+  // the exporter recorded one. The assumption is reported, but it is not called impossible.
+  const assumed = validateBuild(withAffix("jewel_int_only"), standardSnapshot());
+  assert.ok(codes(assumed, "warning").includes("affix-not-allowed-on-jewel"));
+  assert.ok(!codes(assumed, "error").includes("affix-not-allowed-on-jewel"));
+});
+
+test("an unknown play style is reported rather than quietly treated as str", () => {
+  // `PlayStyle.fromID` falls back to STR, which would make this a jewel with the wrong name
+  // and the wrong pool — exactly the silent default this validator exists to refuse.
+  const diagnostics = validateBuild(
+    build({ jewels: [{ rarity: "rare", itemLevel: 30, style: "wis" }] }),
+    standardSnapshot(),
+  );
+  assert.ok(codes(diagnostics).includes("unknown-jewel-style"));
 });

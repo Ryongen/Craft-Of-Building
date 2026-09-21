@@ -20,8 +20,11 @@
  * not an `Item`. It carries requirements over the rest of the loadout instead of stats of its
  * own, so it lives in `doc.omen` and gets `OmenEditor` rather than `ItemEditor`.
  *
- * Each item's preview runs `collectGear` — the same collector the character sheet uses — so a
- * line shown here cannot disagree with the total in the sidebar.
+ * Each item's contribution is drawn by `ui/ItemTooltip` — the same card the hover tooltip shows,
+ * laid into the editor rather than pinned to the pointer — and that card reads the engine's own
+ * collector, so a line shown here cannot disagree with the total in the sidebar. Beside it sits
+ * `ItemDiffCard`, which prices the item against every place it could go: one card for a helmet,
+ * two for a ring, because a ring fits either finger and the two answers differ.
  */
 
 import type { Snapshot } from "@cte2/extractor";
@@ -36,6 +39,7 @@ import {
   omenMinLevel,
   gearTypeName,
   isTwoHanded,
+  itemName,
   slotFamily,
   slotName,
   unique as uniqueView,
@@ -44,16 +48,28 @@ import {
   type Diagnostic,
   type Item,
 } from "@cte2/schema";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { createPortal } from "react-dom";
 
 import { useBuild } from "../../state/build-store.js";
+import { useWhatIf } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
-import { useItemCompare } from "../../state/item-compare.js";
+import { docWithSwap, useItemCompare, type ComparePosition } from "../../state/item-compare.js";
 import { useWorld } from "../../state/snapshot.js";
-import { itemLines } from "../../ui/item-stats.js";
-import { useItemTooltip } from "../../ui/ItemTooltip.js";
+import { ComparisonBlock } from "../../ui/DeltaTable.js";
+import { GearIcon } from "../../ui/GearIcon.js";
+import { ItemDiffCard } from "../../ui/ItemDiffCard.js";
+import { ItemWindow, useItemTooltip } from "../../ui/ItemTooltip.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
-import { AddPicker } from "../../ui/AddPicker.js";
 import { AugmentList } from "../../ui/Augments.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { modDetail, modKeywords } from "../../ui/mods.js";
@@ -282,15 +298,19 @@ export function GearPanel(): ReactNode {
   }, [items, pool, world.snapshot, placement]);
 
   /**
-   * Publish the selected item to the sidebar, with whatever it would take the place of.
+   * Publish the selected item, with every place it could sit.
    *
    * Which piece comes off is not a guess: `equip` displaces `occupying.length - (capacity - 1)`
    * items oldest-first, so for a full slot that is `occupying[0]` and for a slot with room it is
-   * nothing at all. Reading the same rule here is what keeps the diff a statement about the
+   * nothing at all. Reading the same rule here is what keeps each diff a statement about the
    * click you are about to make rather than about a swap the panel would not perform.
    *
-   * A worn item has nothing to compare against — selecting your own boots is not a swap — and
-   * the sidebar shows what they contribute instead.
+   * Every *position* the row has, not just the one that would give way. A ring has two, and they
+   * are two different readings rather than one printed twice: a benched ring may replace the one
+   * on your finger or take the empty slot beside it, and which of those it is changes every
+   * number on the card. Both empty is the single case that collapses back to one — nothing is
+   * coming off either way, so two cards would say the same thing twice and imply a choice the
+   * character does not have yet.
    */
   const showCompare = useItemCompare((s) => s.show);
   const clearCompare = useItemCompare((s) => s.clear);
@@ -300,30 +320,47 @@ export function GearPanel(): ReactNode {
       clearCompare();
       return;
     }
-    const entry = poolEntries.find((e) => sameRef(editing, e.ref));
     const row = rowFor(world.snapshot, target);
     const occupying = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
-    const capacity = row?.capacity ?? 1;
-    const displaced =
-      editing.where === "gear"
-        ? undefined
-        : occupying.slice(0, Math.max(0, occupying.length - (capacity - 1)))[0];
+    // As many rows as the paperdoll draws: the slot's capacity, or however many are wedged into
+    // it. An item in a row the paperdoll has no place for — `head` — is priced on its own.
+    const count = row === undefined ? 1 : Math.max(row.capacity, occupying.length);
+    const slotId = baseGearType(world.snapshot, target.base)?.gearSlot;
+    const name =
+      row === undefined
+        ? slotId === undefined
+          ? "Not in any slot"
+          : slotName(world.snapshot, slotId)
+        : row.kind === "slot"
+          ? slotName(world.snapshot, row.id)
+          : row.family;
 
+    const positions: ComparePosition[] = Array.from({ length: count }, (_, nth) => {
+      const at = occupying[nth];
+      return {
+        label: count > 1 ? `${name} ${nth + 1}` : name,
+        against: at === undefined ? undefined : items[at],
+        // The index as well as the item: the card builds the document each choice would produce,
+        // and "which entry of `doc.gear` gives way" is not answerable from the item alone — two
+        // identical rings are two entries.
+        againstIndex: at,
+        worn: editing.where === "gear" && at === editing.index,
+      };
+    });
+
+    // The place the item is already in reads first — that is the one being looked at — and the
+    // alternatives follow in the paperdoll's order. `sort` is stable, so they keep that order.
+    positions.sort((a, b) => Number(b.worn) - Number(a.worn));
+
+    const collapse = positions.length > 1 && positions.every((p) => p.against === undefined);
     showCompare({
       item: target,
-      against: displaced === undefined ? undefined : items[displaced],
-      where: editing.where,
-      slotLabel:
-        entry?.slot ??
-        (row === undefined
-          ? undefined
-          : row.kind === "slot"
-            ? slotName(world.snapshot, row.id)
-            : row.family),
+      source: editing,
+      positions: collapse ? [{ ...positions[0]!, label: `${name} 1 or ${count}` }] : positions,
     });
-  }, [editing, target, poolEntries, placement, items, world.snapshot, showCompare, clearCompare]);
+  }, [editing, target, placement, items, world.snapshot, showCompare, clearCompare]);
 
-  // Leaving the tab takes the card with it: it is about a choice being made in this panel, and
+  // Leaving the tab clears the card with it: it is about a choice being made in this panel, and
   // a diff left standing over the Tree tab is a diff about nothing on screen.
   useEffect(() => clearCompare, [clearCompare]);
 
@@ -350,6 +387,11 @@ export function GearPanel(): ReactNode {
           // One row per place the slot has, filled or not, so the paperdoll keeps its shape as
           // items come on and off. `Ring 1` and `Ring 2` rather than one label over two rows:
           // they are two different items and each is chosen separately.
+          //
+          // The number names the *place*, never the item. What is worn there carries the name
+          // the game gives it — `itemName`, which is "Azure Amethyst Ring of Venom" and not
+          // "Ring" — so the two rings are told apart by what they are rather than by which row
+          // they landed in.
           const rows = Math.max(row.capacity, indices.length);
 
           return (
@@ -387,6 +429,20 @@ export function GearPanel(): ReactNode {
                     onOff={() => {
                       unequipItem(index);
                       setEditing(null);
+                    }}
+                    // The row *is* the list of what else could go here — see `SlotPicker`. The
+                    // facts come from here rather than from the row because only the panel knows
+                    // what is on the bench and what `equip` would displace.
+                    slot={{
+                      index,
+                      candidates: pool
+                        .map((item, i) => ({ item, i }))
+                        .filter(({ item }) => rowFor(world.snapshot, item)?.id === row.id),
+                      onEquip: equip,
+                      onUnequip: (at) => {
+                        unequipItem(at);
+                        setEditing(null);
+                      },
                     }}
                   />
                 );
@@ -497,11 +553,311 @@ function isOffhand(snapshot: Snapshot, item: Item): boolean {
   return rowFor(snapshot, item)?.id === "offhand";
 }
 
-/** A unique is known by its own name; everything else by its base. */
-function itemLabel(snapshot: Snapshot, item: Item): string {
-  return item.unique === undefined
-    ? gearTypeName(snapshot, item.base)
-    : uniqueName(snapshot, item.unique);
+/** The id the `(none)` row carries. Never an item, so it cannot collide with a pool index. */
+const NONE = "\u0000none";
+
+/**
+ * One panel of the swap preview, in pixels.
+ *
+ * `.item-window` sits between 290 and 360 when it is a tooltip, and three of these have to fit
+ * beside a 400px column without running off the window. 300 is the width a gear card reads at
+ * without wrapping its longest affix line onto three rows.
+ */
+const PANEL = 300;
+
+/**
+ * Everything that could go in one place on the paperdoll, and what each would be worth.
+ *
+ * A slot used to be a label. Filling one meant finding the piece in the pool above and pressing
+ * "equip" on *it* — the question asked at the wrong end, since what a player has is "what can go
+ * here". So the slot is the control: opening it lists every benched piece whose base belongs in
+ * this row, with `(none)` at the top to take off whatever is in it.
+ *
+ * **The whole row is the trigger**, not a box at its left end. A 58px control on a 400px row is a
+ * target you have to aim at, and it left the rest of the row — the icon, the name, the badges,
+ * everything that says *which* slot this is — doing nothing. So the row's own content is the
+ * closed state and clicking anywhere on it opens the list, which is also what makes the separate
+ * "off" button unnecessary: taking a piece off is the first entry of the list that opens.
+ *
+ * `onOpen` fires on the same click, so one press both drops the list and puts the piece in the
+ * editor below. The two are the same intention — "I am working on this slot" — and splitting them
+ * across two targets was what made the row need two controls in the first place.
+ *
+ * ## Why this is not a `Picker`
+ *
+ * It was one, and a `Picker` is the wrong shape for a row. A `Picker` *replaces* itself with a
+ * search box when it opens, and that produced two ways to get stuck, both reported:
+ *
+ *  - **the row would not close again.** Clicking it a second time is the obvious way to dismiss a
+ *    dropdown, and it landed on the search input, which refocuses and reopens. There was no
+ *    gesture that shut the list except clicking somewhere else entirely.
+ *  - **the list covered the rows below it**, so a click aimed at the next slot actually landed
+ *    inside the open list — on padding, between options — where it counted as *inside* the picker
+ *    and closed nothing. Two or three dead clicks in a row read as a frozen control.
+ *
+ * A slot has a handful of candidates and needs no search, so the row stays a row: the list drops
+ * underneath it and clicking the row again folds it away. There is no dead area, because every
+ * pixel of the list is an option.
+ *
+ * **Hovering an option prices it.** Two swaps into the same slot are worth wildly different
+ * amounts and no list of names can say so, so the entry under the cursor is priced exactly the way
+ * `ItemDiffCard` prices a selection — the document that choice would produce, run through the
+ * whole engine — and drawn beside the list. `(none)` is priced too, which is the only place in
+ * the app that answers what a worn piece is doing for you without making you take it off first.
+ */
+type SlotOption = { id: string; label: string; hint: string; item: Item | undefined };
+
+function SlotPicker({
+  label,
+  worn,
+  wornIndex,
+  candidates,
+  onEquip,
+  onUnequip,
+  onOpen,
+  children,
+}: {
+  /** The paperdoll's name for this place — "Ring 2". */
+  label: string;
+  /** What is in it now. */
+  worn: Item | undefined;
+  /** `worn`'s index in `doc.gear`. */
+  wornIndex: number | undefined;
+  /** Benched pieces whose base belongs in this row, with their pool indices. */
+  candidates: { item: Item; i: number }[];
+  onEquip: (poolIndex: number) => void;
+  onUnequip: (gearIndex: number) => void;
+  /** Also fired by the click that opens the list — see the note above. */
+  onOpen?: () => void;
+  /** The row itself: what the slot looks like while the list is shut. */
+  children: ReactNode;
+}): ReactNode {
+  const world = useWorld();
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState<string | undefined>();
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const options = useMemo<SlotOption[]>(() => {
+    const rows: SlotOption[] = [];
+    if (worn !== undefined) {
+      rows.push({
+        id: NONE,
+        label: `(none) — take off ${itemName(world.snapshot, worn)}`,
+        hint: "unequip",
+        item: undefined,
+      });
+    }
+    for (const { item, i } of candidates) {
+      rows.push({
+        id: String(i),
+        label: itemName(world.snapshot, item),
+        hint: item.rarity,
+        item,
+      });
+    }
+    return rows;
+  }, [candidates, worn, world.snapshot]);
+
+  // Dismissed by clicking anywhere that is not this row, and by Escape. Both are registered only
+  // while the list is up, so a shut row costs nothing.
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent): void => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+
+  // Nothing under the pointer once the list is gone, or the preview outlives the list it belonged
+  // to and hangs over the panel.
+  useEffect(() => {
+    if (!open) setHovered(undefined);
+  }, [open]);
+
+  const choose = (id: string): void => {
+    setOpen(false);
+    if (id === NONE) {
+      if (wornIndex !== undefined) onUnequip(wornIndex);
+      return;
+    }
+    onEquip(Number(id));
+  };
+
+  // Nothing to offer and nothing to take off is not a list, it is a dead end: an empty offhand
+  // beside a two-handed weapon would open onto an empty box. The row stays a row.
+  const offersNothing = options.length === 0;
+  const hoveredItem = options.find((o) => o.id === hovered)?.item;
+
+  return (
+    <div className="slot-picker" ref={wrapRef}>
+      <div
+        className={`slot-trigger${offersNothing ? " inert" : ""}${open ? " open" : ""}`}
+        onClick={() => {
+          onOpen?.();
+          if (!offersNothing) setOpen((was) => !was);
+        }}
+      >
+        {children}
+      </div>
+
+      {open && !offersNothing && (
+        <div className="slot-list" onMouseLeave={() => setHovered(undefined)}>
+          {options.map((option) => (
+            <div
+              key={option.id}
+              className={`slot-option${option.id === hovered ? " active" : ""}`}
+              onMouseEnter={() => setHovered(option.id)}
+              onMouseDown={() => choose(option.id)}
+            >
+              <span className="ellipsis">{option.label}</span>
+              <span className="badge">{option.hint}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hovered !== undefined && (
+        <SwapPreview
+          anchorRef={wrapRef}
+          label={label}
+          worn={worn}
+          wornIndex={wornIndex}
+          candidate={hoveredItem}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * What the row under the cursor would do, laid out as three panels side by side.
+ *
+ * The same statement `ItemDiffCard` makes and for the same reason — an item's own stat lines are
+ * not what it is worth, because every one of them runs through the increases, the curves and the
+ * caps the rest of the character already has. So this builds the document the click would produce
+ * and prices that. `useWhatIf` holds it for a beat, which is what stops a run down a list of nine
+ * rings from spending an engine pass on each ring the cursor merely crossed.
+ *
+ * ## Three panels, not one tall one
+ *
+ * It began as one column — the candidate's card with the price stacked under it — and that is the
+ * wrong axis. A gear card is 300px wide and 400 tall; two of them plus a price list is 900px of
+ * height in a 1000px window, so the panel ran the height of the screen, covered the list that
+ * summoned it, and still could not show both items at once. Beside each other they are 900px of
+ * *width*, which the Items tab has going spare once the 400px paperdoll is accounted for.
+ *
+ * Left to right: **what changes**, then **what is on now**, then **what would go on**. The order
+ * is the reading order of the question — the verdict, then the two things it is a verdict about —
+ * and it puts the two item cards next to each other, which is the comparison a player is actually
+ * making.
+ *
+ * Panels that have nothing to show are left out rather than drawn empty: an empty slot has no
+ * "on now" card, and the `(none)` row has no "would go on".
+ *
+ * Portalled to `document.body` and positioned against the paperdoll **column**, not against the
+ * pointer and not against the row. Not the pointer, because this is a panel being read rather than
+ * a tooltip being glanced at, and one that slid about under the mouse as you moved down a list
+ * would be unreadable. Not the row, because the list drops *below* the row and the panel would sit
+ * on top of it.
+ */
+function SwapPreview({
+  anchorRef,
+  label,
+  worn,
+  wornIndex,
+  candidate,
+}: {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  label: string;
+  worn: Item | undefined;
+  wornIndex: number | undefined;
+  /** The piece going on, or `undefined` for the `(none)` row. */
+  candidate: Item | undefined;
+}): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const [box, setBox] = useState<DOMRect | null>(null);
+
+  useLayoutEffect(() => {
+    // The column rather than the row: `.items-col` is the paperdoll, and its right edge is where
+    // there is room. Falls back to the row itself if the class ever moves.
+    const anchor = anchorRef.current;
+    const column = anchor?.closest(".items-col") ?? anchor;
+    setBox(column?.getBoundingClientRect() ?? null);
+  }, [anchorRef, candidate]);
+
+  const next = useMemo(
+    () =>
+      candidate === undefined
+        ? docWithSwap(doc, { removeIndex: wornIndex })
+        : docWithSwap(doc, { item: candidate, removeIndex: wornIndex }),
+    [doc, candidate, wornIndex],
+  );
+
+  const priced = useWhatIf(next);
+
+  if (box === null) return null;
+
+  const panels = 1 + (worn === undefined ? 0 : 1) + (candidate === undefined ? 0 : 1);
+  const width = panels * PANEL + (panels - 1) * 8;
+  const flip = box.right + width + 16 > window.innerWidth;
+  const top = Math.max(8, box.top);
+  const style: CSSProperties = {
+    position: "fixed",
+    width,
+    top,
+    maxHeight: Math.max(240, window.innerHeight - top - 12),
+    ...(flip ? { right: window.innerWidth - box.left + 8 } : { left: box.right + 8 }),
+  };
+
+  return createPortal(
+    <div className="swap-preview" style={style}>
+      {/* The title sits outside the box on every panel, so the three line up across the top
+          whatever is inside them. */}
+      <div className="swap-panel">
+        <div className="swap-panel-title">
+          {candidate === undefined
+            ? `${label} — taking it off`
+            : worn === undefined
+              ? `${label} — would add`
+              : `${label} — would swap`}
+        </div>
+        <div className="swap-panel-price">
+          {priced === undefined ? (
+            <div className="faint text-sm">Pricing…</div>
+          ) : (
+            <ComparisonBlock
+              comparison={priced.click.comparison}
+              statLimit={10}
+              emptyNote="Nothing changes — the character sheet lands in exactly the same place."
+            />
+          )}
+        </div>
+      </div>
+
+      {worn !== undefined && (
+        <div className="swap-panel">
+          <div className="swap-panel-title">On now</div>
+          <ItemWindow item={worn} />
+        </div>
+      )}
+
+      {candidate !== undefined && (
+        <div className="swap-panel">
+          <div className="swap-panel-title">Would go on</div>
+          <ItemWindow item={candidate} />
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
 }
 
 /** A place on the paperdoll with nothing in it, and what the pool could put there. */
@@ -517,28 +873,27 @@ function EmptySlot({
   candidates: { item: Item; i: number }[];
   onEquip: (poolIndex: number) => void;
 }): ReactNode {
-  const world = useWorld();
-
   return (
     <div className={`slot-row empty${suppressed ? " suppressed" : ""}`}>
-      <span className="slot-name">{label}</span>
-      {suppressed ? (
-        <span className="faint text-sm">emptied by the two-handed weapon</span>
-      ) : candidates.length === 0 ? (
-        <span className="faint text-sm">empty — nothing in the pool fits here</span>
-      ) : (
-        <AddPicker
-          label="equip…"
-          placeholder={`Which ${label.toLowerCase()}?`}
-          width={190}
-          options={candidates.map(({ item, i }) => ({
-            id: String(i),
-            label: itemLabel(world.snapshot, item),
-            hint: item.rarity,
-          }))}
-          onAdd={(id) => onEquip(Number(id))}
-        />
-      )}
+      <SlotPicker
+        label={label}
+        worn={undefined}
+        wornIndex={undefined}
+        candidates={candidates}
+        onEquip={onEquip}
+        onUnequip={() => {}}
+      >
+        <span className="slot-name">{label}</span>
+        {suppressed ? (
+          <span className="faint text-sm">emptied by the two-handed weapon</span>
+        ) : candidates.length === 0 ? (
+          <span className="faint text-sm">empty — nothing in the pool fits here</span>
+        ) : (
+          <span className="faint text-sm">
+            empty — {candidates.length} in the pool fit{candidates.length === 1 ? "s" : ""} here
+          </span>
+        )}
+      </SlotPicker>
     </div>
   );
 }
@@ -809,7 +1164,7 @@ function PoolRow({
         {...tooltip.props}
       >
         <GearIcon baseId={entry.item.base} />
-        <strong className="ellipsis">{itemLabel(world.snapshot, entry.item)}</strong>
+        <strong className="ellipsis">{itemName(world.snapshot, entry.item)}</strong>
         <RarityBadge rarity={entry.item.rarity} />
         <span className="badge">ilvl {entry.item.itemLevel}</span>
         {isTwoHanded(world.snapshot, entry.item.base) && <span className="badge warn">2H</span>}
@@ -862,6 +1217,11 @@ function PoolRow({
  * One editor for the whole tab rather than one per row. The old panel expanded a card inside
  * the paperdoll, which pushed every slot below it off the screen — so the character you were
  * editing for was not visible while you edited.
+ *
+ * It ends on a pair: the item as the game draws it, and — beside it — what taking it would change.
+ * Two columns because there is room for two, and because reading one against the other is the
+ * whole question; stacking them would put the price of the swap below the fold of a thirty-line
+ * item window.
  */
 function EditorCard({
   item,
@@ -879,14 +1239,12 @@ function EditorCard({
   onRemove: () => void;
 }): ReactNode {
   const world = useWorld();
-  const level = useBuild((s) => s.doc.character.level);
   const slotId = baseGearType(world.snapshot, item.base)?.gearSlot ?? "";
-  const preview = useItemPreview(world.snapshot, item, 0, level);
 
   return (
     <>
       <div className="section-title">
-        Editing <span className="faint">{itemLabel(world.snapshot, item)}</span>{" "}
+        Editing <span className="faint">{itemName(world.snapshot, item)}</span>{" "}
         {where === "pool" && (
           <span className="badge" title="On the bench — it contributes nothing until you equip it">
             not equipped
@@ -908,29 +1266,55 @@ function EditorCard({
 
       <ItemEditor item={item} slotId={slotId} onChange={onChange} onRemove={onRemove} />
 
-      <div className="card" style={{ marginTop: -8 }}>
-        <div className="section-title mt-0">What this item contributes</div>
-        {where === "pool" && (
-          <div className="faint mb-2">
-            Nothing yet — this item is on the bench. Below is what it would add if you equipped
-            it.
-          </div>
-        )}
-        {where === "gear" && suppressed && (
-          <div className="faint mb-2">
-            Nothing — the offhand is empty while a two-handed weapon is held. The engine still
-            sums it, which is why the validator calls this an error rather than a note.
-          </div>
-        )}
-        {preview.lines.length === 0 ? (
-          <div className="faint">Nothing.</div>
-        ) : (
-          preview.lines.map((line, i) => (
-            <div key={i} className="text-md" style={{ color: "var(--good)" }}>
-              {line}
+      {/*
+        The item as the game draws it, beside what taking it would change.
+
+        The left half is `ItemWindow` — the same card the hover tooltip draws, laid into the page
+        rather than pinned to the pointer. It replaced a flat list of the item's lines: that list
+        was every stat the piece grants, flattened into one column, which is the same thing the
+        game shows except with the base roll, each affix and the uniques run together so nothing
+        said which part of the item a line came from. It also carried no name, no rarity, no
+        requirements and no sprite.
+
+        The right half is `ItemDiffCard`: the price of the swap for a candidate, and the price of
+        taking the piece off for something already worn.
+      */}
+      <div className="editor-contribute">
+        <div>
+          {/*
+            No "nothing yet" note above the window any more.
+
+            It said the piece is on the bench, which the "not equipped" badge on the heading
+            already says and the diff beside it says better — the whole right-hand column is what
+            it *would* add. What it cost was alignment: one column started with a line of prose
+            and the other did not, so the item card sat a line lower than the card it is read
+            against, on every benched item, which is most of them.
+
+            The two-handed case keeps its note, because nothing else on screen carries it: an
+            offhand emptied by the weapon in the other hand is a fact about a *different* slot,
+            and the item window has no way to say so.
+          */}
+          {where === "gear" && suppressed && (
+            <div className="faint mb-2">
+              Nothing — the offhand is empty while a two-handed weapon is held. The engine still
+              sums it, which is why the validator calls this an error rather than a note.
             </div>
-          ))
-        )}
+          )}
+
+          <ItemWindow item={item} />
+        </div>
+
+        {/*
+          Its own cell rather than a bare sibling, so the column is held open on the frame before
+          the compare store has caught up: the card reads that store, and the effect that fills it
+          runs after this render — unwrapped, the window would sit full width for a frame and then
+          snap to half as soon as the diff appeared.
+
+          A stack, because one item can have more than one reading. See `diff-stack`.
+        */}
+        <div className="diff-stack">
+          <ItemDiffCard />
+        </div>
       </div>
     </>
   );
@@ -939,9 +1323,15 @@ function EditorCard({
 /**
  * One item on the paperdoll.
  *
- * A row, not a disclosure: clicking it selects the item for the single editor in the middle
- * column. The badges are what you need to tell two rings apart at a glance, and the preview
- * line under it is what the piece is actually doing.
+ * The whole row is the slot's own list — see `SlotPicker`. Clicking anywhere on it puts the piece
+ * in the editor and drops the list of what else could go here, with `(none)` at the top to take
+ * this one off; the badges are what you need to tell two rings apart while the list is shut.
+ *
+ * **There is no "off" button any more** on a row that has a list. It was a 24px target at the far
+ * end of the line doing what the list's first entry now does, and unlike the button the list says
+ * what taking the piece off would cost before you do it. The one row that keeps the button is the
+ * one with no list: an item in the pack-added `head` slot sits in no paperdoll row, so there are
+ * no alternatives to offer and no `(none)` to offer them under.
  */
 function ItemRow({
   item,
@@ -952,6 +1342,7 @@ function ItemRow({
   diagnostics,
   onSelect,
   onOff,
+  slot,
 }: {
   item: Item;
   slotLabel: string;
@@ -964,6 +1355,20 @@ function ItemRow({
   onSelect: () => void;
   /** Take it off, onto the bench. Never a delete — that lives in the editor. */
   onOff: () => void;
+  /**
+   * What this row's slot list needs to know, when the row has one.
+   *
+   * Absent for a row the paperdoll has no place for — an item in the pack-added `head` slot —
+   * where there is nothing to offer alternatives for. That row keeps the "off" button instead.
+   */
+  slot?: {
+    /** `item`'s index in `doc.gear`. */
+    index: number;
+    /** Benched pieces whose base belongs in this row, with their pool indices. */
+    candidates: { item: Item; i: number }[];
+    onEquip: (poolIndex: number) => void;
+    onUnequip: (gearIndex: number) => void;
+  };
 }): ReactNode {
   const world = useWorld();
   const level = useBuild((s) => s.doc.character.level);
@@ -973,60 +1378,95 @@ function ItemRow({
   // What the piece is actually doing, without having to open it — see `ui/ItemTooltip`.
   const tooltip = useItemTooltip(item);
 
+  const content = (
+    <>
+      <span className="slot-name">{slotLabel}</span>
+      {/*
+        The hover card hangs off the icon and the name rather than off the whole row.
+
+        The row now *contains* the slot's list, and the list is 300px of rows the pointer has to
+        travel through — with the handlers on the row, every one of those moves re-pinned this
+        item's card under the cursor, on top of the swap preview the list was drawing. The icon
+        and the name are what "hover the item" means anyway.
+      */}
+      <span className="slot-row-item" {...tooltip.props}>
+        <GearIcon baseId={item.base} />
+        <strong className="ellipsis">{itemName(world.snapshot, item)}</strong>
+      </span>
+      <RarityBadge rarity={item.rarity} />
+      {isTwoHanded(world.snapshot, item.base) && <span className="badge warn">2H</span>}
+      {overCapacity && (
+        <span className="badge bad" title="More items in this slot than a character has of it">
+          over capacity
+        </span>
+      )}
+      {suppressed && (
+        <span
+          className="badge bad"
+          title="Better Combat empties the offhand while a two-handed weapon is held"
+        >
+          grants nothing
+        </span>
+      )}
+      {aboveLevel && (
+        <span
+          className="badge bad"
+          title="An item above the character's level contributes nothing at all"
+        >
+          above your level
+        </span>
+      )}
+      {errors > 0 && (
+        <span className="badge bad">
+          {errors} error{errors === 1 ? "" : "s"}
+        </span>
+      )}
+      {warnings > 0 && <span className="badge warn">{warnings}</span>}
+      <span className="grow" />
+    </>
+  );
+
   return (
     <div>
       <div
         className={`slot-row${suppressed ? " suppressed" : ""}${selected ? " selected" : ""}`}
         style={{
-          cursor: "pointer",
           borderColor: errors > 0 ? "#5c3131" : undefined,
           opacity: suppressed ? 0.78 : 1,
         }}
-        onClick={onSelect}
-        {...tooltip.props}
       >
-        <span className="slot-name">{slotLabel}</span>
-        <GearIcon baseId={item.base} />
-        <strong className="ellipsis">{itemLabel(world.snapshot, item)}</strong>
-        <RarityBadge rarity={item.rarity} />
-        {isTwoHanded(world.snapshot, item.base) && <span className="badge warn">2H</span>}
-        {overCapacity && (
-          <span className="badge bad" title="More items in this slot than a character has of it">
-            over capacity
-          </span>
-        )}
-        {suppressed && (
-          <span
-            className="badge bad"
-            title="Better Combat empties the offhand while a two-handed weapon is held"
+        {slot === undefined ? (
+          <>
+            <span style={{ display: "contents", cursor: "pointer" }} onClick={onSelect}>
+              {content}
+            </span>
+            <button
+              title="Take this off, onto the bench. Nothing is lost — it goes back to the item pool."
+              onClick={(event) => {
+                event.stopPropagation();
+                onOff();
+              }}
+            >
+              off
+            </button>
+          </>
+        ) : (
+          <SlotPicker
+            label={slotLabel}
+            worn={item}
+            wornIndex={slot.index}
+            candidates={slot.candidates}
+            onEquip={slot.onEquip}
+            onUnequip={slot.onUnequip}
+            onOpen={() => {
+              // The row is about to unmount, so its `onMouseLeave` will never fire.
+              tooltip.clear();
+              onSelect();
+            }}
           >
-            grants nothing
-          </span>
+            {content}
+          </SlotPicker>
         )}
-        {aboveLevel && (
-          <span
-            className="badge bad"
-            title="An item above the character's level contributes nothing at all"
-          >
-            above your level
-          </span>
-        )}
-        {errors > 0 && (
-          <span className="badge bad">
-            {errors} error{errors === 1 ? "" : "s"}
-          </span>
-        )}
-        {warnings > 0 && <span className="badge warn">{warnings}</span>}
-        <span className="grow" />
-        <button
-          title="Take this off, onto the bench. Nothing is lost — it goes back to the item pool."
-          onClick={(event) => {
-            event.stopPropagation();
-            onOff();
-          }}
-        >
-          off
-        </button>
       </div>
       {tooltip.node}
     </div>
@@ -1176,48 +1616,4 @@ function OmenRow({
 function omenMinLevelFor(snapshot: Snapshot, id: string): number {
   const view = omenView(snapshot, id);
   return view === undefined ? 1 : omenMinLevel(snapshot, view);
-}
-
-/**
- * The item's resolved contribution, through the engine's own collector.
- *
- * The summation itself is `ui/item-stats`, because three things now ask this question — this
- * preview, the hover tooltip and the sidebar's swap diff — and three copies of it would be three
- * opinions about what an item grants. What stays here is the memo: the preview is on the render
- * path of a list, and `collectGear` is not free.
- */
-function useItemPreview(
-  snapshot: Snapshot,
-  item: Item,
-  index: number,
-  characterLevel: number,
-): { lines: string[] } {
-  return useMemo(
-    () => ({ lines: itemLines(snapshot, item, characterLevel) }),
-    // `index` is in the deps so a reordered list rebuilds its previews.
-    [snapshot, item, index, characterLevel],
-  );
-}
-
-/**
- * The item's sprite, resolved out of whichever mod owns it.
- *
- * Renders nothing at all when there is none rather than a placeholder: the only gear that
- * fails to resolve is vanilla, whose textures live in the client jar, and a wrong glyph beside
- * the right name is worse than no glyph.
- */
-function GearIcon({ baseId }: { baseId: string }): ReactNode {
-  const world = useWorld();
-  const url = world.gearIcon(baseId);
-  if (url === null) return null;
-  return (
-    <img
-      src={url}
-      alt=""
-      width={20}
-      height={20}
-      // Minecraft sprites are 16x16; smoothing them turns a crisp icon to mush.
-      style={{ imageRendering: "pixelated", flex: "0 0 auto" }}
-    />
-  );
 }

@@ -713,7 +713,10 @@ tr.highlight > td {
 .sheet {
   overflow: auto;
   min-height: 0;
-  padding: var(--space-4) var(--space-5);
+  /* Asymmetric for the same reason `.vitals` is: the scrollbar lands in the right padding and
+     nothing lands in the left, so the two do not want to be equal. Every pixel taken off this
+     one is a pixel the panel beside it gets. */
+  padding: var(--space-4) var(--space-5) var(--space-4) var(--space-3);
 }
 
 .stat-row {
@@ -1604,7 +1607,7 @@ button.nudge.word {
  * opacity, behind the next four slots. Nothing noticed while the "add" control was a button;
  * it appeared the moment one became a picker.
  */
-.slot-row.empty:has(.picker-list) {
+.slot-row.empty:has(.slot-list) {
   opacity: 1;
   position: relative;
   z-index: 30;
@@ -1613,9 +1616,10 @@ button.nudge.word {
 /*
  * A card whose content does not currently do anything — an unsocketed jewel.
  *
- * Carries the same `:has(.picker-list)` escape as `.slot-row.empty` above, and for the same
- * reason: the card holds an "Add affix" picker, and a dropdown inside a stacking context cannot
- * paint over the cards that follow it whatever its `z-index` says.
+ * Carries the same `:has()` escape as `.slot-row.empty` above, and for the same reason: the card
+ * holds an "Add affix" picker, and a dropdown inside a stacking context cannot paint over the
+ * cards that follow it whatever its `z-index` says. The selector differs only because the
+ * paperdoll's list is its own control (`.slot-list`) and this one is a `Picker`.
  */
 .card.dimmed {
   opacity: 0.75;
@@ -1632,6 +1636,180 @@ button.nudge.word {
   flex: 0 0 auto;
   color: var(--text-dim);
   font-size: var(--text-sm);
+}
+
+/*
+ * The row *is* the slot's list — see `SlotPicker`.
+ *
+ * It used to be a 58px box at the left end of the row holding the slot's name, which made the
+ * dropdown a target you had to aim at while the rest of the line — icon, name, badges — did
+ * nothing. So the picker fills the row and the row's own content is its closed state.
+ */
+.slot-row .slot-picker {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The closed state: the row, laid out exactly as it was before the picker wrapped it. */
+.slot-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* A slot with nothing to offer and nothing to take off still selects, but it does not pretend
+   to be a list — see `offersNothing`. */
+.slot-trigger.inert {
+  cursor: default;
+}
+
+.items-col .slot-trigger {
+  gap: var(--space-3);
+}
+
+.slot-picker {
+  position: relative;
+}
+
+/* The row reads as pressed while its list is down, so an open slot is obvious from the row. */
+.slot-trigger.open {
+  color: var(--text);
+}
+
+/*
+ * The slot's list, dropped under the row it belongs to.
+ *
+ * Every pixel of it is an option. That is the whole fix for the dead clicks: the list covers the
+ * rows below, so a click aimed at the next slot lands *here* — and when this was a `Picker` the
+ * padding it landed on counted as inside the control and closed nothing, three times in a row.
+ */
+.slot-list {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+}
+
+.slot-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px var(--space-4);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+
+.slot-option.active,
+.slot-option:hover {
+  background: var(--accent-dim);
+}
+
+/* The rarity or "unequip" takes the right edge, so a column of them reads as a column. */
+.slot-option .badge {
+  margin-left: auto;
+}
+
+/*
+ * A filled row holding an open list has to outrank the rows below it, exactly as the empty one
+ * does. Nothing here sets `opacity`, so there is no stacking context to escape — but the rows
+ * that follow are painted later, and a positioned dropdown only wins against them once its own
+ * row is positioned too.
+ */
+.slot-row:has(.slot-list) {
+  position: relative;
+  z-index: 30;
+}
+
+/* The icon and the name, which together are the row's hover target — see `ItemRow`. */
+.slot-row-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ * What the row under the cursor in a slot list would do to the character.
+ *
+ * Three panels across, not one column down: what changes, what is on now, what would go on. A
+ * gear card is 300px wide and up to 400 tall, so stacking two of them plus a price list ran the
+ * whole height of the window and still could not show both items at once. Side by side they cost
+ * width, which the Items tab has going spare once the 400px paperdoll is accounted for.
+ *
+ * `align-items: flex-start` so a short card does not stretch to a tall one's height, and the
+ * panels keep their own backgrounds — `ItemWindow` brings the game's near-black card and its
+ * rarity border, and the price panel matches it.
+ */
+.swap-preview {
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  /*
+   * Hidden, never scrolled. The panel is `pointer-events: none` — it has to be, or it would eat
+   * the hover that summoned it — so a scrollbar on it is furniture nobody can use and content
+   * past the fold is unreachable. The height cap is set in script against where the panel starts,
+   * and the lists inside it are capped to fit rather than to overflow.
+   */
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.swap-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.75));
+}
+
+/* Each card fills its own panel rather than holding the tooltip's 290–360px. */
+.swap-panel .item-window {
+  min-width: 0;
+  max-width: none;
+}
+
+/* The price panel, dressed as the cards beside it so the three read as one answer. */
+.swap-panel-price {
+  background: #0b090e;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 8px 10px 10px;
+}
+
+/*
+ * Each panel says what it is.
+ *
+ * Three cards side by side is only legible if it is obvious which is which — "On now" against
+ * "Would go on" is the whole comparison, and two gear cards of the same base look alike.
+ */
+.swap-panel-title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+
+/* Inside the game-styled card the bands need to be lighter: the background is near-black and the
+   tint that reads as "faint" on a panel reads as "stripe" here. */
+.swap-preview .delta-row:nth-child(even) {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.02) 55%,
+    rgba(255, 255, 255, 0.008) 100%
+  );
 }
 
 .slot-row.suppressed {
@@ -1933,6 +2111,59 @@ textarea.paste:focus {
   font-size: var(--text-sm);
 }
 
+/*
+ * One row, as a real element rather than three loose cells.
+ *
+ * The label column is `1fr` and the numbers are pinned right, so on a wide card there can be a
+ * couple of hundred pixels of nothing between "Chance to Cast Chain Lightning on Power Chord Hit"
+ * and the number that belongs to it — and twenty such rows stacked is a list where the eye
+ * changes line halfway across. Cells cannot be striped or hovered as a row, so each row is a
+ * `subgrid` spanning all three tracks: it keeps the columns of every row aligned with each other
+ * while giving the row a box to paint.
+ *
+ * The horizontal padding is cancelled by an equal negative margin, so the bands bleed a few
+ * pixels past the text without moving a single column.
+ */
+.delta-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  padding: 1px var(--space-3);
+  margin: 0 calc(var(--space-3) * -1);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * Alternate rows carry a band that fades along the row.
+ *
+ * Brightest under the label, thinnest under the number: the tint is there to be *followed*, and
+ * a flat stripe reads as a table rule while a fade reads as a direction. It is deliberately
+ * faint — the rows are already coloured by whether each change is good, and a zebra loud enough
+ * to compete with that would cost more than it buys.
+ */
+.delta-row:nth-child(even) {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.055) 0%,
+    rgba(255, 255, 255, 0.03) 55%,
+    rgba(255, 255, 255, 0.012) 100%
+  );
+}
+
+/* The row under the pointer, for tracing one line with the mouse. A ring plus a small outward
+   glow rather than a heavier fill: the fill would fight the good/bad colour the numbers carry. */
+.delta-row:hover {
+  background: var(--bg-raised);
+  box-shadow:
+    0 0 0 1px var(--accent-dim),
+    0 0 7px rgba(88, 166, 255, 0.22);
+}
+
+.delta-row:hover .delta-label {
+  color: var(--text);
+}
+
 .delta-table .delta-label {
   color: var(--text-dim);
 }
@@ -1961,6 +2192,71 @@ textarea.paste:focus {
   text-transform: uppercase;
   color: var(--text-faint);
   margin-bottom: var(--space-1);
+}
+
+/*
+ * The row's hover, as a card of the app's own.
+ *
+ * It replaces a `title` attribute, which gave a desktop-grey box half a second late and could
+ * only ever hold one flat string — so the stat's name and its two values were three lines of the
+ * same text. Small on purpose: the row beside it already says how far the figure moved, and all
+ * this adds is what the row is called, in full rather than truncated to its column, and the two
+ * numbers it moved between.
+ *
+ * `fixed` and portalled into the body for the reason `.item-window.floating` is: a delta table
+ * sits inside a scrolled panel or a capped tooltip, either of which would clip a card positioned
+ * against it. Click-through, so it cannot eat the click on the row under it.
+ */
+.delta-tip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: 260px;
+  padding: 5px 9px 6px;
+  background: rgba(14, 16, 21, 0.97);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+/* Centred over the change, and allowed to wrap: 57 of this pack's stats are named with a whole
+   sentence, and reading the whole of one is half of what the card is for. */
+.delta-tip-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.delta-tip-change {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+}
+
+/* Where it was, and the arrow, in a quieter grey than where it is now — the eye should land on
+   the second number, which is the one the build currently has. */
+.delta-tip-change .was {
+  color: var(--text-dim);
+}
+
+.delta-tip-change .arrow {
+  color: var(--text-faint);
+}
+
+/* "mitigation", "avoided" — what the pair of percentages above are percentages *of*. Its own
+   line rather than trailing the second number, so the arrow stays the widest thing on the row. */
+.delta-tip-noun {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
 }
 
 /* The tooltip grows a lot once it is pricing a node, so let it. */
@@ -2111,10 +2407,13 @@ textarea.paste:focus {
  * twenty-odd of them fit on screen together without scrolling.
  * ------------------------------------------------------------------------- */
 
-/* The left padding is wider than the right to leave a gutter for the disclosure arrows, which
-   sit outside the rows so that every label lines up whether or not its row has one. */
+/* The left gutter holds the disclosure arrows, which sit outside the rows so that every label
+   lines up whether or not its row has one. 12px is what that actually needs — `.vitals-caret` is
+   an 11px box at `left: -12px` against a row already pulled 4px left — and it used to be 22,
+   which put ten pixels of nothing down the inside edge of the sidebar. The right side keeps the
+   wider padding because the scrollbar is drawn in it. */
 .vitals {
-  padding: var(--space-5) var(--space-5) var(--space-7) 22px;
+  padding: var(--space-5) var(--space-5) var(--space-7) 12px;
 }
 
 .vitals-group + .vitals-group {
@@ -2487,7 +2786,7 @@ textarea.paste:focus {
  * The hover card on a preset button, showing what pressing it would change.
  *
  * `position: relative` on the anchor and nothing else: the anchor is a bare `span` precisely so
- * it creates no stacking context of its own, which is the trap `.slot-row.empty:has(.picker-list)`
+ * it creates no stacking context of its own, which is the trap `.slot-row.empty:has(.slot-list)`
  * above documents — an `opacity` or `transform` anywhere up the tree scopes the `z-index` to that
  * subtree and the card paints under the rows below it however high the number is.
  */
@@ -2640,73 +2939,382 @@ textarea.paste:focus {
  * ------------------------------------------------------------------------- */
 
 /*
- * `fixed`, not `absolute`: the pool scrolls inside itself and the column scrolls inside the tab,
- * so a tooltip positioned against either is clipped by it — which is exactly the case it exists
- * for, the tenth row of a scrolled list. Rendered into `document.body` for the same reason.
+ * One class for both places this is drawn: pinned to the pointer as a hover card, or laid into
+ * the Items panel beside the editor. The treatment is the game's — the near-black panel, the
+ * monospace face, a border coloured by rarity — and everything that differs between the two
+ * placements is either in `.floating` or in the two `:not(.floating)` rules below.
  */
-.item-tooltip {
+.item-window {
+  min-width: 290px;
+  max-width: 360px;
+  background-color: #0b090e;
+  border: 2px solid #555555;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.9);
+  font-family: 'Consolas', 'Courier New', monospace;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+/*
+ * The hover case, and why it is `fixed` rather than `absolute`: the pool scrolls inside itself
+ * and the column scrolls inside the tab, so a card positioned against either is clipped by it —
+ * which is exactly the case it exists for, the tenth row of a scrolled list. Rendered into
+ * `document.body` for the same reason, and click-through because it must never eat the click
+ * that is about to select the row under it.
+ */
+.item-window.floating {
   position: fixed;
-  z-index: 60;
-  max-width: 340px;
-  background: rgba(14, 16, 21, 0.98);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  padding: 7px 9px;
-  /* It must never swallow the click on its way to the row underneath. */
+  z-index: 9999;
   pointer-events: none;
-  font-size: var(--text-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
-  max-height: calc(100vh - 24px);
-  overflow: hidden;
 }
 
-.item-tooltip .tt-name {
-  font-weight: 600;
-  margin-bottom: 3px;
+/*
+ * Laid into the panel, it is a box in a column rather than an overlay: it takes the width of the
+ * half it was given instead of holding the tooltip's 290–360px, and the hotkey hints go, because
+ * `[Shift] Detail` describes a hover this card is not.
+ */
+.item-window:not(.floating) {
+  min-width: 0;
+  max-width: none;
 }
 
-.item-tooltip .tt-line {
-  color: var(--good);
-  font-size: var(--text-sm);
+.item-window:not(.floating) .tt-hotkeys {
+  display: none;
+}
+
+/* ================= RARITY BORDER & TITLE COLOR SCHEME ================= */
+.item-window.rarity-common { border-color: #aaaaaa; }
+.item-window.rarity-common .tt-title,
+.item-window.rarity-common .tt-rarity-label { color: #aaaaaa; }
+
+.item-window.rarity-uncommon { border-color: #55ff55; }
+.item-window.rarity-uncommon .tt-title,
+.item-window.rarity-uncommon .tt-rarity-label { color: #55ff55; }
+
+.item-window.rarity-rare { border-color: #55ffff; }
+.item-window.rarity-rare .tt-title,
+.item-window.rarity-rare .tt-rarity-label { color: #55ffff; }
+
+.item-window.rarity-epic { border-color: #aa00aa; }
+.item-window.rarity-epic .tt-title,
+.item-window.rarity-epic .tt-rarity-label { color: #aa00aa; }
+
+.item-window.rarity-legendary { border-color: #ffaa00; }
+.item-window.rarity-legendary .tt-title,
+.item-window.rarity-legendary .tt-rarity-label { color: #ffaa00; }
+
+.item-window.rarity-unique { border-color: #e54c4c; }
+.item-window.rarity-unique .tt-title,
+.item-window.rarity-unique .tt-rarity-label { color: #ff5555; }
+
+.item-window.rarity-mythic { border-color: #5b0088; }
+.item-window.rarity-mythic .tt-title,
+.item-window.rarity-mythic .tt-rarity-label { color: #aa00aa; }
+
+.item-window.rarity-runeword { border-color: #ffff55; }
+.item-window.rarity-runeword .tt-title,
+.item-window.rarity-runeword .tt-rarity-label { color: #ffff55; }
+
+/* Header */
+.tt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * The sprite's frame. Centred because the sprite is 16px source art drawn at 30px inside a
+ * 32px box — and because it is empty for vanilla gear, whose textures live in the client jar.
+ * An empty frame reads as "the pack has no sprite for this"; a collapsed one would shift the
+ * item's name left and make every vanilla card look broken.
+ */
+.tt-icon-frame {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #444444;
+  background: #15121b;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tt-title-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.tt-title {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.tt-subtitle {
+  font-size: 11px;
+  color: #aaaaaa;
+}
+
+/* Horizontal Dividers */
+.tt-divider {
+  height: 1px;
+  background-color: #3a2233;
+  margin: 6px 0;
+}
+
+/* Requirements Section (Top) */
+.tt-section.tt-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tt-req {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: bold;
+}
+
+/*
+ * `.tt-req` and `.tt-category-title` are defined once, further down.
+ *
+ * They used to be defined twice — an earlier copy of both blocks sat here and a later one
+ * overrode every rule in it. Nothing was visibly wrong, which is the problem: editing the first
+ * copy changed nothing on screen, and the obvious conclusion from that is that the class name is
+ * wrong rather than that the rule is dead.
+ */
+
+/* Stats Text Formatting */
+.tt-line {
+  white-space: pre-wrap;
+}
+
+/*
+ * A value is green when the line is *good*, not when the number is positive.
+ *
+ *     if (stat.minus_is_good) { val > 0 ? RED : GREEN } else { val > 0 ? GREEN : RED }
+ *
+ * — `StatNameRegex.numberColor`, confirmed in the 6.4.13 jar. `totalLines` applies it and tags
+ * the line; this is the paint. Without it a unique's downside — Armor-Clad Faith's −40% Attack
+ * Speed and Move Speed — read as a bonus in the same green as its armour.
+ *
+ * The two hexes are Minecraft's own GREEN and RED, which is what the game's tooltip draws.
+ */
+.tt-line .stat-val {
+  color: #55ff55;
+  font-weight: bold;
+}
+
+.tt-line.worse .stat-val {
+  color: #ff5555;
+}
+
+.tt-line .stat-text {
+  color: #ffffff; /* White stat text descriptions[cite: 1, 2] */
+}
+
+/* Sockets Section (Bottom, above item label) */
+.tt-sockets {
+  color: #aaaaaa;
+}
+
+.tt-socket-line {
+  color: #aaaaaa;
+}
+
+/* Footer Section */
+.tt-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tt-rarity-label {
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.tt-durability {
+  color: #aaaaaa;
+  font-size: 11px;
+}
+
+.tt-hotkeys {
+  color: #5555ff;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.tt-hotkeys .key {
+  color: #55ffff;
+}
+
+/* Requirements Layout */
+.tt-section.tt-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tt-req {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: bold;
+  font-size: 13px;
+}
+
+/* Met Requirement: Green check, white text */
+.tt-req.met {
+  color: #ffffff;
+}
+
+.tt-req.met .tt-icon {
+  color: #00ff00;
+}
+
+/* Unmet Requirement: Red cross, reddish text */
+.tt-req.unmet {
+  color: #ff5555;
+}
+
+.tt-req.unmet .tt-icon {
+  color: #ff5555;
+}
+
+.tt-category-group {
+  margin-bottom: 6px;
+}
+
+.tt-category-group:last-child {
+  margin-bottom: 0;
+}
+
+.tt-category-title {
+  font-weight: bold;
+  font-size: 13px;
+  margin-top: 4px;
+  margin-bottom: 2px;
+}
+
+/* Light Cyan for the two affix lists — what was *rolled onto* the item. */
+.tt-category-title.prefix,
+.tt-category-title.suffix {
+  color: #55ffff;
+}
+
+/*
+ * The three headings below are the mod's own colours rather than this card's guesses. Each is a
+ * `withStyle(ChatFormatting.X)` on the heading the game prints, read out of the 6.4.13 jar:
+ *
+ *   ImplicitStatsData:59   Words.IMPLICIT_STATS  → BLUE
+ *   GearAffixesData:71     Itemtips.COR_STATS    → RED
+ *   UniqueStatsData:70     Itemtips.UNIQUE_STATS → YELLOW
+ *
+ * Implicit sharing the affixes' cyan was the thing worth fixing: an implicit is not an affix at
+ * all — it comes with the base, has no tier and cannot be rerolled — and colouring it as one
+ * said the opposite. Corruption in red is the same red the game prints the word "Corrupted" in
+ * (`CommonTooltips`), so the heading and the item's own label now agree.
+ */
+.tt-category-title.implicit {
+  color: #5555ff;
+}
+
+.tt-category-title.corruption {
+  color: #ff5555;
+}
+
+/* Yellow for Unique Stats header */
+.tt-category-title.unique,
+.tt-category-title.enchant {
+  color: #ffff55;
+}
+
+/* White for the item's own base roll */
+.tt-category-title.base {
+  color: #ffffff;
+}
+
+/* Orange for what is socketed into it — gems, runes and the completed runeword */
+.tt-category-title.rune,
+.tt-category-title.runeword,
+.tt-category-title.socket {
+  color: #ffaa00;
+}
+
+/*
+ * A Watcher's Eye's conditional lines, in the light purple the game gives an aura elsewhere in
+ * its GUI. Not the affixes' cyan: these are affixes, but what a reader needs to see at a glance
+ * is that the heading marks the lines that are only sometimes true.
+ */
+.tt-category-title.aura {
+  color: #ff55ff;
+}
+
+/*
+ * The aura lines that are *not* counted right now, named so the omission is not a mystery.
+ *
+ * Grey and small because it is a note about the card rather than part of the item: the stats
+ * above are what the sheet is using, and this says which switch would add more.
+ */
+.tt-dormant {
+  color: #aaaaaa;
+  font-size: 11px;
 }
 
 /* ---------------------------------------------------------------------------
  * What a swap would change.
  * ------------------------------------------------------------------------- */
 
+/*
+ * The item, beside what taking it would change.
+ *
+ * Two columns because the columns existed and were empty: the middle of the Items panel is the
+ * widest thing on the tab, and the diff was living in the sidebar, a long way from the row that
+ * was clicked.
+ *
+ * Both cells are always in the tree, even when the diff has nothing to say for one frame, so the
+ * split does not depend on what is being compared — a panel whose width moved as you clicked
+ * down a list would be unreadable.
+ */
+.editor-contribute {
+  display: flex;
+  gap: var(--space-4);
+  align-items: start;
+  /* Butts the pair against the editor above them, which the card used to do on its own. */
+  margin-top: -8px;
+}
+
+.editor-contribute > * {
+  flex: 1 1 0;
+  /* Both halves hold tables and long names; without this they refuse to shrink and overflow. */
+  min-width: 0;
+}
+
+/*
+ * The readings stack.
+ *
+ * One item usually has one — a helmet fits one head — but a ring has two, because it fits either
+ * finger, and the two are different readings rather than one printed twice. Separate cards rather
+ * than one card with two tables, so each keeps the rarity border and the heading that say which
+ * position it is about.
+ */
+.diff-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .item-diff {
-  border-bottom: 1px solid var(--border);
-  padding: var(--space-3) var(--space-4);
-  background: var(--bg-panel);
-  flex: 0 0 auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  /* A long price list scrolls inside its own card rather than stretching the column. */
   max-height: 46vh;
   overflow-y: auto;
 }
 
-.item-diff .tt-line {
-  color: var(--good);
-  font-size: var(--text-sm);
-}
-
-.item-diff-table {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1px var(--space-4);
-  align-items: baseline;
-}
-
-.item-diff-row {
-  display: contents;
-}
-
-.item-diff-row .delta-label {
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-
-.item-diff-row .delta-change {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  font-size: var(--text-sm);
-}

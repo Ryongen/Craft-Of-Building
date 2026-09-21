@@ -41,7 +41,14 @@ import {
   type EngineStat,
   type FullDpsResult,
 } from "@cte2/engine";
-import { statDisplay, type BuildDoc, type StatDisplay } from "@cte2/schema";
+import {
+  fillTemplate,
+  statDisplay,
+  statNameRaw,
+  stripFormatting,
+  type BuildDoc,
+  type StatDisplay,
+} from "@cte2/schema";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useBuild, type Baseline } from "./build-store.js";
@@ -543,7 +550,7 @@ export function compare(
     if (Math.abs(b - a) <= epsilon) continue;
     const display: StatDisplay = statDisplay(snapshot, id);
     const improved = display.minusIsGood ? b < a : b > a;
-    const row = delta(id, display.name, a, b, improved, display.isPerc ? "percent" : "number");
+    const row = delta(id, statLabel(snapshot, display, b), a, b, improved, display.isPerc ? "percent" : "number");
     // Armour and dodge are the two rows a defensive comparison is actually read on, and the
     // rating alone does not say what it bought. `before` may have no entry where the stat was
     // absent altogether, which is a mitigation of 0 rather than an unknown.
@@ -574,6 +581,26 @@ export function compare(
     stats,
     unchanged: headline.length === 0 && ehpByElement.length === 0 && stats.length === 0,
   };
+}
+
+/**
+ * What to call a stat on a diff row.
+ *
+ * 57 of this pack's stats are named with a **whole templated sentence** rather than a label —
+ * `[VAL1]% Chance to Cast Fan of Knives on Hit`, `Gain [VAL1]% of your ☆ Strength as ❤ Health` —
+ * and `statDisplay.name` hands back the template unfilled. Printed straight into a table that put
+ * the literal placeholder on screen, which reads as the variable name having leaked out of the
+ * data. It had.
+ *
+ * `[VAL1]` is filled with the value the stat lands on, which is what the sentence is about: the
+ * row then reads "27% Chance to Cast Fan of Knives on Hit" and the columns beside it say how far
+ * that moved. It is the same substitution the stat sheet makes (`StatList`), so a stat named one
+ * way there is named the same way here.
+ */
+function statLabel(snapshot: Snapshot, display: StatDisplay, after: number): string {
+  if (!display.templated) return display.name;
+  const raw = statNameRaw(snapshot, display.id);
+  return raw === undefined ? display.name : stripFormatting(fillTemplate(raw, [after]));
 }
 
 /**
@@ -739,6 +766,55 @@ export function useWhatIf(
     }, delayMs);
     return () => clearTimeout(timer);
   }, [candidate, alone, snapshot, base, delayMs]);
+
+  return result;
+}
+
+/**
+ * Several candidates, priced together against the build on screen.
+ *
+ * {@link useWhatIf} answers one question about one document — the tree hover, where the cursor is
+ * on one node. The gear panel asks the same question two or three times at once: a ring fits
+ * either finger, so "what would this ring do" has an answer per finger and both are true. Running
+ * two `useWhatIf`s would mean two debounce timers and two baselines, and a hook per position is
+ * not a shape React allows anyway.
+ *
+ * One timer, one baseline, every candidate priced in the same tick. The delay is what it is for
+ * in the tree: selecting an item in a list is a lot of intermediate selections on the way to the
+ * one you meant, and each of those is a full engine pass per position.
+ *
+ * `candidates` must be **memoised by the caller** — its identity is the effect's dependency, so
+ * an array rebuilt every render prices the same documents forever. Same contract `useWhatIf` has.
+ */
+export function useWhatIfEach(
+  candidates: readonly { key: string; doc: BuildDoc }[] | undefined,
+  delayMs = 90,
+): ReadonlyMap<string, WhatIf> | undefined {
+  const { snapshot } = useWorld();
+  const base = useVitals();
+  const [result, setResult] = useState<ReadonlyMap<string, WhatIf> | undefined>();
+
+  useEffect(() => {
+    if (candidates === undefined || candidates.length === 0) {
+      setResult(undefined);
+      return;
+    }
+    setResult(undefined);
+    const timer = setTimeout(() => {
+      const priced = new Map<string, WhatIf>();
+      for (const { key, doc } of candidates) {
+        try {
+          const vitals = vitalsOf(doc, snapshot);
+          priced.set(key, { vitals, comparison: compare(base, vitals, snapshot) });
+        } catch {
+          // One candidate the engine cannot evaluate must not take the others with it: the row
+          // simply shows the item's own facts, which is what an absent entry renders as.
+        }
+      }
+      setResult(priced);
+    }, delayMs);
+    return () => clearTimeout(timer);
+  }, [candidates, snapshot, base, delayMs]);
 
   return result;
 }

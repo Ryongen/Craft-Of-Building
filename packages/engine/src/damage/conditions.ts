@@ -216,10 +216,10 @@ function evaluateSerializer(
     // --- properties of the declared target -------------------------------------------
 
     case "is_hp_under":
-      return hpCondition(data, side, "under");
+      return hpCondition(ctx, data, side, "under");
 
     case "is_hp_above":
-      return hpCondition(data, side, "above");
+      return hpCondition(ctx, data, side, "above");
 
     case "is_ms_under":
       return {
@@ -228,7 +228,19 @@ function evaluateSerializer(
       };
 
     case "is_target_low":
-      return { kind: "unknown", reason: "depends on the target's current health during the fight" };
+      // `IsTargetLow` with `check_combined_hp_and_ms` — which is the default and what both of
+      // this pack's entries carry:
+      //
+      //     float current = ms + hp;
+      //     float max = msmax + maxhp;
+      //     return perc > current / max * 100;
+      //
+      // The combined pool collapses to health here, because the target block states no magic
+      // shield: `EnemySetup` has armour, resists, dodge and block and no `magic_shield`, so
+      // `msmax` is 0 and `(0 + hp) / (0 + maxhp)` is the health fraction. That is a statement
+      // about the model rather than an approximation of the game, and it goes the same way as
+      // `is_hp_under` — the same strict `>`.
+      return hpCondition(ctx, data, side, "under");
 
     // --- world and timeline: not answerable from a static document -------------------
 
@@ -315,20 +327,45 @@ function evaluateSerializer(
 }
 
 /**
- * `IsHealthAbove/BellowPercentCondition`. The attacker's own health fraction is a legitimate
- * build-document question — "while on low life" is a build choice — so it is answered from
- * `config.conditions` if declared and reported otherwise, rather than guessed at full health.
+ * `IsHealthAbove/BellowPercentCondition`, answered from the stated health of whichever side the
+ * condition names.
+ *
+ *     is_hp_above:  return perc < en.getHealth() / en.getMaxHealth() * 100;
+ *     is_hp_under:  return perc > en.getHealth() / en.getMaxHealth() * 100;
+ *
+ * Both comparisons are **strict**, so a side stated at exactly the threshold satisfies neither
+ * direction — worth keeping, because 50 is the threshold seven of this pack's nine health
+ * conditions use and a round number is exactly what somebody types.
+ *
+ * A fraction is the right shape for this and a per-condition toggle was not. The pack gates on
+ * the target being under 50%, under 25%, above 70% and above 30%; asked one at a time, a document
+ * could say the mob was on 20% health *and* near full, and every execute bonus in the game would
+ * pay out together. One number cannot be inconsistent with itself.
+ *
+ * Unstated stays `unknown` rather than defaulting to full health, which is the project's standing
+ * rule about silent defaults: assuming a full-health target would turn every low-life bonus in
+ * the pack off without a word. `config.conditions` still forces an individual id either way —
+ * `evaluateCondition` reads it before this is reached.
  */
 function hpCondition(
+  ctx: DamageCtx,
   data: Record<string, unknown>,
   side: EffectSide,
   direction: "under" | "above",
 ): Outcome {
   const at = numberAt(data, "perc") ?? 50;
   const which = stringAt(data, "side") ?? side;
+  const stated =
+    which === "Source" ? ctx.config.selfHealthPercent : ctx.config.targetHealthPercent;
+  if (typeof stated === "number" && Number.isFinite(stated)) {
+    return bool(direction === "under" ? at > stated : at < stated);
+  }
+  const field = which === "Source" ? "selfHealthPercent" : "targetHealthPercent";
   return {
     kind: "unknown",
-    reason: `depends on the ${which.toLowerCase()}'s current health being ${direction} ${at}%`,
+    reason:
+      `depends on the ${which.toLowerCase()}'s current health being ${direction} ${at}%, ` +
+      `which \`config.${field}\` would state`,
   };
 }
 
