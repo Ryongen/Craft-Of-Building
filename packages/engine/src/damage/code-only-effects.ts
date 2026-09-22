@@ -25,7 +25,12 @@ import {
   type ElementName,
 } from "@cte2/schema";
 
-import { RESIST_BASE_CAP, RESIST_HARD_CAP, USABLE_STATS } from "../code-only-behaviour.js";
+import {
+  BLOCK_BASE_CAP,
+  RESIST_BASE_CAP,
+  RESIST_HARD_CAP,
+  USABLE_STATS,
+} from "../code-only-behaviour.js";
 import { AILMENTS } from "./ailments.js";
 import { clamp } from "../container.js";
 import { sheetValue, type DamageCtx } from "./ctx.js";
@@ -395,7 +400,7 @@ export function inCodeEffects(): InCodeEffect[] {
     run: armorEffect,
   });
 
-  // --- dodge, DAMAGE_LAYERS (20), Target ----------------------------------------------
+  // --- dodge, HIT_PREVENTION (10), Target ----------------------------------------------
   //
   //     float totalDodge = Mth.clamp(data.getValue() - effect.data.getNumber(ACCURACY).number, 0, MAX);
   //     float chance = dodge.getUsableValue(effect.targetData.getUnit(), (int) totalDodge, effect.sourceData.getLevel()) * 100;
@@ -411,15 +416,33 @@ export function inCodeEffects(): InCodeEffect[] {
   // so this multiplies by `1 - chance` on the block layer instead — the same expectation, and the
   // only form a DPS number or an eHP number can use. `damage_block` is `MULTIPLY` clamped to
   // `[0, 1]` and nothing in the pack writes to it, so it is free for exactly this.
+  //
+  // Why all three avoidance stats sit at `HIT_PREVENTION` rather than at `DAMAGE_LAYERS`:
+  // `GetPriority()` says so in `DodgeRating$Effect`, `SpellDodgeEffect` and `BlockChance$Effect`
+  // alike — three bytecodes each, `getstatic` then `areturn`, with no branch in any of them. All
+  // three were registered at 20 here, which is where `ArmorEffect` and `ElementalResistEffect`
+  // really do run.
+  //
+  // It is tempting to read a *partial* block as a damage-layer operation, since Glancing Strikes
+  // makes `applyBlock` reduce a layer instead of avoiding the hit. But `block_damage_reduction`
+  // changes what `applyBlock` does, not when the effect runs: the priority is fixed on the class,
+  // so a Glancing block is still hit prevention that happens to leave damage behind.
+  //
+  // Mostly this is inert — all three only `reduce` the same `MULTIPLY` layer, and multiplication
+  // does not care what order they ran in. It is not inert for `double_attack_chance` and
+  // `double_attack_chance_when_low`, the pack's only two `damage_layers` effects gated on
+  // `is_is_dodged_true_is_false`. At 20 those read `is_dodged` out of the same bucket that writes
+  // it, so the answer came down to a tie-break; at 10 the write always precedes the read, which
+  // is the order the game guarantees.
   out.push({
     statId: "dodge",
-    priority: PRIORITY.DAMAGE_LAYERS,
+    priority: PRIORITY.HIT_PREVENTION,
     side: "Target",
     runsOnZero: false,
     run: dodgeEffect,
   });
 
-  // --- spell dodge, DAMAGE_LAYERS (20), Target ----------------------------------------
+  // --- spell dodge, HIT_PREVENTION (10), Target ----------------------------------------
   //
   //     float totalDodge = Mth.clamp(data.getValue() - effect.data.getNumber(ACCURACY).number, 0, MAX);
   //     float chance = spellDodge.getUsableValue(effect.targetData.getUnit(), (int) totalDodge,
@@ -442,40 +465,62 @@ export function inCodeEffects(): InCodeEffect[] {
   // of spell dodge is worth half a point of dodge.
   out.push({
     statId: "spell_dodge",
-    priority: PRIORITY.DAMAGE_LAYERS,
+    priority: PRIORITY.HIT_PREVENTION,
     side: "Target",
     runsOnZero: false,
     run: spellDodgeEffect,
   });
 
-  // --- block, DAMAGE_LAYERS (20), Target ----------------------------------------------
+  // --- block, HIT_PREVENTION (10), Target ----------------------------------------------
   //
-  //     float chance = data.getValue();
+  //     float reduction = BlockChance.getBlockDamageReduction(effect.targetData);
+  //     if (isInheritedBlock(effect)) { applyBlock(effect, reduction); return effect; }
+  //     float chance = ((BlockChance) stat).getUsableValue(
+  //             effect.targetData.getUnit(), (int) data.getValue(), effect.targetData.getLevel()) * 100F;
   //     if (RandomUtils.roll(chance)) {
-  //         effect.getLayer(StatLayers.Defensive.DAMAGE_SUPPRESSION, EventData.NUMBER, Side()).reduce(50);
-  //         effect.data.setBoolean(EventData.IS_BLOCKED, true);
+  //         applyBlock(effect, reduction);
+  //         effect.targetData.getCooldowns().setOnCooldown(BLOCK_CD, getBlockCooldownTicks(effect.targetData));
   //     }
   //
-  // — BlockChance.java:65-90. Not avoidance: a block halves the hit, because the suppression
-  // layer's `min_multi` is 0.5 and 50 is exactly that floor. Averaging is exact here rather than
-  // approximate — `(1 - p) + 0.5p` is `1 - 0.5p`, which is what reducing the layer by `50p` gives.
+  //     private static void applyBlock(DamageEvent effect, float reduction) {
+  //         if (reduction >= 100) {
+  //             effect.data.setHitAvoided(EventData.IS_BLOCKED);
+  //         } else {
+  //             effect.getLayer(StatLayers.Defensive.DAMAGE_BLOCK, EventData.NUMBER, Side()).reduce(reduction);
+  //             effect.data.setBoolean(EventData.IS_BLOCKED, true);
+  //         }
+  //     }
   //
-  // `data.getValue()` is read raw, *not* through `getUsableValue`, so whatever the sheet ended up
-  // holding is the chance — capped at 90 by `code-only-behaviour.ts`, which is `BASE_BLOCK_CAP`
-  // plus `max_block_chance`'s own ceiling rather than the stat definition's 75.
+  // — `BlockChance$Effect`, read out of `Mine_and_Slash-1.20.1-6.4.13.jar`. The port this
+  // replaced was stale in four separate ways — the layer, the amount, the clamp on the chance and
+  // the missing gates — and the comment above it described a game that no longer exists. There is
+  // no `50` anywhere in the class.
+  //
+  // The fifth was the priority, and it was wrong for all three avoidance stats at once — see
+  // the note on {@link dodgeEffect}.
+  //
+  // What a block stops is `block_damage_reduction`, whose **base is 100** — so by default a
+  // blocked hit is stopped outright and `applyBlock` takes the `setHitAvoided` branch without
+  // touching a layer at all. The stat exists for Glancing Strikes
+  // (`mmorpg_perk/glancing_strikes.json`: `MORE block_chance +100`, `FLAT max_block_chance +15`,
+  // `FLAT block_damage_reduction -65`), which buys frequency with effectiveness. The old port
+  // charged every build the Glancing trade and then some, and overpaid a Glancing build.
+  //
+  // The layer is `damage_block`, not `damage_suppression`. That is not bookkeeping: suppression
+  // floors at `min_multi 0.5`, so a block written there could never stop more than half a hit,
+  // and it shared that one floor with the real suppression stats — two mitigations contending
+  // for one clamp. `damage_block` floors at 0, which is what lets a full block reach zero.
+  //
+  // Averaged onto that layer the same way dodge is, and for the same reason: `reduce(r * p)`
+  // leaves `1 - rp/100`, which is exactly `(1 - p) + p(1 - r/100)`. At the default `r = 100`
+  // that is dodge's own `reduce(100 * p)`, so the `>= 100` full-avoidance branch and the
+  // averaged form agree at both ends without being written twice.
   out.push({
     statId: "block_chance",
-    priority: PRIORITY.DAMAGE_LAYERS,
+    priority: PRIORITY.HIT_PREVENTION,
     side: "Target",
     runsOnZero: false,
-    run(ctx, value) {
-      if (!canAvoidHit(ctx)) return;
-      if (!isHit(ctx)) return;
-      const chance = clamp(value, 0, 100) / 100;
-      if (chance <= 0) return;
-      ctx.event.getLayer(LAYER.DAMAGE_SUPPRESSION, EVENT.NUMBER, "Target")?.reduce(50 * chance);
-      if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_BLOCKED, true);
-    },
+    run: blockEffect,
   });
 
   // --- damage shield, DAMAGE_LAYERS (20), Target --------------------------------------
@@ -750,6 +795,70 @@ function spellDodgeEffect(ctx: DamageCtx, value: number): void {
     points,
   });
   if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_DODGED, true);
+}
+
+/**
+ * `BlockChance$Effect` — a shield roll, averaged.
+ *
+ * Gates the old port had none of, all from `canActivate`:
+ *
+ *     if (!effect.canAvoidHit()) { return false; }
+ *     if (isInheritedBlock(effect)) { return true; }
+ *     if (effect.data.isHitAvoided()) { return false; }
+ *     if (effect.targetData.getCooldowns().isOnCooldown(BlockChance.BLOCK_CD)) { return false; }
+ *     if (!(effect.target.getOffhandItem().getItem() instanceof ShieldItem)) { return false; }
+ *     return effect.getAttackType().isHit() || effect.getAttackType() == AttackType.bonus_dmg;
+ *
+ * The shield is enforced ({@link DamageCtx.targetHasShield}); the cooldown is not, and that is a
+ * decision rather than an omission. `BLOCK_CD` is 20 ticks, floored at 5 and divided by
+ * `1 + block_recovery / 100`, so how often it is up depends on the rate hits arrive at — the
+ * same thing `defence.ts` refuses to invent for regeneration. One hit against a character at
+ * full finds block ready, so a single-hit figure is the cooldown's best case and says so.
+ *
+ * `isInheritedBlock` is also unmodelled and cannot matter here: it re-applies an existing block
+ * to the `bonus_dmg` riding on it, and the averaged form has already multiplied that child
+ * event's parent by the same factor.
+ */
+function blockEffect(ctx: DamageCtx, value: number): void {
+  if (!canAvoidHit(ctx)) return;
+  if (!isHit(ctx)) return;
+  // `instanceof ShieldItem` on the offhand stack. Unknown gear is a "no", never a "yes" — the
+  // whole point of the gate is that a shieldless build does not block. `defence.ts` raises the
+  // diagnostic, once per build rather than once per element swept.
+  if (ctx.targetHasShield !== true) return;
+
+  // `getUsableValue(unit, (int) value, lvl)` — the ceiling is `BASE_BLOCK_CAP` plus
+  // `max_block_chance`, with no outer clamp to 90 the way a resist has. A build with no
+  // `max_block_chance` caps at 75 even though the stat's own `max` is 90, which is the number
+  // the old `clamp(value, 0, 100)` was missing.
+  const usable = USABLE_STATS["block_chance"];
+  const maxStat = usable && usable.kind === "block" ? usable.maxStat : "max_block_chance";
+  const min = ctx.index.shapeOf("block_chance").min;
+  const cap = BLOCK_BASE_CAP + sheetValue(ctx.target, maxStat);
+  const chance = clamp(Math.trunc(value), min, cap) / 100;
+  if (chance <= 0) return;
+
+  // `getValueOrBase`, not `getValue`: a sheet that never rolled the stat reads its **base of
+  // 100**, not zero. Reading it as zero would make every block stop nothing.
+  const shape = ctx.index.shapeOf("block_damage_reduction");
+  const reduction = clamp(
+    ctx.target.get("block_damage_reduction")?.value ?? shape.base,
+    shape.min,
+    shape.max,
+  );
+  if (reduction <= 0) return;
+
+  const recorder = ctx.event.recorder;
+  const before = recorder?.contributions.length ?? 0;
+  ctx.event.getLayer(LAYER.DAMAGE_BLOCK, EVENT.NUMBER, "Target")?.reduce(reduction * chance);
+  recorder?.annotateSince(before, {
+    sheet: value,
+    penetration: 0,
+    afterPenetration: value,
+    min,
+    cap,
+  });
+  if (chance >= 1) ctx.event.data.setBoolean(EVENT.IS_BLOCKED, true);
 }
 
 /**

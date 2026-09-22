@@ -374,6 +374,32 @@ test("resists cap at 75 plus the max-resist stat, not at the stat's own max", ()
   closeTo(raised.hit.total, 10, "max resist lifts the ceiling to 90%");
 });
 
+test("a fractional max resist gives a fractional ceiling, but a resist under it truncates", () => {
+  // `ElementalResistEffect.activate` casts the resist to an `int` before the clamp
+  // (`f2i` in the 6.4.13 jar) but `ElementalResist.getUsableValue` computes its ceiling as
+  // `clamp(75 + getAdditionalMax(unit), min, 90)` in floats, and `getAdditionalMax` is just
+  // `MaxElementalResist`'s sheet value. So the `(int)` only ever reaches the resist itself:
+  // overcap and the clamp hands back the float ceiling untouched.
+  const snapshot = scenario({
+    physical_resist: statEntry("physical_resist", { min: -300, max: 500, is_perc: true }),
+    max_physical_resist: statEntry("max_physical_resist", { min: -100, max: 15, is_perc: true }),
+  });
+
+  const over = simulateHit(
+    build({ config: { enemy: { resists: { physical: 200 }, maxResists: { physical: 5.5 } } } }),
+    snapshot,
+  );
+  assert.ok(over);
+  closeTo(over.hit.total, 19.5, "overcapped, so the ceiling of 80.5% applies in full");
+
+  const under = simulateHit(
+    build({ config: { enemy: { resists: { physical: 40.9 }, maxResists: { physical: 5.5 } } } }),
+    snapshot,
+  );
+  assert.ok(under);
+  closeTo(under.hit.total, 60, "under the ceiling, so the (int) cast takes 40.9 to 40");
+});
+
 test("penetration applies against a target with no resist declared", () => {
   // `ElementalResistEffect.runsOnZeroStat()` returns true in 6.4.13, so an undeclared resist is
   // a resist of 0 that penetration still eats into — not a stat the sweep skips. The enemy

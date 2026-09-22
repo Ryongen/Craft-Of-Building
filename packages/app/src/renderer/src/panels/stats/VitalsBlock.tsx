@@ -213,6 +213,19 @@ function SkillVitals({
         active={same(focus, { kind: "figure", id: "crit-multi" })}
         onSelect={pick({ kind: "figure", id: "crit-multi" })}
       />
+      {/*
+        How many of those hits land. Dodge is folded into every damage figure above as
+        expectation, so a build missing one attack in ten reads 10% smaller with nothing on
+        screen saying why — the Damage tab said it per act and the sidebar never did.
+      */}
+      <Row
+        label="Chance to hit"
+        statId="accuracy"
+        value={`${num(damage.hitChance * 100, 2)}%`}
+        hint="The target's evasion against your accuracy. The damage figures above already have it folded in."
+        active={same(focus, { kind: "figure", id: "hit-chance" })}
+        onSelect={pick({ kind: "figure", id: "hit-chance" })}
+      />
       <Row
         label="Hit DPS"
         statId="total_damage"

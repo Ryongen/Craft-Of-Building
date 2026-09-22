@@ -139,6 +139,22 @@ export type DamageCtx = {
    */
   inCombat?: boolean;
   /**
+   * Whether the **target** has a shield in its offhand — `BlockChance` refuses to fire without one.
+   *
+   *     if (!(effect.target.getOffhandItem().getItem() instanceof ShieldItem)) { return false; }
+   *
+   * — `BlockChance$Effect.canActivate`, in `Mine_and_Slash-1.20.1-6.4.13.jar`. A live game asks
+   * the entity; a planner has to be told, so this is `undefined` wherever the target is not a
+   * character whose gear is known — an enemy, chiefly — and `blockEffect` treats that as "no"
+   * rather than as "yes". A gate nothing reads is a gate that always passes, and block passing
+   * for a shieldless build is the specific bug this field exists to stop.
+   *
+   * Refusing costs nothing on the enemy side: no `mmorpg_base_stats` entry in this pack grants a
+   * mob `block_chance`, so the effect never runs there at all.
+   */
+  targetHasShield?: boolean;
+
+  /**
    * Resolve the hit as though every avoidance roll failed.
    *
    * Dodge and block are rolls, and the pipeline folds them in as *expectation* — `dodgeEffect`

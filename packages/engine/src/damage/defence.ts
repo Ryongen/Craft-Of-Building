@@ -67,7 +67,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, ElementName, MobOffence, Severity } from "@cte2/schema";
-import { SINGLE_ELEMENTS } from "@cte2/schema";
+import { SINGLE_ELEMENTS, baseGearType, isTwoHanded } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { resolveEffects, type EngineOptions, type EngineResult } from "../calculate.js";
@@ -87,7 +87,7 @@ export type Pools = {
   /** `magic_shield`, which absorbs before health. */
   magicShield: number;
   /**
-   * `damage_absorbed_by_mana`: the percent of each post-mitigation hit mana takes, and how much
+   * `mana_shield`: the percent of each post-mitigation hit mana takes, and how much
    * mana is available to take it (half the maximum — the stat stops at that floor).
    */
   manaAbsorb: { percent: number; buffer: number };
@@ -217,7 +217,13 @@ export function defence(
 
   const health = sheet.get("health")?.value ?? 0;
   const magicShield = sheet.get("magic_shield")?.value ?? 0;
-  const manaPercent = sheet.get("damage_absorbed_by_mana")?.value ?? 0;
+  // `DamageAbsorbedByMana.GUID` is `mana_shield` — the class name is not the stat id, and
+  // there has never been a stat called `damage_absorbed_by_mana`. Reading that name returned
+  // `undefined` on every real sheet, so the buffer below and its diagnostic never once fired,
+  // including for a build wearing the Mana Battery keystone. Confirmed against the static
+  // initialiser in `Mine_and_Slash-1.20.1-6.4.13.jar`; `code-only-stats.generated.ts` had it
+  // right all along.
+  const manaPercent = sheet.get("mana_shield")?.value ?? 0;
   const mana = sheet.get("mana")?.value ?? 0;
   const pools: Pools = {
     health,
@@ -233,6 +239,8 @@ export function defence(
 
   // `chaos_doesnt_bypass_magic_shield` switches the bypass off entirely.
   const shieldHolds = (sheet.get("chaos_doesnt_bypass_magic_shield")?.value ?? 0) > 0;
+
+  const hasShield = wearsShield(build, snapshot);
 
   const offence = build.config?.enemy?.offence ?? {};
   const attacker = attackerSheet(offence);
@@ -253,6 +261,7 @@ export function defence(
       attackerLevel,
       attacker,
       diagnostics,
+      hasShield,
     };
 
     const { taken, steps, arrivesAs } = takenFraction(input);
@@ -289,13 +298,28 @@ export function defence(
       code: "mana-absorb-not-in-ehp",
       path: "config",
       message:
-        `\`damage_absorbed_by_mana\` sends ${pools.manaAbsorb.percent.toFixed(1)}% of every hit to ` +
+        `\`mana_shield\` sends ${pools.manaAbsorb.percent.toFixed(1)}% of every hit to ` +
         `mana, but only while mana is above half its maximum — a buffer of ` +
         `${Math.round(pools.manaAbsorb.buffer)}, not a pool. How full that buffer is when a hit ` +
         `lands depends on regeneration between hits, which nothing in a build document states, so ` +
         `it is reported beside the effective HP rather than added to it.`,
     });
   }
+
+  const blockChance = sheet.get("block_chance")?.value ?? 0;
+  if (blockChance > 0 && !hasShield) {
+    diagnostics.push({
+      severity: "info",
+      code: "block-needs-shield",
+      path: "gear",
+      message:
+        `\`block_chance\` is ${blockChance.toFixed(1)}%, but \`BlockChance\` refuses to fire ` +
+        `without a shield in the offhand — \`canActivate\` tests the offhand stack with ` +
+        `\`instanceof ShieldItem\`, and this build has none. The chance is on the sheet and stops ` +
+        `nothing, so it is left out of the figures below rather than quietly counted.`,
+    });
+  }
+
   const pierces =
     (offence.armorPenetration ?? 0) > 0 ||
     Object.values(offence.penetration ?? {}).some((v) => v > 0);
@@ -447,6 +471,27 @@ function poolFor(guid: string, health: number, shield: number, shieldHolds: bool
   return Math.min(health + shield, 2 * health);
 }
 
+/**
+ * Whether the character has a shield in the offhand — `BlockChance`'s hardest gate.
+ *
+ *     if (!(effect.target.getOffhandItem().getItem() instanceof ShieldItem)) { return false; }
+ *
+ * The check is on the item class, which a build document does not carry, so the base's `shield`
+ * tag stands in for it. Across the pack's three `offhand_family` bases that is exact rather than
+ * approximate: `RoE_Weapons-0.1.7.jar` declares `Shield0Item extends ShieldItem`, while
+ * `Tome0Item` and `Totem0Item` both extend plain `Item`. A tome grants magic shield and a totem
+ * grants dodge; neither lets you block, and neither is a `ShieldItem`.
+ *
+ * A two-handed weapon empties the offhand outright — Better Combat returns `ItemStack.EMPTY`
+ * for the slot, so `GearData` reads no offhand at all — which means a greatsword build holding
+ * a shield blocks nothing. {@link isTwoHanded} is the same test `validate.ts` warns on.
+ */
+function wearsShield(build: BuildDoc, snapshot: Snapshot): boolean {
+  const gear = build.gear ?? [];
+  if (gear.some((item) => isTwoHanded(snapshot, item.base))) return false;
+  return gear.some((item) => baseGearType(snapshot, item.base)?.tags.includes("shield") ?? false);
+}
+
 type TakenInput = {
   snapshot: Snapshot;
   index: ReturnType<typeof statIndex>;
@@ -464,6 +509,8 @@ type TakenInput = {
   diagnostics: Diagnostic[];
   /** Assume every avoidance roll failed — see `DamageCtx.noAvoidance`. */
   noAvoidance?: boolean;
+  /** Whether a shield is in the offhand — see `DamageCtx.targetHasShield`. */
+  hasShield: boolean;
 };
 
 /**
@@ -552,6 +599,9 @@ function sweepOnce(
     // not be swept onto it a second time. A conversion child is not, and is.
     disableSourceStats: takenAs,
     sourceIsTarget: false,
+    // The character is the target of every sweep in this file, so their own offhand answers
+    // `BlockChance`'s shield gate.
+    targetHasShield: input.hasShield,
     ...(input.noAvoidance === true ? { noAvoidance: true } : {}),
   };
 

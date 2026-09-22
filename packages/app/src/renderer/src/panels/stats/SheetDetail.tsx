@@ -45,6 +45,8 @@ export type FigureId =
   | "ailment-hit"
   | "rate"
   | "crit-multi"
+  /** The share of this skill's hits the target does not dodge. */
+  | "hit-chance"
   | "hit-dps"
   | "ailment-dps"
   /** The Shatter/Shock share of the ailment clock, which behaves nothing like a DoT. */
@@ -367,6 +369,34 @@ function FigureDetail({
         </Detail>
       );
     }
+
+    case "hit-chance":
+      return (
+        <Detail
+          title={`Chance to hit — ${spell}`}
+          lead="The share of this skill's hits the target does not dodge — damage_block's multiplier. It is already folded into every damage figure, as expectation rather than as a roll, so this says how much of the number above is the miss."
+        >
+          <div className="steps">
+            <Term
+              label="Chance to hit"
+              value={`${num(damage.hitChance * 100, 2)}%`}
+              hint="1 wherever nothing can dodge the hit: dodge takes physical attacks and magic dodge takes magic spells."
+              strong
+            />
+            <Term
+              label="Missed"
+              value={`${num((1 - damage.hitChance) * 100, 2)}%`}
+              hint="The share of the damage above that never lands. The Damage tab's trace has the subtraction."
+            />
+            <Term
+              label={statName(snapshot, "accuracy")}
+              value="the stat behind it"
+              hint="Your accuracy against the target's evasion rating."
+              onSelect={stat("accuracy")}
+            />
+          </div>
+        </Detail>
+      );
 
     case "hit-dps":
       return (

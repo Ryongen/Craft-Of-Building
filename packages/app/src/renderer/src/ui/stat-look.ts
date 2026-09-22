@@ -117,7 +117,7 @@ const ICON_ALIAS: Record<string, string> = {
   chaos_dmg_reduction: "armor",
   dmg_received: "armor",
   dmg_taken_to_mana: "mana",
-  damage_absorbed_by_mana: "mana",
+  mana_shield: "mana",
   blood: "health",
   blood_regen: "health_regen",
   blood_user: "health",
