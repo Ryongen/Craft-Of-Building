@@ -1,4 +1,4 @@
-# cte2-pob
+# Craft of Building (COB)
 
 A build planner for Craft to Exile 2 (CTE2) featuring a full stat calculation engine and real
 damage pipeline. It runs as a desktop app and as a website — the same planner either way.
@@ -6,7 +6,7 @@ damage pipeline. It runs as a desktop app and as a website — the same planner 
 ## Build Planner Highlights
 
 - **Complete Character Planning**: Allocate talents, skills, gear, omens, and class points with detailed stat breakdowns and damage models.
-- **In-Game Build Exporter Mod**: Includes a client-side Forge mod (`mod/`) that exports your active character, gear, and exact in-game stat sheet directly into the planner—no server permissions required.
+- **In-Game Build Exporter Mod**: Includes a client-side Forge mod (`mod/`) that exports your active character, gear, and exact in-game stat sheet directly into the planner—no server permissions required. Ctrl+Shift+C copies a single item—gear, jewel, omen, Skill, support gem or Augment—straight into the planner's importer.
 - **Portable & Zero-Install Version**: Available as a standalone `portable.exe` that runs from anywhere (like a USB drive) and keeps all local snapshot data isolated right beside the executable.
 - **Local Asset Extraction**: The desktop app reads data directly from your local CTE2 installation on first run, so it always matches the pack you actually have installed.
 - **Runs in a browser too**: the same planner is published to GitHub Pages with prebuilt pack data, for anyone who would rather not install anything.

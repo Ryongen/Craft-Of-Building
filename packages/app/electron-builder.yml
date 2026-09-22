@@ -8,7 +8,7 @@
 # `electronVersion` is pinned for the same reason — electron is hoisted to the repo root, and
 # electron-builder cannot always compute the version from packages/app on its own.
 appId: com.ryongen.cte2pob
-productName: CTE2 Build Planner
+productName: Craft of Building
 electronVersion: 43.4.0
 
 directories:
@@ -22,7 +22,7 @@ files:
 asar: true
 
 win:
-  # `build/icon.ico` — seven sizes from 16 to 256, generated from the repo-root CTE2POB.jpg.
+  # `build/icon.ico` — seven sizes from 16 to 256, generated from the repo-root CTE2COB.jpg.
   # electron-builder would find it under `buildResources` anyway; it is named because a missing
   # icon is silent (you get Electron's own) and that is the kind of thing nobody notices until
   # the installer is in somebody else's hands.

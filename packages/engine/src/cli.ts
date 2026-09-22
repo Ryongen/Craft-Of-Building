@@ -488,8 +488,9 @@ function countStatus(results: readonly FixtureResult[], status: string): number 
  * command checked nothing but the committed placeholder, and the only fixtures that pin a number
  * had to be pointed at by hand.
  *
- * `*.raw.json` is the exporter's companion file: every equipped stack's NBT, kept so a capture
- * never has to be retaken. It is not a fixture and would fail to parse as one.
+ * `*.raw.json` is the exporter's companion file: every equipped stack's NBT, written only when
+ * asked for (`/pobexport raw`) and kept so a capture never has to be retaken. It is not a fixture
+ * and would fail to parse as one.
  */
 function findFixtures(dir: string): string[] {
   const out: string[] = [];

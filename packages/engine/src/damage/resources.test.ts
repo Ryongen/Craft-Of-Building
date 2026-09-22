@@ -429,3 +429,39 @@ test("a pool that cannot hold one cast is not sustainable, however fast it regen
   assert.equal(holds.holdsACast, true);
   assert.equal(holds.sustainable, true);
 });
+
+test("a `heal` restore lands whole, and the leech cap has nothing to say about it", () => {
+  // `RestoreResourceEvent.activate` branches on the restore type before it pools anything:
+  //
+  //     if (data.getRestoreType() == RestoreType.leech) {
+  //         this.targetData.leech.addLeech(data.getResourceType(), num);
+  //         return;
+  //     }
+  //     this.targetData.getResources().restore(target, data.getResourceType(), num);
+  //
+  // so only a leech joins the bank that `<r>_leech_cap` meters out. `dmg_taken_to_mana` builds
+  // its restore with `RestoreType.heal` — a `getstatic RestoreType.heal` in the 6.4.13 bytecode,
+  // not an inference — and is therefore uncapped and immediate.
+  //
+  // Pinned because the two records are one field apart and the cap is silent when it is wrong:
+  // a heal counted as leech on a build at its cap would simply vanish.
+  const snapshot = snapshotOf({ mana: 1000, mana_leech_cap: 5 });
+  const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
+  const of = (restoreType: string) => [
+    { statId: "dmg_taken_to_mana", effectId: "dmg_taken_to_mana", resource: "mana", restoreType, amount: 500 },
+  ];
+
+  const asLeech = leech({ build, snapshot, perSecond: of("leech"), options: { newbieResists: false } });
+  closeTo(
+    asLeech.byResource.find((e) => e.resource === "mana")!.perSecond,
+    50,
+    "5% of a 1000 pool is all a leech of 500 pays out",
+  );
+
+  const asHeal = leech({ build, snapshot, perSecond: of("heal"), options: { newbieResists: false } });
+  assert.equal(
+    asHeal.byResource.find((e) => e.resource === "mana"),
+    undefined,
+    "a heal is not leech, so the leech pass does not claim it and cannot cap it",
+  );
+});

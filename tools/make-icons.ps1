@@ -1,6 +1,6 @@
 # Turn the repo-root app image into the icons electron-builder and Electron need.
 #
-# Run from the repo root after replacing CTE2POB.jpg:
+# Run from the repo root after replacing CTE2COB.jpg:
 #
 #     powershell -File tools/make-icons.ps1
 #
@@ -13,7 +13,7 @@
 # Icon.Save writes a single 32x32 frame and throws away every other size.
 
 param(
-    [string]$Source = (Join-Path $PSScriptRoot "..\CTE2POB.jpg"),
+    [string]$Source = (Join-Path $PSScriptRoot "..\CTE2COB.jpg"),
     [string]$OutDir = (Join-Path $PSScriptRoot "..\packages\app\build")
 )
 

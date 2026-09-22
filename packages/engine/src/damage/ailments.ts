@@ -158,8 +158,40 @@ export function applyAilments(
     // `effect.getElement() == ailment.element` — an ailment only comes from its own element.
     if (ailment.element !== element) continue;
 
-    const chance = clamp01(sheetValue(source, `${ailment.id}_chance`) / 100);
+    // Two stats can inflict the same ailment on the same hit, and only one of them is yours.
+    //
+    // `AilmentReceiveChance` is `AilmentChance` with one line changed — `Side()` returns
+    // `EffectSides.Target` instead of `EffectSides.Source`. Everything else is identical in the
+    // 6.4.13 jar: the same `FINAL_DAMAGE` priority, the same six gates ending in
+    // `RandomUtils.roll(data.getValue())`, the same base arithmetic, and an `invokestatic` of the
+    // *same* `AilmentChance.activate`. So it is not a second mechanic; it is the same mechanic
+    // reading the other sheet.
+    //
+    // Which means three of the four effects that carry it — `infection`, `wounds` and
+    // `plague_aura_effect` — are **offensive**. You put the debuff on the mob, the mob's sheet
+    // carries the receive chance, and your hit rolls it in addition to your own
+    // `<ailment>_chance`. `targetSheetFor` has already folded your debuffs onto `target`, so the
+    // number is here to be read and was simply never read.
+    //
+    // Two independent rolls of two separate stat effects, so the chance that *something* applies
+    // is the complement of both missing — not the sum, which would exceed 1 on a build running
+    // Plague Aura with poison chance of its own.
+    const own = clamp01(sheetValue(source, `${ailment.id}_chance`) / 100);
+    const receive = clamp01(sheetValue(target, `${ailment.id}_receive_chance`) / 100);
+    const chance = 1 - (1 - own) * (1 - receive);
     if (chance <= 0) continue;
+
+    if (receive > 0) {
+      ctx.report(
+        "info",
+        "ailment-receive-chance",
+        `config.enemy`,
+        `The target's own \`${ailment.id}_receive_chance\` of ${(receive * 100).toFixed(1)}% applies ` +
+          `${ailment.id} on top of your ${(own * 100).toFixed(1)}%, for ${(chance * 100).toFixed(1)}% ` +
+          "combined. A debuff you applied is doing that half — `infection`, `wounds` and " +
+          "`plague_aura_effect` are the three effects in this pack that put it on a mob.",
+      );
+    }
 
     out.push(resolve(ctx, ailment, base, chance, source, target, runEvent));
   }

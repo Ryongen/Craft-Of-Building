@@ -210,6 +210,84 @@ export const TARGET_PRESETS: readonly TargetPreset[] = [
   },
 ] as const;
 
+/**
+ * What a mob hits *with* — the other half of a target, and the half a preset cannot invent.
+ *
+ * A {@link TargetPreset} describes what the mob can take: armour and resists off its rarity's
+ * `stat_multi`, which is pack data and so is the game's own answer. Its *offence* is not, because
+ * `MobStatUtils.getMobBaseStats` gives a mob a single line of it —
+ *
+ *     stats.add(ExactStatData.scaleTo(1, ModType.FLAT, OffenseStats.ACCURACY.get().GUID(), lvl));
+ *
+ * — and `mmorpg_entity`'s 190 definitions carry no attack damage either. The hit comes from the
+ * Minecraft entity's own `generic.attack_damage` attribute, which nothing in the install knows
+ * about until something is standing in front of you.
+ *
+ * So these are Minecraft's constants, cited, in the same standing as the hand-ported
+ * `CompatConfigPreset` numbers in the engine's `compat.ts`. They are applied by an explicit
+ * click rather than folded into {@link buildTargetEnemy}, because a target preset that quietly
+ * started stating an attack damage would put a number under every defensive figure that the
+ * document never asked for.
+ *
+ * The rates are the vanilla `MeleeAttackGoal` cadence of roughly one swing a second. Mine and
+ * Slash's own ceiling is 4/s — `BASIC_ATTACK_COOLDOWN_ID` is 5 ticks — and nothing here is near
+ * it.
+ *
+ * **These will look more alike than you expect, and that is correct.** The mod turns a vanilla
+ * attack damage into a hit as `(v * 0.33 / 100) + 6`, so the attribute is a third of a percent
+ * against a flat 6: a zombie and a vindicator come out within one percent of each other once the
+ * level curve has multiplied both. What actually differs between these profiles is the *rate*.
+ * See `damage/incoming.ts` for the arithmetic and the jar constants behind it.
+ */
+export type AttackerProfile = {
+  id: string;
+  name: string;
+  /** `generic.attack_damage` on the vanilla entity, before Mine and Slash scales it. */
+  vanillaAttackDamage: number;
+  attacksPerSecond: number;
+  /** Where the number comes from, so a reader can check it rather than trust it. */
+  citation: string;
+};
+
+export const ATTACKER_PROFILES: readonly AttackerProfile[] = [
+  {
+    id: "zombie",
+    name: "Zombie",
+    vanillaAttackDamage: 3,
+    attacksPerSecond: 1,
+    citation: "minecraft:zombie, generic.attack_damage 3.0 — the ordinary overworld melee mob.",
+  },
+  {
+    id: "skeleton",
+    name: "Skeleton",
+    vanillaAttackDamage: 2,
+    attacksPerSecond: 0.5,
+    citation:
+      "minecraft:skeleton shooting rather than swinging: an arrow's 2.0 base, loosed on the " +
+      "bow goal's own two-second cadence.",
+  },
+  {
+    id: "vindicator",
+    name: "Vindicator",
+    vanillaAttackDamage: 13,
+    attacksPerSecond: 1,
+    citation: "minecraft:vindicator, generic.attack_damage 13.0 on Normal — a raid-tier melee hit.",
+  },
+  {
+    id: "ravager",
+    name: "Ravager",
+    vanillaAttackDamage: 12,
+    attacksPerSecond: 0.5,
+    citation:
+      "minecraft:ravager, generic.attack_damage 12.0 with a slow roar-and-charge cadence — the " +
+      "boss-shaped end of vanilla.",
+  },
+] as const;
+
+export function attackerProfile(id: string): AttackerProfile | undefined {
+  return ATTACKER_PROFILES.find((p) => p.id === id);
+}
+
 export function isTargetPresetId(value: string): value is TargetPresetId {
   return TARGET_PRESETS.some((p) => p.id === value);
 }

@@ -18,6 +18,7 @@ import {
   activeSkillCount,
   addStage,
   applyStage,
+  attackerProfile,
   buildTargetEnemy,
   emptyBuild,
   isSkillEnabled,
@@ -48,6 +49,7 @@ import { create } from "zustand";
 import type { PinnedBaseline } from "@shared/ipc";
 
 import { applyPatch, type Patch } from "./patch.js";
+import { applyMove, benched, type Move } from "./gear-moves.js";
 
 const HISTORY_LIMIT = 100;
 
@@ -245,17 +247,14 @@ export type BuildState = {
   updatePoolItem(index: number, item: Item): void;
   removePoolItem(index: number): void;
   /**
-   * Wear a benched item, sending `displace` off the character to make room for it.
+   * Put gear on or take it off — see `state/gear-moves.ts`, which the swap preview and the
+   * compare card price with, so the click and its preview are the same function.
    *
-   * Anything the slot has no room for comes **off onto the bench** rather than being deleted:
-   * swapping a ring must not silently lose the ring it replaced. Which items those are is the
-   * caller's to work out, not this store's — it takes `SLOT_CAPACITY`, the item's base and the
-   * snapshot to answer, and this module deliberately holds no snapshot. `GearPanel` has one.
-   *
-   * One edit, so equipping and the displacement it caused undo together.
+   * One edit, so an arrival and whatever it displaced undo together. What comes off goes to the
+   * bench, never away; half of a mirrored item coming off leaves the other half worn.
    */
-  equipPoolItem(index: number, displace?: readonly number[]): void;
-  /** Take a worn item off, onto the bench. The inverse of {@link equipPoolItem}. */
+  moveGear(move: Move): void;
+  /** Take a worn item off, onto the bench — both places, if it is worn twice. */
   unequipItem(index: number): void;
   /**
    * The omen, of which a character wears one — `CURIO_BLOCKS` gives `OMEN` a count of 1.
@@ -307,6 +306,10 @@ export type BuildState = {
   setIncludeInFullDps(index: number, include: boolean): void;
   /** Fill the enemy block from a built-in target, and record which one it came from. */
   applyTargetPreset(id: TargetPresetId, snapshot: Snapshot, level: number): void;
+  /** Fills `enemy.offence`'s hit from a built-in attacker profile. */
+  applyAttackerProfile(id: string): void;
+  /** Unsets both halves of the hit, putting every incoming figure back to "not stated". */
+  clearAttackerProfile(): void;
   /** Where the enemy stands, for the projectile geometry. `undefined` restores the default. */
   setTargetPlacement(placement: TargetPlacement | undefined): void;
   /** How many enemies the pack figure counts. `undefined` or 1 means single target. */
@@ -703,20 +706,7 @@ export const useBuild = create<BuildState>((set) => ({
   removePoolItem: (index) =>
     edit(set, (doc) => prune(doc, "itemPool", removeAt(doc.itemPool, index))),
 
-  equipPoolItem: (index, displace = []) =>
-    edit(set, (doc) => {
-      const item = (doc.itemPool ?? [])[index];
-      if (item === undefined) return doc;
-
-      // Read the displaced items out before anything is removed: the indices are into the
-      // *current* `gear`, and filtering first would renumber them under the lookup.
-      const coming = new Set(displace);
-      const takenOff = (doc.gear ?? []).filter((_, i) => coming.has(i));
-
-      const gear = [...(doc.gear ?? []).filter((_, i) => !coming.has(i)), item];
-      const pool = [...(doc.itemPool ?? []).filter((_, i) => i !== index), ...takenOff];
-      return prune(prune(doc, "gear", gear), "itemPool", pool);
-    }),
+  moveGear: (move) => edit(set, (doc) => applyMove(doc, move).doc),
 
   unequipItem: (index) =>
     edit(set, (doc) => {
@@ -724,7 +714,7 @@ export const useBuild = create<BuildState>((set) => ({
       if (item === undefined) return doc;
       return prune(prune(doc, "gear", removeAt(doc.gear, index)), "itemPool", [
         ...(doc.itemPool ?? []),
-        item,
+        benched(item),
       ]);
     }),
 
@@ -817,6 +807,40 @@ export const useBuild = create<BuildState>((set) => ({
       // as a record of where the numbers came from, not as something re-derived later.
       withConfig(doc, { enemy: buildTargetEnemy(snapshot, id, level), targetPreset: id }),
     ),
+
+  // Deliberately separate from `applyTargetPreset`, and a second click rather than part of it.
+  // A target preset says what the mob can *take*, which is pack data and so is the game's own
+  // answer; this says what it swings with, which is a Minecraft attribute no file in the install
+  // names. Folding the two together would put a hit under every defensive figure that the
+  // document never asked for, and would move numbers on every build that has a preset today.
+  applyAttackerProfile: (id) =>
+    edit(set, (doc) => {
+      const profile = attackerProfile(id);
+      if (profile === undefined) return doc;
+      const enemy = doc.config?.enemy ?? {};
+      return withConfig(doc, {
+        enemy: {
+          ...enemy,
+          offence: {
+            ...(enemy.offence ?? {}),
+            vanillaAttackDamage: profile.vanillaAttackDamage,
+            attacksPerSecond: profile.attacksPerSecond,
+          },
+        },
+        attackerProfile: id,
+      });
+    }),
+
+  clearAttackerProfile: () =>
+    edit(set, (doc) => {
+      const enemy = doc.config?.enemy ?? {};
+      const { vanillaAttackDamage: _d, attacksPerSecond: _r, ...rest } = enemy.offence ?? {};
+      const next: EnemySetup =
+        Object.keys(rest).length === 0
+          ? (({ offence: _o, ...withoutOffence }) => withoutOffence)(enemy)
+          : { ...enemy, offence: rest };
+      return withConfig(doc, { enemy: next, attackerProfile: undefined });
+    }),
 
   setTargetPlacement: (placement) => edit(set, (doc) => withConfig(doc, { target: placement })),
 

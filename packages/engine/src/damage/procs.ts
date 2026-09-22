@@ -88,7 +88,17 @@ export type ProcLimit =
   | "disabled"
   /** Fires on a kill, and how often something dies is not a property of the build. */
   | "on-kill"
-  /** Fires when you are hit, blocked or dodged — a damage figure has no rate for it. */
+  /**
+   * Fires when you are hit, blocked or dodged, and the document has not said how often that is.
+   *
+   * Not "no rate exists" any more: `config.enemy.offence` states the enemy's hit and its clock,
+   * and `defence.ts` derives the rate from them. A proc gated on the block or the dodge is
+   * thinned by that chance on top, because it fires on the branch that happened rather than on
+   * an expectation over the whole hit.
+   *
+   * So this now means the narrower and more useful thing — *you have not described an attacker*
+   * — and names the two fields that would answer it.
+   */
   | "when-hit"
   /**
    * Only a weapon swing triggers it, so it has no rate on a *cast*.
@@ -140,6 +150,15 @@ export type ProcInput = {
   critChance: number;
   /** Hits this skill lands per second, across every damage source. */
   hitsPerSecond: number;
+  /**
+   * Hits the *enemy* lands on you per second, when the document states an attacker.
+   *
+   * The rate a `Target`-side proc has always been missing. `defence.ts` derives it from
+   * `config.enemy.offence`; `undefined` means no attacker is stated, which is the state every
+   * existing document is in, and every defensive proc then keeps its `when-hit` limit.
+   */
+  incomingPerSecond?: number;
+
   /** The character sheet, to find proc stats the sweep could not reach. */
   sheet: ReadonlyMap<string, { value: number }>;
   /** The tags of the skill being measured, for the `spell_has_tag` gates. */
@@ -178,9 +197,9 @@ export function resolveProcs(input: ProcInput): Proc[] {
   for (const hit of [...blended.values()].sort((a, b) => b.chance - a.chance).slice(0, MAX_PROCS)) {
     const cooldownTicks = procCooldownOf(input.snapshot, hit.spellId);
     const capPerSecond = TICKS_PER_SECOND / Math.max(1, cooldownTicks);
-    const limit = limitOf(hit, input.spellTags, input.disabledSpells ?? EMPTY);
+    const limit = limitOf(hit, input.spellTags, input.disabledSpells ?? EMPTY, input.incomingPerSecond);
 
-    const triggersPerSecond = limit === undefined ? input.hitsPerSecond : 0;
+    const triggersPerSecond = limit === undefined ? triggerRateOf(hit, input) : 0;
     const perSecond = Math.min(triggersPerSecond * hit.chance, capPerSecond);
     const damagePerProc = perSecond > 0 ? input.damageOf(hit.spellId) : 0;
 
@@ -210,8 +229,13 @@ export function resolveProcs(input: ProcInput): Proc[] {
       code: "proc-rate-unknown",
       path: "skills",
       message:
-        `\`${proc.statId}\` casts \`${proc.spellId}\` ${proc.limit === "on-kill" ? "on a kill" : "when you are hit"}, ` +
-        `which a single-target figure has no rate for. It is listed and not counted.`,
+        proc.limit === "on-kill"
+          ? `\`${proc.statId}\` casts \`${proc.spellId}\` on a kill, and how often something dies ` +
+            `depends on the pack rather than on the build. It is listed and not counted.`
+          : `\`${proc.statId}\` casts \`${proc.spellId}\` when you are hit, and this build does not ` +
+            `say how often that is. State the enemy's attack damage and how often it swings on ` +
+            `the Config tab — an attacker profile fills both — and this gets a real rate. It is ` +
+            `listed and not counted until then.`,
     });
   }
   return out;
@@ -416,20 +440,47 @@ function limitOf(
   hit: Blended,
   spellTags: ReadonlySet<string>,
   disabledSpells: ReadonlySet<string>,
+  /** Undefined when no attacker is stated, which is what keeps `when-hit` meaning something. */
+  incomingPerSecond: number | undefined,
 ): ProcLimit | undefined {
   // The player's own switch, so it is asked before anything derived.
   if (disabledSpells.has(hit.spellId)) return "disabled";
-  // A `Target`-side block is one the *enemy's* hit on you triggers.
-  if (hit.side === "Target") return "when-hit";
+  // Deliberately still `when-hit` even with an attacker stated, and asked *before* the plain
+  // `Target`-side case below, because one of these is a `Target`-side proc too.
+  //
+  // A proc gated on the block or the dodge fires on the branch that *happened*, so its rate is
+  // the incoming rate times that chance alone — and block, dodge and spell dodge are not
+  // separable from the outside: the sweep folds all three into one avoidance outcome, and
+  // splitting them would mean re-deriving the `DodgeRating` and `SpellDodgeEffect` curves here,
+  // against this file's whole premise that it never re-derives what the sweep already answered.
+  // Reported with its reason rather than given a rate that would silently be the wrong one.
+  if (hit.ifs.includes("is_is_blocked_true") || hit.ifs.includes("is_is_dodged_true")) {
+    return "when-hit";
+  }
+  // A `Target`-side block is one the *enemy's* hit on you triggers — which now has a rate, when
+  // the document says how often that happens.
+  if (hit.side === "Target") return incomingPerSecond === undefined ? "when-hit" : undefined;
   if (hit.events.includes("on_mob_kill") || hit.events.includes("on_death")) return "on-kill";
   if (hit.chance > 0) return undefined;
   if (hit.needsTag !== undefined && !spellTags.has(hit.needsTag)) return "wrong-skill";
   if (hit.ifs.includes("is_is_basic_atk_true")) return "basic-attack";
   if (hit.ifs.includes("is_is_basic_atk_true_is_false")) return "spell-only";
-  if (hit.ifs.includes("is_is_blocked_true") || hit.ifs.includes("is_is_dodged_true")) {
-    return "when-hit";
-  }
   return "cannot-trigger";
+}
+
+/**
+ * How often this proc's trigger happens, per second.
+ *
+ * Two clocks, and which one a proc is on is a property of the block rather than of the skill:
+ * your hits for an ordinary offensive proc, the enemy's hits for a `Target`-side one.
+ *
+ * A proc that fires on the *avoidance* — "when you block", "when you dodge" — is on a third
+ * clock this cannot give it, and {@link limitOf} keeps it at `when-hit` for that reason.
+ */
+function triggerRateOf(hit: Blended, input: ProcInput): number {
+  const incoming = input.incomingPerSecond;
+  if (hit.side === "Target" && incoming !== undefined) return incoming;
+  return input.hitsPerSecond;
 }
 
 /**

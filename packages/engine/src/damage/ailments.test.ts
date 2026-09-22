@@ -381,3 +381,106 @@ test("a converted element rolls its own ailment: the cold half of a physical hit
     1,
   );
 });
+
+/**
+ * A receive chance lives on the *target*, so it needs a target that carries one.
+ *
+ * `mmorpg_mob_affix` is the shortest honest route: an affix is a real thing a mob has, and
+ * `targetSheetFor` folds it onto the enemy sheet in the same accumulator your debuffs land in.
+ * The pack puts the stat there through `infection`, `wounds` and `plague_aura_effect` instead,
+ * but the sheet cannot tell the difference and neither can `AilmentReceiveChance`.
+ */
+function receiveScenario(granted: Record<string, number>) {
+  return engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: {
+      strike: spellEntry("strike", "Physical", "hit100", {
+        config: { tags: { tags: [] }, use_support_gems_from: "", style: "str", cooldown_ticks: 20 },
+      }),
+    },
+    mmorpg_stat: { bleed_chance: statEntry("bleed_chance") },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats(
+        "original_mode_player",
+        Object.entries(granted).map(([id, value]) => exact(id, "FLAT", value)),
+      ),
+    },
+    mmorpg_mob_affix: {
+      // `plague_aura_effect`'s own number for bleed, as a thing the mob is wearing.
+      plagued: {
+        type: "prefix",
+        format: "GREEN",
+        id: "plagued",
+        stats: [{ type: "FLAT", max: 21, min: 21, stat: "bleed_receive_chance" }],
+      },
+    },
+  });
+}
+
+function bleedAgainst(
+  snapshot: ReturnType<typeof receiveScenario>,
+  affixes: string[],
+): ReturnType<typeof bleedOf> | undefined {
+  const build = {
+    ...BUILD,
+    config: { enemy: { level: 1, armor: 0, affixes } },
+  } as BuildDoc;
+  return simulateHit(build, snapshot, {})!.hit.ailments.find((a) => a.ailment === "bleed");
+}
+
+test("a receive chance on the target inflicts the ailment with no chance of your own", () => {
+  // `AilmentReceiveChance` is `AilmentChance` with `Side()` returning `EffectSides.Target`
+  // instead of `EffectSides.Source` — verified in `Mine_and_Slash-1.20.1-6.4.13.jar`, where both
+  // `Effect` classes disassemble to the same `FINAL_DAMAGE` priority, the same six gates ending
+  // in `RandomUtils.roll(data.getValue())`, and an `invokestatic` of the same
+  // `AilmentChance.activate`.
+  //
+  // So `plague_aura_effect` on a mob makes it bleed from a hit by a character with no bleed
+  // chance whatsoever. The engine read only the source sheet and `continue`d at 0, so this case
+  // produced no bleed at all.
+  const snapshot = receiveScenario({});
+
+  assert.equal(bleedAgainst(snapshot, []), undefined, "no chance on either sheet, no bleed");
+
+  const bled = bleedAgainst(snapshot, ["plagued"]);
+  assert.ok(bled !== undefined, "the target's own receive chance is a source of the ailment");
+  closeTo(bled.chance, 0.21);
+});
+
+test("the two chances are independent rolls, so they combine rather than sum", () => {
+  // Two separate stat effects, each with its own `RandomUtils.roll`, each calling the same
+  // static. The probability that *something* applies is the complement of both missing:
+  //
+  //     1 - (1 - 0.30) * (1 - 0.21) = 0.447
+  //
+  // Summing would give 0.51 here and can exceed 1 on a build that stacks both, which is the
+  // reading this pins against.
+  const snapshot = receiveScenario({ bleed_chance: 30 });
+
+  const own = bleedAgainst(snapshot, []);
+  assert.ok(own !== undefined);
+  closeTo(own.chance, 0.3);
+
+  const both = bleedAgainst(snapshot, ["plagued"]);
+  assert.ok(both !== undefined);
+  closeTo(both.chance, 0.447);
+});
+
+test("a receive chance is still gated on the element, like every other half of this effect", () => {
+  // `effect.getElement() == ailment.element`. The affix grants a *bleed* receive chance and the
+  // hit is physical, so bleed is the one it can roll — a burn receive chance on the same mob
+  // would need a fire hit, and the gate is shared code rather than a second implementation.
+  const snapshot = receiveScenario({});
+  const result = simulateHit(
+    { ...BUILD, config: { enemy: { level: 1, armor: 0, affixes: ["plagued"] } } } as BuildDoc,
+    snapshot,
+    {},
+  )!;
+  assert.deepEqual(
+    result.hit.ailments.map((a) => a.ailment),
+    ["bleed"],
+    "only the ailment whose element the hit carries",
+  );
+});

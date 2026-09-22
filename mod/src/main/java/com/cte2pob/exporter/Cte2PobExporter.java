@@ -7,11 +7,14 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
+import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import org.lwjgl.glfw.GLFW;
 
 /**
  * A client-only exporter for Craft to Exile 2 characters.
@@ -46,16 +49,17 @@ import net.minecraftforge.fml.common.Mod;
  *
  * <h2>What it will not do</h2>
  *
- * It records only what it can read. Anything it cannot map onto the build document is written
- * to the {@code .raw.json} sidecar and named in {@code exporter.warnings} rather than guessed
- * at, because a fixture containing an invented number is worse than no fixture: it agrees with
- * the engine whether or not the engine is right.
+ * It records only what it can read. Anything it cannot map onto the build document is named in
+ * {@code exporter.warnings} rather than guessed at, because a fixture containing an invented
+ * number is worse than no fixture: it agrees with the engine whether or not the engine is right.
+ * {@code /cobexport raw} additionally dumps every equipped stack's untranslated NBT beside the
+ * fixture, for a character that would be expensive to capture twice.
  */
 @Mod(Cte2PobExporter.MODID)
 public class Cte2PobExporter {
 
-    public static final String MODID = "cte2pob";
-    public static final String VERSION = "0.3.0";
+    public static final String MODID = "craftofbuilding";
+    public static final String VERSION = "0.4.0";
 
     public Cte2PobExporter() {
         // Nothing to do on a server, and nothing here may touch a client class on one.
@@ -85,7 +89,7 @@ public class Cte2PobExporter {
                 pressed = true;
             }
             if (pressed) {
-                run(null);
+                run(null, false);
             }
 
             // The stat-source breakdown is a round trip (see StatSources), so an export is
@@ -94,21 +98,48 @@ public class Cte2PobExporter {
             // breakdown is worth far more than no fixture.
             if (pendingTicks > 0 && --pendingTicks == 0) {
                 String version = pendingPackVersion;
+                boolean raw = pendingRaw;
                 pendingPackVersion = null;
-                write(version);
+                pendingRaw = false;
+                write(version, raw);
             }
         }
 
         /** Ticks left before the deferred export fires. 0 means nothing is pending. */
         private static int pendingTicks = 0;
         private static String pendingPackVersion = null;
+        private static boolean pendingRaw = false;
 
-        static void schedule(String packVersion) {
+        static void schedule(String packVersion, boolean raw) {
             pendingPackVersion = packVersion;
+            pendingRaw = raw;
             // ~10 ticks is half a second, which is ample for a local server and forgiving on a
             // remote one. The cost of waiting is nothing; the cost of writing too early is a
             // fixture missing the breakdown.
             pendingTicks = 10;
+        }
+
+        /**
+         * Ctrl+Shift+C over an item in any container screen: copy that item for the planner.
+         *
+         * <p>`Pre` and cancelled on a hit, so the chord never reaches the screen underneath. Most
+         * screens ignore an unknown key, but a search box does not, and typing a C into the JEI
+         * filter every time you copy an item would be a small permanent annoyance.
+         */
+        @SubscribeEvent
+        public static void onScreenKey(ScreenEvent.KeyPressed.Pre event) {
+            if (ItemCopy.chord(event.getKeyCode(), event.getModifiers())) {
+                ItemCopy.copy(Minecraft.getInstance());
+                event.setCanceled(true);
+            }
+        }
+
+        /** The same chord with no screen open, which copies what you are holding. */
+        @SubscribeEvent
+        public static void onKey(InputEvent.Key event) {
+            if (event.getAction() == GLFW.GLFW_PRESS && ItemCopy.chord(event.getKey(), event.getModifiers())) {
+                ItemCopy.copy(Minecraft.getInstance());
+            }
         }
 
         /**
@@ -119,17 +150,29 @@ public class Cte2PobExporter {
         @SubscribeEvent
         public static void onRegisterCommands(RegisterClientCommandsEvent event) {
             LiteralArgumentBuilder<CommandSourceStack> root = LiteralArgumentBuilder
-                    .<CommandSourceStack>literal("pobexport")
+                    .<CommandSourceStack>literal("cobexport")
                     .executes(ctx -> {
-                        run(null);
+                        run(null, false);
                         return 1;
                     })
+                    // `raw` asks for the NBT sidecar as well. It used to be written every time;
+                    // see Exporter's class comment for why it is opt-in now.
+                    .then(LiteralArgumentBuilder.<CommandSourceStack>literal("raw")
+                            .executes(ctx -> {
+                                run(null, true);
+                                return 1;
+                            }))
                     .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                             .<CommandSourceStack, String>argument("packVersion", StringArgumentType.string())
                             .executes(ctx -> {
-                                run(StringArgumentType.getString(ctx, "packVersion"));
+                                run(StringArgumentType.getString(ctx, "packVersion"), false);
                                 return 1;
-                            }));
+                            })
+                            .then(LiteralArgumentBuilder.<CommandSourceStack>literal("raw")
+                                    .executes(ctx -> {
+                                        run(StringArgumentType.getString(ctx, "packVersion"), true);
+                                        return 1;
+                                    })));
             event.getDispatcher().register(root);
         }
     }
@@ -140,24 +183,24 @@ public class Cte2PobExporter {
      *                    exposed to the game - so it is left as {@code "unknown"} and warned
      *                    about rather than filled in with something plausible.
      */
-    public static void run(String packVersion) {
+    public static void run(String packVersion, boolean raw) {
         if (Minecraft.getInstance().player == null) {
             return;
         }
         // Ask for the stat-source breakdown, then write once the reply has had time to land.
         StatSources.request();
-        ForgeBus.schedule(packVersion);
+        ForgeBus.schedule(packVersion, raw);
     }
 
     /** The export itself, a few ticks after {@link #run}. */
-    static void write(String packVersion) {
+    static void write(String packVersion, boolean raw) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null) {
             return;
         }
         try {
-            Exporter.export(mc, player, packVersion);
+            Exporter.export(mc, player, packVersion, raw);
         } catch (Throwable e) {
             // A failed export must never take the client with it.
             player.sendSystemMessage(Component.literal("§c[PoB] Export failed: " + e));

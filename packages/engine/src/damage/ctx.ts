@@ -153,6 +153,15 @@ export type DamageCtx = {
    * mob `block_chance`, so the effect never runs there at all.
    */
   targetHasShield?: boolean;
+  /**
+   * Whether each side holds a dual-wieldable weapon in both hands — `DualWieldUtils.isDualWielding`,
+   * which `IsDualWieldingCondition` asks of `event.getSide(statSource)`.
+   *
+   * Set only for a side that is the character. Unset reads as "no", for the reason
+   * `targetHasShield` gives: `dual_wield_damage` must not apply to a build holding one sword.
+   */
+  sourceDualWielding?: boolean;
+  targetDualWielding?: boolean;
 
   /**
    * Resolve the hit as though every avoidance roll failed.

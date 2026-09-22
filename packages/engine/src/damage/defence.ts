@@ -67,18 +67,23 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, ElementName, MobOffence, Severity } from "@cte2/schema";
-import { SINGLE_ELEMENTS, baseGearType, isTwoHanded } from "@cte2/schema";
+import { SINGLE_ELEMENTS, baseGearType, isDualWielding, isTwoHanded, wornItems } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { resolveEffects, type EngineOptions, type EngineResult } from "../calculate.js";
 import { ORIGINAL_MODE, type Compat } from "../compat.js";
 import { statIndex } from "../stat-def.js";
-import type { DamageCtx, Sheet } from "./ctx.js";
+import type { DamageCtx, ProcHit, RestoreRecord, Sheet } from "./ctx.js";
 import { EVENT, DamageEventState } from "./event.js";
 import { layerIndex } from "./layers.js";
 import { Recorder, type LayerStep, type MoreStep } from "./breakdown.js";
 import { mobAffixMods } from "./mob-affixes.js";
 import { aggregateSpread, applySheetMods, sweep, type TargetMod } from "./simulate.js";
+import { mobAttackRate, mobHitSize, type MobHit } from "./incoming.js";
+import { applyAilments, type AilmentResult } from "./ailments.js";
+import { resolveProcs, type Proc } from "./procs.js";
+import { resources } from "./resources.js";
+import { selfSustain, type SelfSustain } from "./self-sustain.js";
 
 /** The character's pools, as the game keeps them. */
 export type Pools = {
@@ -161,7 +166,80 @@ export type Defence = {
    * is softer to a single physical slam than the averaged figure suggests.
    */
   mostFragile: ElementDefence;
+  /**
+   * What the stated attacker does to you over time — present only when one is stated.
+   *
+   * The one-hit figures above answer "how big a hit do I survive from full". This answers the
+   * second hit and every one after it, which `defence.ts`'s header has always said it could not:
+   * it needs a rate, and a build document had nowhere to state one until
+   * {@link MobOffence.vanillaAttackDamage} and {@link MobOffence.attacksPerSecond}.
+   *
+   * `undefined` when either is unset, which is the state every existing document is in — so
+   * nothing here can move a figure until a human types a number.
+   */
+  overTime?: OverTime;
   diagnostics: Diagnostic[];
+};
+
+/** The stated attacker's hit, on its clock, against the pools and their regeneration. */
+export type OverTime = {
+  /** Swings a second, already clamped to the game's 4/s basic-attack ceiling. */
+  ratePerSecond: number;
+  /** One swing before mitigation — `mobBasicAttack`'s `num`. */
+  rawPerHit: number;
+  /** How that raw number was arrived at, so a breakdown can show its working. */
+  hit: MobHit;
+  byElement: OverTimeElement[];
+  /** The element that kills you soonest at this rate. */
+  deadliest: OverTimeElement;
+  /**
+   * Seconds the mana-shield buffer absorbs for before it drops below the half-mana floor.
+   *
+   * The one-hit figure deliberately leaves `mana_shield` out, because how full the buffer is
+   * when a hit lands depends on regeneration between hits. With a rate there *is* an answer, so
+   * this is it — reported beside the effective-HP figures and still not inside them.
+   *
+   * `Infinity` when mana regeneration covers the drain; `undefined` when the build has no
+   * `mana_shield` at all.
+   */
+  manaAbsorbSeconds?: number;
+  /**
+   * The defensive procs, with real rates at last.
+   *
+   * Every one of these used to report `when-hit` and a DPS of zero, because "how often are you
+   * hit" was not a question a build document could answer. The chances are the sweep's own — the
+   * same `ifs` pass every offensive proc goes through — and only the rate is new.
+   */
+  procs: Proc[];
+  /**
+   * What an incoming hit gives *back*, per second.
+   *
+   * `dmg_taken_to_mana` is the one stat in the pack that does this, and nothing in this pack
+   * grants it, so this is empty on every real build today. It is here because the alternative is
+   * a stat that reads zero whether or not it is implemented.
+   */
+  restoresPerSecond: RestoreRecord[];
+  /**
+   * Ailments the enemy's hit puts on **you**.
+   *
+   * Almost always empty: a bare mob rolls no `<ailment>_chance`, so the only way to get one is a
+   * `<ailment>_receive_chance` on your own sheet. `corporeal_respite` is the single effect in
+   * this pack that grants one, and this is the number that says what its 100% bleed actually
+   * costs.
+   */
+  ailments: AilmentResult[];
+};
+
+export type OverTimeElement = {
+  element: ElementName;
+  /** Post-mitigation, one hit. */
+  perHit: number;
+  /** Post-mitigation, per second. */
+  perSecond: number;
+  /** That drain against shield and health regeneration — the same walk Holy Fire gets. */
+  sustain: SelfSustain;
+  /** Hits survived from full, counting the recovery between them. */
+  hitsSurvived: number;
 };
 
 export type DefenceOptions = {
@@ -246,6 +324,16 @@ export function defence(
   const attacker = attackerSheet(offence);
   const carried = attackerAffixes(build, snapshot, index, bal, attackerLevel, attacker, diagnostics);
 
+  // One shared sink across the element sweeps, deduplicated afterwards by {@link oncePerBlock}.
+  //
+  // A `proc_spell` block on a Target-side stat is mostly not element-specific —
+  // `proc_quake_when_hit` fires on any hit you take — so every element's sweep reaches the same
+  // block and pushes the same hit. `resolveProcs` *sums* what it is handed rather than deduping
+  // it, so passing the raw sink reported a 50% proc at 250%: five elements' worth of one proc.
+  const procHits: ProcHit[] = [];
+  const restoreHits: RestoreRecord[] = [];
+  const ailmentHits: AilmentResult[] = [];
+
   const byElement = SINGLE_ELEMENTS.map((element) => {
     const input = {
       snapshot,
@@ -262,6 +350,9 @@ export function defence(
       attacker,
       diagnostics,
       hasShield,
+      procs: procHits,
+      restores: restoreHits,
+      ailments: ailmentHits,
     };
 
     const { taken, steps, arrivesAs } = takenFraction(input);
@@ -269,7 +360,10 @@ export function defence(
     // and neither can be derived from the other: the avoidance layers sit in the middle of the
     // chain, so their contribution is not a factor that can be divided back out afterwards.
     // Ten sweeps of fourteen layers is a fraction of a millisecond.
-    const unavoided = takenFraction({ ...input, noAvoidance: true, diagnostics: [] });
+    // No sinks on this one: it is the same event swept a second time with avoidance forced off,
+    // so collecting from it would count every proc and every restore twice.
+    const { procs: _procs, restores: _restores, ailments: _ailments, ...withoutSinks } = input;
+    const unavoided = takenFraction({ ...withoutSinks, noAvoidance: true, diagnostics: [] });
 
     const pool = poolFor(element.guid, health, magicShield, shieldHolds);
     return {
@@ -301,8 +395,10 @@ export function defence(
         `\`mana_shield\` sends ${pools.manaAbsorb.percent.toFixed(1)}% of every hit to ` +
         `mana, but only while mana is above half its maximum — a buffer of ` +
         `${Math.round(pools.manaAbsorb.buffer)}, not a pool. How full that buffer is when a hit ` +
-        `lands depends on regeneration between hits, which nothing in a build document states, so ` +
-        `it is reported beside the effective HP rather than added to it.`,
+        `lands depends on regeneration between hits. A document that states how hard and how ` +
+        `often this enemy hits gets that answer as a number of seconds on the over-time figures; ` +
+        `either way it is reported beside the effective HP rather than added to it, because the ` +
+        `figure above is one hit against a character at full.`,
     });
   }
 
@@ -339,7 +435,216 @@ export function defence(
       `${carried.withheld.length === 0 ? "" : ` Its ${carried.withheld.join(", ")} is real and is left out here for that reason; the Damage tab is where it shows.`}`,
   });
 
-  return { pools, hitSize, attackerLevel, byElement, weakest, mostFragile, diagnostics };
+  const overTime = overTimeFor({
+    build,
+    snapshot,
+    options,
+    offence,
+    attackerLevel,
+    byElement,
+    pools,
+    sheet,
+    effects: run.effects,
+    procHits: oncePerBlock(procHits),
+    restoreHits: oncePerRestore(restoreHits),
+    ailmentHits: oncePerAilment(ailmentHits),
+    diagnostics,
+  });
+
+  return {
+    pools,
+    hitSize,
+    attackerLevel,
+    byElement,
+    weakest,
+    mostFragile,
+    ...(overTime === undefined ? {} : { overTime }),
+    diagnostics,
+  };
+}
+
+/**
+ * The second hit, and every one after it.
+ *
+ * Nothing here re-derives mitigation: `byElement[e].taken` is the fraction that already survived
+ * the full fourteen-layer sweep, and this multiplies it by a hit size and a clock. The sustain
+ * walk is `selfSustain`, which was written for Holy Fire's recoil and asks exactly this question
+ * — shield regeneration pays first because the shield is hit first, then health regeneration,
+ * and what neither covers is the rate your bar actually falls at.
+ *
+ * Returns `undefined` unless the document states both halves of the attacker's hit. That is the
+ * property the whole feature rests on: an unstated hit is the state every existing document,
+ * capture and fixture is in, so none of their numbers can move.
+ */
+/**
+ * One entry per proc block, at the highest chance any element's sweep gave it.
+ *
+ * The highest rather than the first or the mean, because an element-gated block — one carrying a
+ * `<element>_damage_taken` style `ifs` — is reached at its real chance on the element it applies
+ * to and at zero everywhere else. Taking the maximum is what reports that proc at the chance it
+ * actually has when it fires, rather than at a fifth of it.
+ */
+function oncePerBlock(hits: readonly ProcHit[]): ProcHit[] {
+  const best = new Map<string, ProcHit>();
+  for (const hit of hits) {
+    const key = `${hit.statId}:${hit.spellId}:${hit.side}`;
+    const seen = best.get(key);
+    if (seen === undefined || hit.chance > seen.chance) best.set(key, hit);
+  }
+  return [...best.values()];
+}
+
+/** The same, for restores: one per stat and pool, at the largest amount any element produced. */
+function oncePerRestore(records: readonly RestoreRecord[]): RestoreRecord[] {
+  const best = new Map<string, RestoreRecord>();
+  for (const record of records) {
+    const key = `${record.statId}:${record.effectId}:${record.resource}`;
+    const seen = best.get(key);
+    if (seen === undefined || record.amount > seen.amount) best.set(key, record);
+  }
+  return [...best.values()];
+}
+
+/**
+ * One entry per ailment, at the highest chance any element's sweep produced.
+ *
+ * Same reason as {@link oncePerBlock}: each element is swept separately, and an ailment is gated
+ * on its own element, so bleed is rolled on the physical sweep and reads zero on the other four.
+ * The maximum is the chance it has when it can happen at all.
+ */
+function oncePerAilment(results: readonly AilmentResult[]): AilmentResult[] {
+  const best = new Map<string, AilmentResult>();
+  for (const result of results) {
+    const seen = best.get(result.ailment);
+    if (seen === undefined || result.chance > seen.chance) best.set(result.ailment, result);
+  }
+  return [...best.values()].filter((result) => result.chance > 0);
+}
+
+function overTimeFor(input: {
+  build: BuildDoc;
+  snapshot: Snapshot;
+  options: DefenceOptions;
+  offence: MobOffence;
+  attackerLevel: number;
+  byElement: ElementDefence[];
+  pools: Pools;
+  sheet: Sheet;
+  effects: EngineResult["effects"];
+  /** The `proc_spell` blocks the deadliest element's sweep reached, chances already folded in. */
+  procHits: readonly ProcHit[];
+  /** What that same sweep restored — `dmg_taken_to_mana` and nothing else in this pack. */
+  restoreHits: readonly RestoreRecord[];
+  /** The ailments that same sweep put on the character. */
+  ailmentHits: readonly AilmentResult[];
+  diagnostics: Diagnostic[];
+}): OverTime | undefined {
+  const { build, snapshot, offence, attackerLevel, byElement, pools, diagnostics } = input;
+
+  const hit = mobHitSize(snapshot, offence, attackerLevel, input.options.compat ?? ORIGINAL_MODE);
+  const ratePerSecond = mobAttackRate(offence);
+  if (hit === undefined || ratePerSecond === undefined) {
+    // Said once, at the point it matters, rather than left as a blank card. Both halves are
+    // named because filling in one of them alone still produces nothing.
+    diagnostics.push({
+      severity: "info",
+      code: "incoming-hit-unstated",
+      path: "config.enemy.offence",
+      message:
+        "How hard and how often this enemy hits is not stated, so nothing here says how long you " +
+        "survive it — only how big a single hit you could take from full. The two fields are the " +
+        "mob's Minecraft attack damage and how often it swings; neither is derivable, because " +
+        "`mmorpg_entity` carries no attack damage and `MobStatUtils` gives a mob accuracy and " +
+        "nothing else. An attacker profile on the Config tab fills both.",
+    });
+    return undefined;
+  }
+
+  const regen = resources(build, snapshot, {
+    ...(input.options.balanceId === undefined ? {} : { balanceId: input.options.balanceId }),
+    ...(input.options.sheet === undefined ? {} : { sheet: input.options.sheet }),
+  });
+  const perSecondOf = (id: string): number =>
+    regen.byResource.find((r) => r.resource === id)?.inCombatPerSecond ?? 0;
+  const healthRegen = perSecondOf("health");
+  const shieldRegen = perSecondOf("magic_shield");
+
+  const elements: OverTimeElement[] = byElement.map((entry) => {
+    const perHit = entry.taken * hit.raw;
+    const perSecond = perHit * ratePerSecond;
+    const sustain = selfSustain({
+      perSecond,
+      perCast: perHit,
+      magicShield: { max: pools.magicShield, perSecond: shieldRegen },
+      health: { max: pools.health, perSecond: healthRegen },
+    });
+    return {
+      element: entry.element,
+      perHit,
+      perSecond,
+      sustain,
+      hitsSurvived: sustain.secondsToDeath * ratePerSecond,
+    };
+  });
+
+  const deadliest = elements.reduce((worst, e) =>
+    e.sustain.secondsToDeath < worst.sustain.secondsToDeath ? e : worst,
+  );
+
+  // `mana_shield` sends a percent of each hit to mana, but only while mana is above half its
+  // maximum — so it is a buffer of `maxMana / 2` draining at a fixed rate, and with a rate there
+  // is finally a number of seconds to put on it. The one-hit figures still leave it out.
+  let manaAbsorbSeconds: number | undefined;
+  if (pools.manaAbsorb.percent > 0) {
+    const drain = (deadliest.perSecond * pools.manaAbsorb.percent) / 100;
+    const net = drain - perSecondOf("mana");
+    manaAbsorbSeconds = net > 0 ? pools.manaAbsorb.buffer / net : Number.POSITIVE_INFINITY;
+  }
+
+  // The chances are the sweep's; only the rate is this file's. `damageOf` is deliberately a
+  // constant zero here: what a defensive proc *casts* is an ordinary spell whose damage belongs
+  // to the Damage tab, and resolving it would mean running the whole spell pipeline from inside
+  // the defence pass. The rate, the chance and the cooldown ceiling are what was missing.
+  const procs = resolveProcs({
+    snapshot,
+    build,
+    effects: input.effects,
+    onHit: input.procHits,
+    onCrit: [],
+    critChance: 0,
+    hitsPerSecond: 0,
+    incomingPerSecond: ratePerSecond,
+    sheet: input.sheet,
+    spellTags: new Set(),
+    damageOf: () => 0,
+    diagnostics: [],
+  })
+    .filter((proc) => proc.limit === undefined || proc.limit === "when-hit" || proc.limit === "no-damage")
+    .map((proc) => {
+      // `damageOf` is a constant zero here by choice, so `resolveProcs` concludes "no-damage" —
+      // which would be a real finding on the Damage tab and is an artefact of this call. The
+      // rate and the chance are what this pass is for; the spell's damage is the other tab's.
+      if (proc.limit !== "no-damage") return proc;
+      const { limit: _dropped, ...rated } = proc;
+      return rated;
+    });
+
+  const restoresPerSecond = input.restoreHits.map((record) => ({
+    ...record,
+    amount: record.amount * ratePerSecond,
+  }));
+
+  return {
+    ratePerSecond,
+    rawPerHit: hit.raw,
+    hit,
+    byElement: elements,
+    deadliest,
+    ...(manaAbsorbSeconds === undefined ? {} : { manaAbsorbSeconds }),
+    procs,
+    restoresPerSecond,
+    ailments: [...input.ailmentHits],
+  };
 }
 
 /**
@@ -487,7 +792,7 @@ function poolFor(guid: string, health: number, shield: number, shieldHolds: bool
  * a shield blocks nothing. {@link isTwoHanded} is the same test `validate.ts` warns on.
  */
 function wearsShield(build: BuildDoc, snapshot: Snapshot): boolean {
-  const gear = build.gear ?? [];
+  const gear = wornItems(snapshot, build.gear ?? []);
   if (gear.some((item) => isTwoHanded(snapshot, item.base))) return false;
   return gear.some((item) => baseGearType(snapshot, item.base)?.tags.includes("shield") ?? false);
 }
@@ -511,6 +816,27 @@ type TakenInput = {
   noAvoidance?: boolean;
   /** Whether a shield is in the offhand — see `DamageCtx.targetHasShield`. */
   hasShield: boolean;
+  /**
+   * Where the sweep's `proc_spell` blocks are collected, when a caller wants them.
+   *
+   * The defensive procs — "when you are hit", "when you block" — are `Target`-side blocks on
+   * exactly this event, so the sweep already resolves every one of their `ifs` into a chance.
+   * Handing it a sink is the whole of reading them; nothing here re-derives a chance, for the
+   * same reason `procs.ts`'s header gives.
+   */
+  procs?: ProcHit[];
+  /** Where `dmg_taken_to_mana` and anything else Target-side that restores a pool lands. */
+  restores?: RestoreRecord[];
+  /**
+   * Where the ailments the incoming hit puts *on you* are collected.
+   *
+   * The mirror of the offensive pass, and the same call with the sheets swapped: the attacker
+   * rolls its own `<ailment>_chance` and **your** sheet's `<ailment>_receive_chance` decides the
+   * rest. `corporeal_respite` is the one effect in this pack that grants a player one — 100%
+   * bleed receive chance, on purpose, as the cost of its 50% physical damage reduction — and
+   * until there was an incoming hit to run, nothing could say what that cost came to.
+   */
+  ailments?: AilmentResult[];
 };
 
 /**
@@ -602,7 +928,10 @@ function sweepOnce(
     // The character is the target of every sweep in this file, so their own offhand answers
     // `BlockChance`'s shield gate.
     targetHasShield: input.hasShield,
+    targetDualWielding: isDualWielding(input.snapshot, input.build.gear ?? []),
     ...(input.noAvoidance === true ? { noAvoidance: true } : {}),
+    ...(input.procs === undefined ? {} : { procs: input.procs }),
+    ...(input.restores === undefined ? {} : { restores: input.restores }),
   };
 
   const steps: LayerStep[] = [];
@@ -619,6 +948,18 @@ function sweepOnce(
 
   let dealt = Math.max(0, event.damage);
   landed.set(element, (landed.get(element) ?? 0) + dealt);
+
+  // The ailments the hit puts on *you*. Same function, sheets swapped — `applyAilments` reads
+  // `<ailment>_chance` off the source and `<ailment>_receive_chance` off the target, and here
+  // the target is the character.
+  //
+  // No `runEvent`: the ailment's own second `DamageEvent` would need the offensive pipeline, so
+  // these report the hit's base rather than the event's. That understates a DoT on a build with
+  // `ailment_damage` — which is an *attacker* stat, and the attacker here is a bare mob — so the
+  // gap is small and in the honest direction.
+  if (input.ailments !== undefined) {
+    input.ailments.push(...applyAilments(ctx, input.attacker, input.sheet));
+  }
 
   // Everything conversion moved off `NUMBER`, followed to where it landed. The child's steps
   // are deliberately not merged into `steps`: the layer trace on screen is a reading of one

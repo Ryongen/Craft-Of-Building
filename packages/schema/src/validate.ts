@@ -60,6 +60,11 @@ import {
   isJewelStyle,
   isKnownReqType,
   isTwoHanded,
+  blocksOffhandWeapon,
+  canMirror,
+  dualWieldable,
+  mainhandWeapon,
+  wornPieces,
   jewelTags,
   MAX_EYE_AURA_STATS,
   maxBonusSpellLevels,
@@ -2019,15 +2024,21 @@ function validateEquipment(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   const perSlot = new Map<string, number[]>();
   const perFamily = new Map<string, number[]>();
 
-  for (const [i, item] of gear.entries()) {
+  // Over the pieces worn, not the entries: a mirrored ring is two rings in the slot count.
+  for (const { item, index: i } of wornPieces(snapshot, gear)) {
     const base = baseGearType(snapshot, item.base);
     const slotId = base?.gearSlot;
     if (slotId === undefined) continue;
 
     perSlot.set(slotId, [...(perSlot.get(slotId) ?? []), i]);
+    // A weapon held in the offhand fills the offhand, not the mainhand — the only way two
+    // swords are worn at once.
     const family = slotFamily(snapshot, slotId);
-    if (family !== undefined) perFamily.set(family, [...(perFamily.get(family) ?? []), i]);
+    const counted = item.offhand === true && family === "Weapon" ? "OffHand" : family;
+    if (counted !== undefined) perFamily.set(counted, [...(perFamily.get(counted) ?? []), i]);
   }
+
+  validateOffhandWeapons(doc, snapshot, add);
 
   for (const [slotId, indices] of perSlot) {
     const cap = slotCapacity(slotId);
@@ -2093,6 +2104,73 @@ function validateTwoHanded(
         } nothing. Remove ${offhands.map((i) => `gear[${i}]`).join(", ")}, or use a one-handed weapon.`,
     );
     return;
+  }
+}
+
+/**
+ * A weapon marked as held in the offhand, checked against `GearData.isUsableBy`.
+ *
+ * Errors rather than warnings, for the reason `validateTwoHanded` gives: each case is an item the
+ * engine would otherwise sum and the game grants nothing for.
+ *
+ *  - the flag on a piece that is not a weapon names no hand at all;
+ *  - a weapon whose `can_dual_wield` is false is only usable from `MAINHAND`;
+ *  - a dual-wieldable one beside a mainhand that cannot be dual wielded is refused by
+ *    `DualWieldUtils.mainHandBlocksOffhandWeapon`.
+ */
+function validateOffhandWeapons(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
+  const gear = doc.gear ?? [];
+  const main = mainhandWeapon(snapshot, gear);
+
+  for (const [i, item] of gear.entries()) {
+    if (item.mirrored === true && !canMirror(snapshot, item)) {
+      add(
+        "error",
+        "mirror-not-pairable",
+        `gear[${i}].mirrored`,
+        `"${item.base}" has no second place to be worn in: only rings and weapons that can be ` +
+          `dual wielded can be worn twice. The flag is ignored.`,
+      );
+    }
+  }
+
+  // The worn pieces, so a mirrored weapon's offhand half is checked like any other.
+  for (const { item, index: i } of wornPieces(snapshot, gear)) {
+    if (item.offhand !== true) continue;
+    const slotId = baseGearType(snapshot, item.base)?.gearSlot;
+    const family = slotId === undefined ? undefined : slotFamily(snapshot, slotId);
+
+    if (family !== "Weapon") {
+      // A shield or tome is an offhand already, so the flag says nothing new.
+      if (family === "OffHand") continue;
+      add(
+        "error",
+        "offhand-not-a-weapon",
+        `gear[${i}].offhand`,
+        `"${item.base}" is not a weapon, so it cannot be held in the offhand.`,
+      );
+      continue;
+    }
+    if (!dualWieldable(snapshot, item.base)) {
+      add(
+        "error",
+        "offhand-weapon-not-dual-wieldable",
+        `gear[${i}].offhand`,
+        `"${item.base}" cannot be dual wielded (its weapon type has \`can_dual_wield: false\`), so ` +
+          `GearData.isUsableBy only accepts it in the mainhand and it grants nothing from the offhand.`,
+      );
+      continue;
+    }
+    if (main !== undefined && blocksOffhandWeapon(snapshot, main.base)) {
+      add(
+        "error",
+        "offhand-weapon-blocked",
+        `gear[${i}].offhand`,
+        `The mainhand "${main.base}" cannot be dual wielded, and ` +
+          `DualWieldUtils.mainHandBlocksOffhandWeapon then refuses the offhand weapon, so ` +
+          `"${item.base}" grants nothing.`,
+      );
+    }
   }
 }
 

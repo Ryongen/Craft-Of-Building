@@ -13,6 +13,7 @@
  */
 
 import {
+  ATTACKER_PROFILES,
   CATEGORY,
   FOOD_BUFF_SLOTS,
   SINGLE_ELEMENTS,
@@ -25,15 +26,19 @@ import {
   buildTargetEnemy,
   targetPreset,
   type EnemySetup,
+  type MobOffence,
   type FoodBuffSetup,
   type FoodBuffSlot,
   type TargetPreset,
 } from "@cte2/schema";
 import {
   IN_COMBAT_REGEN_MULTI_KEY,
+  MAX_BASIC_ATTACKS_PER_SECOND,
+  ORIGINAL_MODE,
   inCombatRegenMultiOf,
   mobAffix,
   mobAffixIds,
+  mobHitSize,
 } from "@cte2/engine";
 
 /**
@@ -156,11 +161,26 @@ function EnemySection(): ReactNode {
   const doc = useBuild((s) => s.doc);
   const setEnemy = useBuild((s) => s.setEnemy);
   const applyTargetPreset = useBuild((s) => s.applyTargetPreset);
+  const applyAttackerProfile = useBuild((s) => s.applyAttackerProfile);
+  const clearAttackerProfile = useBuild((s) => s.clearAttackerProfile);
   const world = useWorld();
   const enemy = doc.config?.enemy ?? {};
   const preset = doc.config?.targetPreset;
 
   const patch = (next: Patch<EnemySetup>): void => setEnemy(applyPatch(enemy, next));
+
+  // The derived half shown beside the two typed fields, so the x25.75 is visible rather than a
+  // surprise three tabs away. `undefined` until an attack damage is stated.
+  const incomingHit = useMemo(
+    () =>
+      mobHitSize(
+        world.snapshot,
+        enemy.offence,
+        enemy.level ?? doc.character.level,
+        ORIGINAL_MODE,
+      ),
+    [world.snapshot, enemy.offence, enemy.level, doc.character.level],
+  );
 
   const affixes = useMemo(
     () => mobAffixIds(world.snapshot).flatMap((id) => mobAffix(world.snapshot, id) ?? []),
@@ -170,6 +190,19 @@ function EnemySection(): ReactNode {
     const held = enemy.affixes ?? [];
     const next = held.includes(id) ? held.filter((x) => x !== id) : [...held, id];
     patch({ affixes: next.length > 0 ? next : undefined });
+  };
+
+  // `offence` is a nested block, so a patch has to rebuild it rather than merge into `enemy`.
+  // An undefined field is dropped outright: unset means unstated everywhere downstream, and a 0
+  // left behind would read as "this mob hits for nothing" instead.
+  const patchOffence = (next: Record<string, number | undefined>): void => {
+    const merged: Record<string, unknown> = { ...(enemy.offence ?? {}), ...next };
+    for (const key of Object.keys(merged)) {
+      if (merged[key] === undefined) delete merged[key];
+    }
+    patch({
+      offence: Object.keys(merged).length === 0 ? undefined : (merged as MobOffence),
+    });
   };
 
   const setResist = (guid: string, value: number): void => {
@@ -293,6 +326,106 @@ function EnemySection(): ReactNode {
             />
           </div>
         </div>
+
+        {/* What the mob swings with. Two fields and not four, because everything between the
+            vanilla attribute and the number the mitigation layers see is derived: the compat
+            terms, the server's `vanilla_mob_dmg_as_exile_dmg`, and the `MOB_DAMAGE_SCALING`
+            curve — x25.75 at level 100 on this pack. Neither field can be derived:
+            `mmorpg_entity` carries `dmg_multi` and no attack damage, and `MobStatUtils` gives a
+            mob accuracy and nothing else. So a preset cannot fill these and does not try; an
+            attacker profile is the explicit second click. */}
+        <div className="section-title">
+          Its hit{" "}
+          <span className="faint text-sm" style={{ fontWeight: "normal" }}>
+            what it swings with, and how often
+          </span>
+        </div>
+        <div className="row wrap gap-5">
+          {ATTACKER_PROFILES.map((profile) => (
+            <button
+              key={profile.id}
+              type="button"
+              className={doc.config?.attackerProfile === profile.id ? "preset on" : "preset"}
+              title={profile.citation}
+              onClick={() => applyAttackerProfile(profile.id)}
+            >
+              {profile.name}
+            </button>
+          ))}
+          {(enemy.offence?.vanillaAttackDamage !== undefined ||
+            enemy.offence?.attacksPerSecond !== undefined) && (
+            <button type="button" className="preset" onClick={() => clearAttackerProfile()}>
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="row wrap gap-8 mt-3">
+          <div className="field">
+            <label>Attack damage</label>
+            <NumberField
+              value={enemy.offence?.vanillaAttackDamage ?? 0}
+              min={0}
+              width={62}
+              onChange={(value) =>
+                patchOffence({ vanillaAttackDamage: value > 0 ? value : undefined })
+              }
+            />
+          </div>
+          <div className="field">
+            <label>Attacks / sec</label>
+            <NumberField
+              value={enemy.offence?.attacksPerSecond ?? 0}
+              min={0}
+              max={MAX_BASIC_ATTACKS_PER_SECOND}
+              width={62}
+              onChange={(value) =>
+                patchOffence({ attacksPerSecond: value > 0 ? value : undefined })
+              }
+            />
+          </div>
+          {incomingHit !== undefined && (
+            <div className="field">
+              <label>Raw per hit</label>
+              <div className="mono" style={{ paddingTop: 4 }}>
+                {Math.round(incomingHit.raw).toLocaleString()}
+              </div>
+            </div>
+          )}
+        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-3">
+            This is the mob's Minecraft attack damage, before the game scales it. Craft to Exile 2
+            multiplies it heavily with level — at level 100 a hit is about 26 times what it looks
+            like here — so the raw number beside it is the one your defences actually face.
+            Leaving both blank is fine; the Defence tab then tells you the size of a single hit
+            you survive, and stays quiet about how long you last.
+          </div>
+          <div className="faint text-sm mt-2">
+            These profiles land closer together than you would expect, and that is the game, not a
+            rounding error: a mob's own attack damage counts for a third of a percent against a
+            flat bonus every mob gets, so a zombie and a vindicator hit within one percent of each
+            other. What really differs between them is how fast they swing — and what really makes
+            a hit hurt is the mob's affixes, above.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-3">
+            <code>EntityData.mobBasicAttack</code> is{" "}
+            <code>
+              ((getAmount() * mobPercentBonusDamage / 100) + mobFlatDmg) *
+              vanilla_mob_dmg_as_exile_dmg
+            </code>
+            , then <code>StatScaling.MOB_DAMAGE.scale(num, level)</code>{" "}
+            <em>last</em> — {"1 + 0.25 * (lvl - 1)"} on this pack's <code>original_balance</code>,
+            so x25.75 at level 100. Only <code>getAmount()</code> is typed here: it is the vanilla{" "}
+            <code>generic.attack_damage</code>, and no file in the install names it.{" "}
+            <code>BASIC_ATTACK_COOLDOWN_ID</code> is 5 ticks, so the rate caps at{" "}
+            {MAX_BASIC_ATTACKS_PER_SECOND}/s. Read from{" "}
+            <code>Mine_and_Slash-1.20.1-6.4.13.jar</code>.
+          </div>
+        </Tech>
+        </>
 
         {/* Mob affixes. Stated as ids rather than as the numbers they come to, which is the
             whole point of them: every field above is somebody's guess at a mob, and an affix is

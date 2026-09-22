@@ -47,6 +47,11 @@ export type ComparePosition = {
   againstIndex: number | undefined;
   /** The one position the item itself is already in. */
   worn: boolean;
+  /**
+   * The document this choice produces, when the gear panel built it — through `applyMove`, the
+   * same function the click runs. Absent, the card falls back to {@link docWithSwap}.
+   */
+  candidate?: BuildDoc;
 };
 
 type ItemCompareState = {

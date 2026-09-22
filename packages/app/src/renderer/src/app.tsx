@@ -24,6 +24,7 @@ import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
 import { useTechnical } from "./ui/detail-mode.js";
 import { resolveHint, type Hint } from "./ui/copy/hint.js";
+import raiden from "./assets/raiden.png";
 
 /*
  * The panels load on first visit rather than at boot.
@@ -55,9 +56,10 @@ const EPILOGUE_TITLE = {
     "this.",
 } satisfies Hint;
 
-const TECHNICAL_TITLE =
-  "Hover text names the stat behind each figure instead of describing it - the wording to "
-  + "read a number with, not to plan with. Off by default.";
+/*
+ * No title on the technical toggle on purpose: it is a picture rather than a checkbox so nobody
+ * is invited to click it, and a hover saying what it does would undo that.
+ */
 
 const CalcsPanel = lazy(() => import("./panels/stats/CalcsPanel.js").then((m) => ({ default: m.CalcsPanel })));
 const ConfigPanel = lazy(() => import("./panels/config/ConfigPanel.js").then((m) => ({ default: m.ConfigPanel })));
@@ -121,20 +123,28 @@ const TABS = [
   // Between Config and Capture on purpose: it is the reference screen you go and look something
   // up on, not one of the screens you build on, and the three reference tabs now sit together.
   { id: "stats", label: "Stats", icon: "mmorpg:textures/gui/main_hub/icons/stats.png" },
+  // Capture and Diagnostics only show with the technical toggle on: they are for chasing a
+  // number back to the game, not for planning a character.
   {
     id: "capture",
     label: "Capture",
     icon: "mmorpg:textures/gui/stat_gui/info_button_icons/current_value.png",
+    technical: true,
   },
   {
     id: "diagnostics",
     label: "Diagnostics",
     icon: "mmorpg:textures/gui/main_hub/exclamation_mark.png",
+    technical: true,
   },
   { id: "data", label: "Data", icon: "mmorpg:textures/gui/main_hub/icons/wiki.png" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+function isTechnicalTab(id: TabId): boolean {
+  return TABS.some((t) => t.id === id && "technical" in t);
+}
 
 export function App(): ReactNode {
   const [tab, setTab] = useState<TabId>("tree");
@@ -146,6 +156,20 @@ export function App(): ReactNode {
   const [breakdownHeight, setBreakdownHeight] = useState(320);
   const [sheetOpen, setSheetOpen] = useState(true);
   const [technical, setTechnical] = useTechnical();
+
+  // Going to a technical tab turns technical on, so the tab strip always shows the tab you are
+  // on; turning it off while on one goes back to the tree rather than leaving a hidden tab open.
+  const goTo = useCallback(
+    (id: TabId) => {
+      if (isTechnicalTab(id)) setTechnical(true);
+      setTab(id);
+    },
+    [setTechnical],
+  );
+  const toggleTechnical = useCallback(() => {
+    if (technical && isTechnicalTab(tab)) setTab("tree");
+    setTechnical(!technical);
+  }, [technical, tab, setTechnical]);
   const world = useWorld();
   const derived = useDerived();
 
@@ -242,7 +266,7 @@ export function App(): ReactNode {
     return window.cte2.onMenuCommand((command) => {
       if (command.startsWith("tab:")) {
         const id = command.slice(4) as TabId;
-        if (TABS.some((t) => t.id === id)) setTab(id);
+        if (TABS.some((t) => t.id === id)) goTo(id);
         return;
       }
       if (command.startsWith("open-at:")) {
@@ -265,7 +289,7 @@ export function App(): ReactNode {
         case "clear-baseline": clearBaseline(); return;
       }
     });
-  }, [openAt, startNew, open, save, copyJson, undo, redo, pinBaseline, clearBaseline]);
+  }, [openAt, startNew, open, save, copyJson, undo, redo, pinBaseline, clearBaseline, goTo]);
 
   // Restore the last session before the first autosave can overwrite it. A planner that
   // forgets what you were doing when you close it is a planner you stop using; `New` is there
@@ -319,7 +343,7 @@ export function App(): ReactNode {
   return (
     <div className="app">
       <div className="topbar">
-        <span className="title">CTE2 Build Planner</span>
+        <span className="title">Craft of Building</span>
 
         <div className="field">
           <label>Name</label>
@@ -464,7 +488,7 @@ export function App(): ReactNode {
       <div className={`body${sheetOpen ? "" : " no-sheet"}`}>
         <div className="main-pane">
           <div className="tabs">
-            {TABS.map((entry) => (
+            {TABS.filter((entry) => technical || !("technical" in entry)).map((entry) => (
               <button
                 key={entry.id}
                 className={tab === entry.id ? "active" : ""}
@@ -512,22 +536,24 @@ export function App(): ReactNode {
             )}
 
             {/*
-              Whether the hover text explains the number or explains where it came from.
+              Whether the hover text explains the number or explains where it came from, and
+              whether the Capture and Diagnostics tabs show.
 
               Most of this app's hints were written during the port and name the stat they read
               rather than the thing it means. That wording is how you audit a figure and noise
               when you are building a character, so both exist and this picks - see
-              `ui/detail-mode.ts`. Beside Stage because it is the same rank of question: not what
-              am I looking at, but how much of it do I want said.
+              `ui/detail-mode.ts`. A picture rather than a labelled checkbox so it reads as
+              decoration and players leave it alone; whoever needs it knows where it is.
             */}
-            <label className="tab-stage" title={TECHNICAL_TITLE}>
-              <input
-                type="checkbox"
-                checked={technical}
-                onChange={(event) => setTechnical(event.target.checked)}
-              />
-              <span>Technical</span>
-            </label>
+            <button
+              type="button"
+              className={`technical-toggle${technical ? " on" : ""}`}
+              aria-pressed={technical}
+              aria-label="Technical"
+              onClick={toggleTechnical}
+            >
+              <img src={raiden} alt="" draggable={false} />
+            </button>
           </div>
 
           {/*
@@ -592,7 +618,7 @@ export function App(): ReactNode {
           screen: a capture that agrees with the game is the strongest statement this app can
           make, and a build nobody has captured should not borrow it.
         */}
-        <CaptureStatus onOpenCapture={() => setTab("capture")} />
+        <CaptureStatus onOpenCapture={() => goTo("capture")} />
       </div>
     </div>
   );

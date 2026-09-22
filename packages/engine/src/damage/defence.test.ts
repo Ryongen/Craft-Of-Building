@@ -11,7 +11,16 @@ import test from "node:test";
 
 import type { BuildDoc } from "@cte2/schema";
 
-import { baseStats, closeTo, engineSnapshot, exact, statEntry } from "../test-support.js";
+import {
+  baseStats,
+  closeTo,
+  condition,
+  engineSnapshot,
+  exact,
+  spellEntry,
+  statEntry,
+  valueCalcEntry,
+} from "../test-support.js";
 import { defence } from "./defence.js";
 
 /**
@@ -341,4 +350,209 @@ test("the attacker's accuracy is taken off your dodge, and its penetration off y
   // mitigates as 25 would.
   closeTo(fire(bare).taken, 0.5);
   closeTo(fire(withAttacker({ penetration: { fire: 25 } })).taken, 0.75);
+});
+
+test("the second hit is not answered until a document states one", () => {
+  // The property the whole incoming model rests on. Unset is the state every existing document,
+  // capture and fixture is in, so nothing about them can move — and the reason is reported
+  // rather than left as a blank card, naming both fields because filling in one alone still
+  // produces nothing.
+  const none = character({ health: 1000 });
+  assert.equal(none.overTime, undefined);
+  assert.ok(none.diagnostics.some((d) => d.code === "incoming-hit-unstated"));
+
+  const halfStated = character(
+    { health: 1000 },
+    { config: { enemy: { level: 1, offence: { vanillaAttackDamage: 3 } } } } as Partial<BuildDoc>,
+  );
+  assert.equal(halfStated.overTime, undefined, "a hit with no clock is still no answer");
+
+  const rateOnly = character(
+    { health: 1000 },
+    { config: { enemy: { level: 1, offence: { attacksPerSecond: 1 } } } } as Partial<BuildDoc>,
+  );
+  assert.equal(rateOnly.overTime, undefined, "a clock with no hit is no answer either");
+});
+
+test("a stated attacker gives the drain, the sustain and the hits survived", () => {
+  // A zombie's 3.0 at level 1 is `(3 * 0.33 / 100) + 6 = 6.0099` raw, and the curve is the
+  // identity at level 1. With no armour and no resists the whole of it arrives, so the
+  // arithmetic on screen is the arithmetic here.
+  const result = character(
+    { health: 1000 },
+    {
+      config: {
+        enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond: 1 } },
+      },
+    } as Partial<BuildDoc>,
+  );
+
+  const over = result.overTime;
+  assert.ok(over !== undefined, "both halves stated, so there is an answer");
+  closeTo(over.ratePerSecond, 1);
+  closeTo(over.rawPerHit, 6.0099);
+
+  const physical = over.byElement.find((e) => e.element === "Physical")!;
+  closeTo(physical.perHit, 6.0099, "nothing mitigates it on a bare sheet");
+  closeTo(physical.perSecond, 6.0099, "one swing a second");
+
+  // No regeneration on this sheet, so the net loss is the whole drain and the pool is the 1000
+  // health. `selfSustain` does this walk; this pins that the two are wired together rather than
+  // that it works, which `self-sustain.test.ts` already covers.
+  closeTo(physical.sustain.netLossPerSecond, 6.0099);
+  closeTo(physical.sustain.secondsToDeath, 1000 / 6.0099);
+  closeTo(physical.hitsSurvived, 1000 / 6.0099, "at one swing a second the two are the same number");
+});
+
+test("the rate multiplies the drain but not the hit, and mitigation applies to both", () => {
+  const of = (attacksPerSecond: number, armor = 0) =>
+    character(
+      { health: 1000, armor },
+      {
+        config: {
+          enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond } },
+        },
+      } as Partial<BuildDoc>,
+    ).overTime!.byElement.find((e) => e.element === "Physical")!;
+
+  const once = of(1);
+  const twice = of(2);
+  closeTo(twice.perHit, once.perHit, "a faster mob does not hit harder");
+  closeTo(twice.perSecond, once.perSecond * 2);
+  closeTo(twice.hitsSurvived, once.hitsSurvived, "twice as fast, half as long, same hit count");
+
+  // 100 armour at level 1 is exactly half mitigation — the same figure the eHP tests use — so
+  // the drain halves and the hits survived double.
+  const armoured = of(1, 100);
+  closeTo(armoured.perHit, once.perHit / 2);
+  closeTo(armoured.hitsSurvived, once.hitsSurvived * 2);
+});
+
+/** A sheet carrying a `Target`-side `proc_spell` — "when you are hit, cast this". */
+function defensiveProcSnapshot(ifs: string[] = ["random_roll"]) {
+  return engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: {
+      quake: spellEntry("quake", "Physical", "hit100", {
+        config: {
+          tags: { tags: [] },
+          use_support_gems_from: "",
+          cooldown_ticks: 0,
+          cast_time_ticks: 20,
+          proc_cooldown_ticks: 20,
+        },
+      }),
+    },
+    mmorpg_stat: {
+      proc_quake_when_hit: statEntry("proc_quake_when_hit", {
+        effect: [
+          {
+            effects: ["proc_spell_quake"],
+            events: ["on_damage"],
+            ifs,
+            order: "final_damage",
+            side: "Target",
+          },
+        ],
+      }),
+    },
+    mmorpg_stat_effect: {
+      proc_spell_quake: { id: "proc_spell_quake", ser: "proc_spell", spellId: "quake", pos: "CASTER" },
+    },
+    mmorpg_stat_condition: { random_roll: condition("random_roll", "random_roll") },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("health", "FLAT", 1000),
+        exact("proc_quake_when_hit", "FLAT", 50),
+      ]),
+    },
+  });
+}
+
+test("a defensive proc gets a real rate once the document says how often you are hit", () => {
+  // `proc_quake_when_hit` is a `Target`-side block: the enemy's hit on *you* is what triggers it,
+  // so its chance has always fallen out of the sweep and only its rate was missing. That is the
+  // whole of what `when-hit` meant.
+  const snapshot = defensiveProcSnapshot();
+  const doc = (offence: Record<string, number>) =>
+    ({
+      schemaVersion: 1,
+      character: { level: 1 },
+      config: { enemy: { level: 1, offence } },
+    }) as BuildDoc;
+
+  const unstated = defence(doc({}), snapshot, { hitSize: 1000, newbieResists: false });
+  assert.equal(unstated.overTime, undefined, "no attacker, no rate, no answer");
+
+  const stated = defence(
+    doc({ vanillaAttackDamage: 3, attacksPerSecond: 2 }),
+    snapshot,
+    { hitSize: 1000, newbieResists: false },
+  );
+  const proc = stated.overTime!.procs.find((p) => p.spellId === "quake");
+  assert.ok(proc !== undefined, "the sweep reached the block and the rate resolved it");
+  assert.equal(proc.limit, undefined, "no longer limited — it has a clock now");
+  closeTo(proc.triggersPerSecond, 2, "the enemy's swings, not yours");
+  closeTo(proc.chance, 0.5);
+  closeTo(proc.perSecond, 1, "two hits a second at a 50% roll");
+});
+
+test("a proc gated on the block or the dodge stays unrated, and says why", () => {
+  // The avoidance branch is a third clock. Block, dodge and spell dodge are folded into one
+  // avoidance outcome by the sweep, and separating them would mean re-deriving the `DodgeRating`
+  // and `SpellDodgeEffect` curves inside the defence pass — against the premise that nothing
+  // here re-derives what the sweep already answered. So it keeps its reason rather than taking
+  // a rate that would silently be the wrong one.
+  const snapshot = defensiveProcSnapshot(["random_roll", "is_is_blocked_true"]);
+  const stated = defence(
+    {
+      schemaVersion: 1,
+      character: { level: 1 },
+      config: { enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond: 2 } } },
+    } as BuildDoc,
+    snapshot,
+    { hitSize: 1000, newbieResists: false },
+  );
+
+  const proc = stated.overTime!.procs.find((p) => p.spellId === "quake");
+  assert.ok(proc !== undefined, "still listed — a proc you cannot rate is not a proc you hide");
+  assert.equal(proc.limit, "when-hit");
+  closeTo(proc.perSecond, 0);
+});
+
+test("a receive chance on your own sheet means the enemy's hit bleeds you", () => {
+  // The defensive half of `AilmentReceiveChance`, and the reason `corporeal_respite` is a
+  // trade rather than a free 50% physical damage reduction: it grants the *player* 100% bleed
+  // receive chance. A bare mob rolls no `bleed_chance` of its own, so before this every figure
+  // said that effect cost nothing at all.
+  const snapshot = engineSnapshot({
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("health", "FLAT", 1000),
+        exact("bleed_receive_chance", "FLAT", 100),
+      ]),
+    },
+  });
+  const doc = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    config: { enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond: 1 } } },
+  } as BuildDoc;
+
+  const bled = defence(doc, snapshot, { hitSize: 1000, newbieResists: false }).overTime!.ailments;
+  const bleed = bled.find((a) => a.ailment === "bleed");
+  assert.ok(bleed !== undefined, "the hit is physical and you take bleed at 100%");
+  closeTo(bleed.chance, 1);
+  assert.ok(bleed.damagePerSecond > 0, "a bleed that ticks for nothing would not be a cost");
+
+  // Without the stat there is nothing: the attacker has no ailment chance of its own.
+  const clean = engineSnapshot({
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [exact("health", "FLAT", 1000)]),
+    },
+  });
+  assert.deepEqual(
+    defence(doc, clean, { hitSize: 1000, newbieResists: false }).overTime!.ailments,
+    [],
+  );
 });

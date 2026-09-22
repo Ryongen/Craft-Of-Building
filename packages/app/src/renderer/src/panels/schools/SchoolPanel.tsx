@@ -46,10 +46,12 @@ import {
   levelNeededForNextPerkLevel,
   perk,
   perkPointType,
+  pointsSpentInSchool,
   pointsAvailable,
   pointsPerLevel,
   schoolPerksInOrder,
   schoolPointsSpent,
+  schoolsByPointsSpent,
   spellName,
   spellOfPerk,
   spellSchool,
@@ -117,15 +119,34 @@ export function SchoolPanel(): ReactNode {
   const allocated = doc.character.schools ?? {};
   const mine = useMemo(() => allocatedSchools(snapshot, doc), [snapshot, doc]);
 
-  // The game opens on the player's own class rather than whatever is first in the database
-  // (`pickDefaultSchool` in `init()`), so this does too.
-  const [selected, setSelected] = useState<string | null>(null);
-  const current = selected ?? mine[0] ?? schoolIds[0] ?? null;
+  /*
+    Two grids side by side, because this pack gives you two classes.
 
-  const view = useMemo(
-    () => (current === null ? undefined : spellSchool(snapshot, current)),
-    [snapshot, current],
-  );
+    The screen this port came from shows one school at a time, which is right for a game where
+    the other one is a click away and the numbers are on a different screen anyway. Planning is
+    the other shape: what you are deciding is how to split one pool of points between two trees,
+    and a layout that can only show one of them at a time makes that a memory exercise. The
+    window is wide enough for both — ten columns is about 480px — so the space that used to sit
+    empty on the right now holds the other half of the answer.
+
+    **The left pane is your main class and does not move.** Which one that is, is decided by
+    points spent (`schoolsByPointsSpent`) rather than remembered, so there is no extra state to
+    keep, nothing to go stale in a saved build, and no way for the two panes to disagree about
+    which class you are playing. The right pane is the one that changes: it starts as your second
+    class and the tab strip repoints it, so browsing a class you have not taken never costs you
+    sight of the one you have.
+  */
+  const ranked = useMemo(() => schoolsByPointsSpent(snapshot, doc), [snapshot, doc]);
+  const pinned = ranked[0] ?? null;
+
+  const [selected, setSelected] = useState<string | null>(null);
+  // Never the same school twice: if the pane you were browsing overtakes the pinned one and
+  // becomes the main class, the right pane falls back to the other one rather than duplicating it.
+  const browsing =
+    (selected !== null && selected !== pinned ? selected : null) ??
+    ranked[1] ??
+    schoolIds.find((id) => id !== pinned) ??
+    null;
 
   const spent = useMemo(() => schoolPointsSpent(snapshot, doc), [snapshot, doc]);
   const spellsPerLevel = useMemo(() => pointsPerLevel(snapshot, "SPELLS"), [snapshot]);
@@ -220,18 +241,25 @@ export function SchoolPanel(): ReactNode {
         </>
       )}
 
+      {/* The strip points the right-hand pane. The pinned class appears in it as a place
+          marker rather than a target: selecting the pane it is already in would either
+          duplicate it or move it, and neither is what the click means. */}
       <div className="school-tabs">
         {schoolIds.map((id) => {
           const isMine = mine.includes(id);
+          const isPinned = id === pinned;
           const locked = !isMine && mine.length >= MAX_SCHOOLS;
           return (
             <button
               key={id}
-              className={`school-tab${current === id ? " active" : ""}${isMine ? " mine" : ""}`}
+              className={`school-tab${browsing === id ? " active" : ""}${isMine ? " mine" : ""}${isPinned ? " pinned" : ""}`}
+              disabled={isPinned}
               title={
-                locked
-                  ? "You already have two classes. The game refuses a third: MAX_2_CLASSES."
-                  : undefined
+                isPinned
+                  ? "Your main class — the one with the most points in it. It stays on the left."
+                  : locked
+                    ? "You already have two classes. The game refuses a third: MAX_2_CLASSES."
+                    : undefined
               }
               onClick={() => setSelected(id)}
             >
@@ -241,25 +269,39 @@ export function SchoolPanel(): ReactNode {
                 alt=""
               />
               <span>{text(snapshot, `mmorpg.asc_class.${id}`) ?? id}</span>
-              {locked && <span className="faint"> 🔒</span>}
+              {isPinned && <span className="faint"> ◀</span>}
+              {locked && !isPinned && <span className="faint"> 🔒</span>}
             </button>
           );
         })}
       </div>
 
-      {view === undefined ? (
-        <div className="notice">No such school in this snapshot.</div>
-      ) : (
-        <SchoolGrid
-          view={view}
-          allocated={allocated}
-          level={doc.character.level}
-          spellsPerLevel={spellsPerLevel}
-          free={free}
-          blockedByClassLimit={!mine.includes(view.id) && mine.length >= MAX_SCHOOLS}
-          onChange={setSchoolPerk}
-        />
-      )}
+      <div className="school-panes">
+        {pinned !== null && (
+          <SchoolPane
+            id={pinned}
+            role="Main class"
+            allocated={allocated}
+            level={doc.character.level}
+            spellsPerLevel={spellsPerLevel}
+            free={free}
+            blockedByClassLimit={false}
+            onChange={setSchoolPerk}
+          />
+        )}
+        {browsing !== null && (
+          <SchoolPane
+            id={browsing}
+            role={mine.includes(browsing) ? "Second class" : "Browsing"}
+            allocated={allocated}
+            level={doc.character.level}
+            spellsPerLevel={spellsPerLevel}
+            free={free}
+            blockedByClassLimit={!mine.includes(browsing) && mine.length >= MAX_SCHOOLS}
+            onChange={setSchoolPerk}
+          />
+        )}
+      </div>
 
       {spells.size > 0 && (
         <div className="faint text-sm mt-5" style={{ lineHeight: 1.6 }}>
@@ -284,6 +326,74 @@ export function SchoolPanel(): ReactNode {
             separately.
           </Tech>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One class, with its own heading.
+ *
+ * The heading is what tells the two panes apart at a glance, and it says the two things the
+ * split is made of: which class it is, and how many points are in it — which is also the rule
+ * that decides which side it is on. Reading the count off `pointsSpentInSchool` rather than
+ * passing it down means the label and the ordering cannot come from two different sums.
+ */
+function SchoolPane({
+  id,
+  role,
+  allocated,
+  level,
+  spellsPerLevel,
+  free,
+  blockedByClassLimit,
+  onChange,
+}: {
+  id: string;
+  /** What this pane is, in the player's terms: the main class, the second, or one being looked at. */
+  role: string;
+  allocated: Record<string, number>;
+  level: number;
+  spellsPerLevel: number;
+  free: { SPELLS: number; PASSIVES: number };
+  blockedByClassLimit: boolean;
+  onChange: (perkId: string, level: number) => void;
+}): ReactNode {
+  const { snapshot, icon } = useWorld();
+  const doc = useBuild((s) => s.doc);
+
+  const view = useMemo(() => spellSchool(snapshot, id), [snapshot, id]);
+  const spent = useMemo(() => pointsSpentInSchool(snapshot, doc, id), [snapshot, doc, id]);
+  const name = text(snapshot, `mmorpg.asc_class.${id}`) ?? id;
+
+  return (
+    <div className="school-pane">
+      <div className="school-pane-head">
+        <img
+          className="school-tab-icon"
+          src={icon(`mmorpg:textures/gui/asc_classes/class/${id}.png`) ?? undefined}
+          alt=""
+        />
+        <strong>{name}</strong>
+        <span className="faint text-sm">{role}</span>
+        <span className="grow" />
+        <span className="faint text-sm" title="Perk levels allocated in this class, both pools">
+          {spent} point{spent === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {view === undefined ? (
+        <div className="notice">No such school in this snapshot.</div>
+      ) : (
+        <SchoolGrid
+          view={view}
+          allocated={allocated}
+          level={level}
+          spellsPerLevel={spellsPerLevel}
+          free={free}
+          blockedByClassLimit={blockedByClassLimit}
+          onChange={onChange}
+        />
       )}
     </div>
   );

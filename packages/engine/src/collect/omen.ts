@@ -43,7 +43,7 @@
  */
 
 import type { BuildDoc } from "@cte2/schema";
-import { affix, countOmenPieces, omen, omenBuckets } from "@cte2/schema";
+import { affix, countOmenPieces, omen, omenBuckets, wornItems } from "@cte2/schema";
 
 import { context, type Env, type StatContext } from "../context.js";
 import { parseRolledMods, rollToExact, type ExactMod } from "../modifier.js";
@@ -60,7 +60,7 @@ export function collectOmen(env: Env, build: BuildDoc): StatContext[] {
 
   // `recalcGears` never looks at the mainhand, and filters on `isUsableBy` — both are handled
   // inside `countOmenPieces`, which is the port of `OmenData.calcPiecesEquipped`.
-  const filled = countOmenPieces(env.snapshot, build.gear ?? [], setup, build.character.level);
+  const filled = countOmenPieces(env.snapshot, wornItems(env.snapshot, build.gear ?? []), setup, build.character.level);
   const buckets = omenBuckets(env.snapshot, setup);
 
   const stats: ExactMod[] = [];

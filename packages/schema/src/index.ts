@@ -55,13 +55,15 @@ export {
 export type { StageContent } from "./stages.js";
 
 export {
+  ATTACKER_PROFILES,
   TARGET_PRESETS,
+  attackerProfile,
   availableRarities,
   buildTargetEnemy,
   isTargetPresetId,
   targetPreset,
 } from "./target-presets.js";
-export type { TargetPreset, TargetPresetId } from "./target-presets.js";
+export type { AttackerProfile, TargetPreset, TargetPresetId } from "./target-presets.js";
 
 export {
   ELEMENTS,
@@ -136,6 +138,17 @@ export {
   attributeName,
   enchantName,
   isTwoHanded,
+  blocksOffhandWeapon,
+  dualWieldable,
+  isDualWielding,
+  isMainhandWeapon,
+  mainhandWeapon,
+  offhandWeaponCounts,
+  offhandWeaponShare,
+  canMirror,
+  wornItems,
+  wornPieces,
+  DEFAULT_OFFHAND_WEAPON_STAT_PERCENT,
   maxQuality,
   slotCapacity,
   slotFamilyCapacity,
@@ -164,6 +177,7 @@ export {
 } from "./queries.js";
 export type {
   AffixType,
+  WornPiece,
   AffixView,
   BaseGearTypeView,
   EnchantCompatView,
@@ -270,6 +284,8 @@ export {
   statNameIndex,
 } from "./import-item.js";
 export type { ImportIssue, ImportResult, ImportSeverity } from "./import-item.js";
+export { KIND_LABEL, importPaste } from "./import-paste.js";
+export type { ImportedThing, PasteResult } from "./import-paste.js";
 
 export {
   isDeprecatedSpell,
@@ -294,9 +310,11 @@ export {
   learnedSpells,
   levelNeededForNextPerkLevel,
   perkPointType,
+  pointsSpentInSchool,
   schoolOfPerk,
   schoolPerksInOrder,
   schoolPointsSpent,
+  schoolsByPointsSpent,
   spellOfPerk,
   spellSchool,
   spellSchoolIds,

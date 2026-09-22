@@ -6,11 +6,11 @@ issueTrackerURL="https://github.com/Ryongen/cte2-pob/issues"
 [[mods]]
 modId="${mod_id}"
 version="${mod_version}"
-displayName="CTE2 PoB Exporter"
-authors="cte2-pob"
+displayName="Craft of Building Exporter"
+authors="Ryongen"
 description='''
 Exports the character you are playing - level, allocations, gear, gems, auras - together with
-the stat sheet the game itself calculated for it, as one JSON file that the cte2-pob engine
+the stat sheet the game itself calculated for it, as one JSON file that the Craft of Building planner
 reads as a ground-truth fixture.
 
 Client side only. It reads data the server has already sent your client in order to draw your

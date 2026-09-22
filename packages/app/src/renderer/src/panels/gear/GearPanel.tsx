@@ -39,13 +39,19 @@ import {
   omenMinLevel,
   omenName,
   gearTypeName,
+  canMirror,
+  dualWieldable,
   isTwoHanded,
   itemName,
+  offhandWeaponShare,
   slotFamily,
   slotName,
   unique as uniqueView,
   uniqueName,
   uniqueRarityId,
+  wornItems,
+  wornPieces,
+  type BuildDoc,
   type Diagnostic,
   type Item,
 } from "@cte2/schema";
@@ -64,9 +70,11 @@ import { createPortal } from "react-dom";
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
-import { docWithSwap, useItemCompare, type ComparePosition } from "../../state/item-compare.js";
+import { applyMove, benched, type Arrival, type Move, type WornAt } from "../../state/gear-moves.js";
+import { useItemCompare, type ComparePosition } from "../../state/item-compare.js";
 import { useWorld } from "../../state/snapshot.js";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
+import { CopyJsonButton } from "../../ui/CopyJsonButton.js";
 import { GearIcon } from "../../ui/GearIcon.js";
 import { ItemDiffCard } from "../../ui/ItemDiffCard.js";
 import { ItemWindow, useItemTooltip } from "../../ui/ItemTooltip.js";
@@ -121,6 +129,20 @@ type ItemRef = { where: "gear" | "pool"; index: number };
 function sameRef(a: ItemRef | null, b: ItemRef): boolean {
   return a !== null && a.where === b.where && a.index === b.index;
 }
+
+/**
+ * One choice in a slot's list: a benched piece, or something already worn, worn here as well.
+ *
+ * The second kind is how two of one unique are tried on — both rings, or the mainhand sword in
+ * the offhand too. It is the same item marked `mirrored`, not a copy, so editing it edits both
+ * places and taking one half off leaves the other. See `state/gear-moves.ts`.
+ */
+type SlotCandidate = {
+  key: string;
+  /** As it would be worn here: `offhand` set when it is going into the offhand. */
+  item: Item;
+  arrival: Arrival;
+};
 
 /**
  * One row of the pool: an item, where it lives, and the slot it is worn in.
@@ -196,7 +218,7 @@ export function GearPanel(): ReactNode {
   const addPoolItem = useBuild((s) => s.addPoolItem);
   const updatePoolItem = useBuild((s) => s.updatePoolItem);
   const removePoolItem = useBuild((s) => s.removePoolItem);
-  const equipPoolItem = useBuild((s) => s.equipPoolItem);
+  const moveGear = useBuild((s) => s.moveGear);
   const setOmen = useBuild((s) => s.setOmen);
   const derived = useDerived();
 
@@ -207,18 +229,25 @@ export function GearPanel(): ReactNode {
   const items = doc.gear ?? [];
   const pool = doc.itemPool ?? [];
 
-  /** Which document indices sit in each paperdoll row, and which sit in none. */
+  /**
+   * Which worn places sit in each paperdoll row, and which entries sit in none.
+   *
+   * Places rather than entries: a `mirrored` ring is one entry in two ring rows, and a mirrored
+   * sword one entry in both hands. `wornPieces` is the same expansion the engine sums over, so
+   * the paperdoll and the sheet cannot disagree about what is worn.
+   */
   const placement = useMemo(() => {
-    const byRow = new Map<string, number[]>();
+    const byRow = new Map<string, WornAt[]>();
     const unplaced: number[] = [];
 
-    for (const [index, item] of items.entries()) {
+    for (const { item, index, mirror } of wornPieces(world.snapshot, items)) {
       const row = rowFor(world.snapshot, item);
       if (row === undefined) {
-        unplaced.push(index);
+        if (!mirror) unplaced.push(index);
         continue;
       }
-      byRow.set(row.id, [...(byRow.get(row.id) ?? []), index]);
+      const at: WornAt = { index, mirror, weapon: isWeapon(world.snapshot, item) };
+      byRow.set(row.id, [...(byRow.get(row.id) ?? []), at]);
     }
     return { byRow, unplaced };
   }, [items, world.snapshot]);
@@ -230,30 +259,92 @@ export function GearPanel(): ReactNode {
    * `EquipmentSlot.OFFHAND` while one is held, so Mine and Slash reads an empty offhand and
    * sums nothing from it. Greying the row out is the honest rendering of that.
    */
-  const twoHanded = (placement.byRow.get("weapon") ?? []).some((index) => {
+  const twoHanded = (placement.byRow.get("weapon") ?? []).some(({ index }) => {
     const item = items[index];
     return item !== undefined && isTwoHanded(world.snapshot, item.base);
   });
 
   /**
-   * Put a benched item on, taking off whatever the slot has no room for.
-   *
-   * The displaced pieces go back to the bench rather than being deleted, which is the rule that
-   * makes trying things on safe: swapping one of two rings must leave you holding the other.
-   * Oldest first, so the ring worn longest is the one that comes off.
+   * The move that puts a benched piece on from the pool's own "wear" button, where no place was
+   * picked: the row's first free place, or — full — its first place, whose occupant comes off.
    */
-  const equip = (poolIndex: number): void => {
+  const equipMove = (poolIndex: number): Move | undefined => {
     const item = pool[poolIndex];
-    if (item === undefined) return;
+    if (item === undefined) return undefined;
     const row = rowFor(world.snapshot, item);
-    const occupying = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
-    const capacity = row?.capacity ?? 1;
-    // One place has to be free for the arrival, so everything past `capacity - 1` comes off.
-    const displace = occupying.slice(0, Math.max(0, occupying.length - (capacity - 1)));
-    equipPoolItem(poolIndex, displace);
-    // It arrives at the end of `gear`, which has lost `displace.length` entries on the way.
-    setEditing({ where: "gear", index: items.length - displace.length });
+    const places = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
+    const full = places.length >= (row?.capacity ?? 1);
+    return {
+      vacate: full ? places[0] : undefined,
+      put: { from: "pool", index: poolIndex, offhand: false },
+    };
   };
+
+  const perform = (move: Move): void => {
+    const { at } = applyMove(doc, move);
+    moveGear(move);
+    setEditing(at === undefined ? null : { where: "gear", index: at });
+  };
+
+  const equip = (poolIndex: number): void => {
+    const move = equipMove(poolIndex);
+    if (move !== undefined) perform(move);
+  };
+
+  /**
+   * Everything a paperdoll place could take.
+   *
+   * The benched pieces that belong in the row; for the offhand, also every benched weapon that
+   * can be dual wielded (`GearData.isUsableBy` accepts one there); and anything worn elsewhere
+   * that could be worn here **as well** — the other ring, or the mainhand sword in the offhand.
+   * That last kind is the same item, marked `mirrored`, never a copy.
+   */
+  const candidatesFor = (row: SlotRow, here: WornAt | undefined): SlotCandidate[] => {
+    const offhandRow = row.id === "offhand";
+    const out: SlotCandidate[] = [];
+
+    pool.forEach((item, index) => {
+      const offhand = offhandRow && dualWieldable(world.snapshot, item.base);
+      const fits =
+        offhand ||
+        (row.id === "weapon" && dualWieldable(world.snapshot, item.base)) ||
+        rowFor(world.snapshot, benched(item))?.id === row.id;
+      if (!fits) return;
+      out.push({
+        key: `pool:${index}`,
+        item: offhand ? { ...benched(item), offhand: true } : benched(item),
+        arrival: { from: "pool", index, offhand },
+      });
+    });
+
+    items.forEach((item, index) => {
+      if (index === here?.index || item.mirrored === true) return;
+      if (!canMirror(world.snapshot, item)) return;
+      // Where its second place would be: the other ring slot, or the other hand.
+      const second = dualWieldable(world.snapshot, item.base)
+        ? item.offhand === true
+          ? "weapon"
+          : "offhand"
+        : rowFor(world.snapshot, item)?.id;
+      if (second !== row.id) return;
+      out.push({
+        key: `mirror:${index}`,
+        item: offhandRow ? { ...benched(item), offhand: true } : benched(item),
+        arrival: { from: "mirror", index },
+      });
+    });
+    return out;
+  };
+
+  /**
+   * Put a candidate into one particular place.
+   *
+   * The place's own occupant is what comes off — not the oldest piece in the row. Picking in
+   * `Ring 2` replaces Ring 2, which is also exactly what the swap preview prices, because both
+   * go through `applyMove`.
+   */
+  const choose = (candidate: SlotCandidate, here: WornAt | undefined): void =>
+    perform({ vacate: here, put: candidate.arrival });
 
   /** A new item always lands on the bench, never straight onto the character. */
   const create = (item: Item): void => {
@@ -269,6 +360,40 @@ export function GearPanel(): ReactNode {
         : pool[editing.index];
 
   /**
+   * The document with a given version of the edited item on the character.
+   *
+   * What the socket rankings price. A worn item is replaced where it is. A benched one is priced
+   * as `equip` would put it on, displacing the same pieces — a gem in an item on the bench
+   * changes nothing at all, so "on the bench" is not a useful baseline to rank against.
+   */
+  const targetRow = target === undefined ? undefined : rowFor(world.snapshot, target);
+  // Keyed on `doc` alone, never on `items` or `placement`: `doc.gear ?? []` is a new array every
+  // render when nothing is worn, and a new function here restarts every ranking sweep reading it.
+  const wearing = useMemo(() => {
+    if (editing === null) return undefined;
+    const gear = doc.gear ?? [];
+    if (editing.where === "gear") {
+      const at = editing.index;
+      return (item: Item): BuildDoc => ({ ...doc, gear: gear.map((it, i) => (i === at ? item : it)) });
+    }
+    // The bench as `equip` would take from it, with this version of the item in its place.
+    const index = editing.index;
+    const places = wornPieces(world.snapshot, gear).filter(
+      ({ item }) => targetRow !== undefined && rowFor(world.snapshot, item)?.id === targetRow.id,
+    );
+    const full = places.length >= (targetRow?.capacity ?? 1);
+    const first = places[0];
+    const vacate: WornAt | undefined =
+      full && first !== undefined
+        ? { index: first.index, mirror: first.mirror, weapon: isWeapon(world.snapshot, first.item) }
+        : undefined;
+    return (item: Item): BuildDoc => {
+      const pool = (doc.itemPool ?? []).map((it, i) => (i === index ? item : it));
+      return applyMove({ ...doc, itemPool: pool }, { vacate, put: { from: "pool", index, offhand: false } }).doc;
+    };
+  }, [editing, doc, targetRow, world.snapshot]);
+
+  /**
    * The whole collection, worn first.
    *
    * Worn first because that is the order they are read in — the character, then what is spare —
@@ -276,20 +401,22 @@ export function GearPanel(): ReactNode {
    * wrong shape for comparing two candidates side by side.
    */
   const poolEntries = useMemo<PoolEntry[]>(() => {
-    const label = (item: Item): string | undefined => {
-      const row = rowFor(world.snapshot, item);
-      if (row === undefined) return "worn";
-      const name = row.kind === "slot" ? slotName(world.snapshot, row.id) : row.family;
-      if (row.capacity <= 1) return name;
-      // Which of the two rings this is, counted the way the paperdoll numbers them.
-      const nth = (placement.byRow.get(row.id) ?? []).indexOf(items.indexOf(item));
-      return nth < 0 ? name : `${name} ${nth + 1}`;
+    // Every place the entry is worn in, counted the way the paperdoll numbers them — two for a
+    // mirrored ring, "Ring 1 + Ring 2", because it is one item worn twice.
+    const label = (index: number): string => {
+      const names: string[] = [];
+      for (const row of PAPERDOLL) {
+        (placement.byRow.get(row.id) ?? []).forEach((at, nth) => {
+          if (at.index === index) names.push(placeLabel(world.snapshot, row, nth));
+        });
+      }
+      return names.length === 0 ? "worn" : names.join(" + ");
     };
     return [
       ...items.map<PoolEntry>((item, index) => ({
         item,
         ref: { where: "gear", index },
-        slot: label(item),
+        slot: label(index),
       })),
       ...pool.map<PoolEntry>((item, index) => ({
         item,
@@ -323,44 +450,73 @@ export function GearPanel(): ReactNode {
       return;
     }
     const row = rowFor(world.snapshot, target);
-    const occupying = row === undefined ? [] : (placement.byRow.get(row.id) ?? []);
-    // As many rows as the paperdoll draws: the slot's capacity, or however many are wedged into
-    // it. An item in a row the paperdoll has no place for — `head` — is priced on its own.
-    const count = row === undefined ? 1 : Math.max(row.capacity, occupying.length);
     const slotId = baseGearType(world.snapshot, target.base)?.gearSlot;
-    const name =
-      row === undefined
+    const nameOf = (r: SlotRow | undefined): string =>
+      r === undefined
         ? slotId === undefined
           ? "Not in any slot"
           : slotName(world.snapshot, slotId)
-        : row.kind === "slot"
-          ? slotName(world.snapshot, row.id)
-          : row.family;
+        : r.kind === "slot"
+          ? slotName(world.snapshot, r.id)
+          : r.family;
 
-    const positions: ComparePosition[] = Array.from({ length: count }, (_, nth) => {
-      const at = occupying[nth];
-      return {
-        label: count > 1 ? `${name} ${nth + 1}` : name,
-        against: at === undefined ? undefined : items[at],
-        // The index as well as the item: the card builds the document each choice would produce,
-        // and "which entry of `doc.gear` gives way" is not answerable from the item alone — two
-        // identical rings are two entries.
-        againstIndex: at,
-        worn: editing.where === "gear" && at === editing.index,
-      };
+    // Every row the item could go in. Its own, and — for a weapon that can be dual wielded — the
+    // other hand as well: an axe can replace the mainhand or the offhand, and those are two
+    // different answers.
+    const rows: (SlotRow | undefined)[] = [row];
+    if (row !== undefined && dualWieldable(world.snapshot, target.base)) {
+      const other = PAPERDOLL.find((r) => r.id === (row.id === "weapon" ? "offhand" : "weapon"));
+      if (other !== undefined && (row.id === "weapon" || row.id === "offhand")) rows.push(other);
+    }
+
+    const positions = rows.flatMap((r): ComparePosition[] => {
+      const places = r === undefined ? [] : (placement.byRow.get(r.id) ?? []);
+      const offhand = r?.id === "offhand";
+      // As many places as the paperdoll draws: the slot's capacity, or however many are wedged
+      // into it. An item in a row the paperdoll has no place for — `head` — is priced on its own.
+      const count = r === undefined ? 1 : Math.max(r.capacity, places.length);
+      const name = nameOf(r);
+
+      const here = Array.from({ length: count }, (_, nth): ComparePosition => {
+        const at = places[nth];
+        const worn = editing.where === "gear" && at?.index === editing.index;
+        // The document this choice produces, built by the same `applyMove` the click runs — so a
+        // place held by half of a mirrored item is priced as that half coming off, not the whole.
+        // A worn item moving to another place is not an arrival `applyMove` has, so that one is
+        // built here: out of where it was, and whatever held the new place, into the new place.
+        let candidate: BuildDoc;
+        if (worn) {
+          candidate = applyMove(doc, { vacate: at }).doc;
+        } else if (editing.where === "pool") {
+          candidate = applyMove(doc, {
+            vacate: at,
+            put: { from: "pool", index: editing.index, offhand },
+          }).doc;
+        } else {
+          const drop = new Set([editing.index, at?.index]);
+          const moved = offhand ? { ...benched(target), offhand: true as const } : benched(target);
+          candidate = { ...doc, gear: [...items.filter((_, i) => !drop.has(i)), moved] };
+        }
+        return {
+          label: count > 1 ? `${name} ${nth + 1}` : name,
+          against: at === undefined ? undefined : items[at.index],
+          againstIndex: at?.index,
+          worn,
+          candidate,
+        };
+      });
+
+      // Two empty rings is one answer, not two: nothing comes off either way.
+      const collapse = here.length > 1 && here.every((p) => p.against === undefined);
+      return collapse ? [{ ...here[0]!, label: `${name} 1 or ${count}` }] : here;
     });
 
     // The place the item is already in reads first — that is the one being looked at — and the
     // alternatives follow in the paperdoll's order. `sort` is stable, so they keep that order.
     positions.sort((a, b) => Number(b.worn) - Number(a.worn));
 
-    const collapse = positions.length > 1 && positions.every((p) => p.against === undefined);
-    showCompare({
-      item: target,
-      source: editing,
-      positions: collapse ? [{ ...positions[0]!, label: `${name} 1 or ${count}` }] : positions,
-    });
-  }, [editing, target, placement, items, world.snapshot, showCompare, clearCompare]);
+    showCompare({ item: target, source: editing, positions });
+  }, [editing, target, placement, items, doc, world.snapshot, showCompare, clearCompare]);
 
   // Leaving the tab clears the card with it: it is about a choice being made in this panel, and
   // a diff left standing over the Tree tab is a diff about nothing on screen.
@@ -383,8 +539,7 @@ export function GearPanel(): ReactNode {
         <div className="section-title mt-0">Equipped</div>
 
         {PAPERDOLL.map((row) => {
-          const indices = placement.byRow.get(row.id) ?? [];
-          const label = row.kind === "slot" ? slotName(world.snapshot, row.id) : row.family;
+          const places = placement.byRow.get(row.id) ?? [];
           const suppressed = row.id === "offhand" && twoHanded;
           // One row per place the slot has, filled or not, so the paperdoll keeps its shape as
           // items come on and off. `Ring 1` and `Ring 2` rather than one label over two rows:
@@ -394,33 +549,39 @@ export function GearPanel(): ReactNode {
           // the game gives it — `itemName`, which is "Azure Amethyst Ring of Venom" and not
           // "Ring" — so the two rings are told apart by what they are rather than by which row
           // they landed in.
-          const rows = Math.max(row.capacity, indices.length);
+          const rows = Math.max(row.capacity, places.length);
 
           return (
             <div key={row.id}>
               {Array.from({ length: rows }, (_, nth) => {
-                const index = indices[nth];
-                const rowLabel = row.capacity > 1 ? `${label} ${nth + 1}` : label;
+                const at = places[nth];
+                const rowLabel = placeLabel(world.snapshot, row, nth);
 
-                if (index === undefined) {
+                if (at === undefined) {
                   return (
                     <EmptySlot
                       key={`empty-${nth}`}
                       label={rowLabel}
                       suppressed={suppressed}
-                      candidates={pool
-                        .map((item, i) => ({ item, i }))
-                        .filter(({ item }) => rowFor(world.snapshot, item)?.id === row.id)}
-                      onEquip={equip}
+                      candidates={candidatesFor(row, undefined)}
+                      onChoose={(candidate) => choose(candidate, undefined)}
                     />
                   );
                 }
 
+                const index = at.index;
+                // The other place a mirrored item is worn in, named for the badge on this half.
+                const twin = at.mirror
+                  ? findPlace(placement.byRow, index, false)
+                  : items[index]?.mirrored === true
+                    ? findPlace(placement.byRow, index, true)
+                    : undefined;
                 return (
                   <ItemRow
-                    key={index}
+                    key={`${index}:${at.mirror ? "mirror" : "main"}`}
                     item={items[index]!}
                     slotLabel={rowLabel}
+                    alsoIn={twin === undefined ? undefined : placeLabel(world.snapshot, twin.row, twin.nth)}
                     overCapacity={nth >= row.capacity}
                     suppressed={suppressed}
                     selected={sameRef(editing, { where: "gear", index })}
@@ -436,15 +597,10 @@ export function GearPanel(): ReactNode {
                     // facts come from here rather than from the row because only the panel knows
                     // what is on the bench and what `equip` would displace.
                     slot={{
-                      index,
-                      candidates: pool
-                        .map((item, i) => ({ item, i }))
-                        .filter(({ item }) => rowFor(world.snapshot, item)?.id === row.id),
-                      onEquip: equip,
-                      onUnequip: (at) => {
-                        unequipItem(at);
-                        setEditing(null);
-                      },
+                      at,
+                      candidates: candidatesFor(row, at),
+                      onChoose: (candidate) => choose(candidate, at),
+                      onVacate: () => perform({ vacate: at }),
                     }}
                   />
                 );
@@ -530,6 +686,7 @@ export function GearPanel(): ReactNode {
           <EditorCard
             item={target}
             where={editing.where}
+            wearing={wearing}
             suppressed={editing.where === "gear" && twoHanded && isOffhand(world.snapshot, target)}
             diagnostics={derived.diagnostics.filter((d) =>
               d.path.startsWith(
@@ -553,11 +710,40 @@ export function GearPanel(): ReactNode {
   );
 }
 
-/** Which paperdoll row an item belongs in, by its base's slot and that slot's family. */
+/**
+ * Which paperdoll row an item belongs in, by its base's slot and that slot's family — or the
+ * offhand, for a weapon marked as held there.
+ */
 function rowFor(snapshot: Snapshot, item: Item): SlotRow | undefined {
   const slotId = baseGearType(snapshot, item.base)?.gearSlot;
   const family = slotId === undefined ? undefined : slotFamily(snapshot, slotId);
-  return PAPERDOLL.find((r) => (r.kind === "slot" ? r.id === slotId : r.family === family));
+  const hand = item.offhand === true && family === "Weapon" ? "OffHand" : family;
+  return PAPERDOLL.find((r) => (r.kind === "slot" ? r.id === slotId : r.family === hand));
+}
+
+/** Whether the item's base is a weapon — where a mirrored one's halves go. */
+function isWeapon(snapshot: Snapshot, item: Item): boolean {
+  const slotId = baseGearType(snapshot, item.base)?.gearSlot;
+  return slotId !== undefined && slotFamily(snapshot, slotId) === "Weapon";
+}
+
+/** The paperdoll's name for the `nth` place of a row — "Ring 2", "Weapon". */
+function placeLabel(snapshot: Snapshot, row: SlotRow, nth: number): string {
+  const name = row.kind === "slot" ? slotName(snapshot, row.id) : row.family;
+  return row.capacity > 1 ? `${name} ${nth + 1}` : name;
+}
+
+/** Where one half of a mirrored entry sits: its row and which place in it. */
+function findPlace(
+  byRow: ReadonlyMap<string, WornAt[]>,
+  index: number,
+  mirror: boolean,
+): { row: SlotRow; nth: number } | undefined {
+  for (const row of PAPERDOLL) {
+    const nth = (byRow.get(row.id) ?? []).findIndex((at) => at.index === index && at.mirror === mirror);
+    if (nth >= 0) return { row, nth };
+  }
+  return undefined;
 }
 
 function isOffhand(snapshot: Snapshot, item: Item): boolean {
@@ -616,15 +802,22 @@ const PANEL = 300;
  * whole engine — and drawn beside the list. `(none)` is priced too, which is the only place in
  * the app that answers what a worn piece is doing for you without making you take it off first.
  */
-type SlotOption = { id: string; label: string; hint: string; item: Item | undefined };
+type SlotOption = {
+  id: string;
+  label: string;
+  hint: string;
+  item: Item | undefined;
+  arrival: Arrival | undefined;
+};
 
 function SlotPicker({
   label,
   worn,
-  wornIndex,
+  at,
+  alsoIn,
   candidates,
-  onEquip,
-  onUnequip,
+  onChoose,
+  onVacate,
   onOpen,
   children,
 }: {
@@ -632,12 +825,15 @@ function SlotPicker({
   label: string;
   /** What is in it now. */
   worn: Item | undefined;
-  /** `worn`'s index in `doc.gear`. */
-  wornIndex: number | undefined;
-  /** Benched pieces whose base belongs in this row, with their pool indices. */
-  candidates: { item: Item; i: number }[];
-  onEquip: (poolIndex: number) => void;
-  onUnequip: (gearIndex: number) => void;
+  /** Which place this is, when something is in it. */
+  at: WornAt | undefined;
+  /** The other place `worn` is also in, when it is worn twice — "Ring 1". */
+  alsoIn: string | undefined;
+  /** What could go here — see `candidatesFor`. */
+  candidates: SlotCandidate[];
+  onChoose: (candidate: SlotCandidate) => void;
+  /** Empty this place. Half of a mirrored item coming off leaves the other half worn. */
+  onVacate: () => void;
   /** Also fired by the click that opens the list — see the note above. */
   onOpen?: () => void;
   /** The row itself: what the slot looks like while the list is shut. */
@@ -653,21 +849,33 @@ function SlotPicker({
     if (worn !== undefined) {
       rows.push({
         id: NONE,
-        label: `(none) — take off ${itemName(world.snapshot, worn)}`,
+        label:
+          alsoIn === undefined
+            ? `(none) — take off ${itemName(world.snapshot, worn)}`
+            : `(none) — wear it only in ${alsoIn}`,
         hint: "unequip",
         item: undefined,
+        arrival: undefined,
       });
     }
-    for (const { item, i } of candidates) {
+    for (const candidate of candidates) {
+      const name = itemName(world.snapshot, candidate.item);
       rows.push({
-        id: String(i),
-        label: itemName(world.snapshot, item),
-        hint: item.rarity,
-        item,
+        id: candidate.key,
+        // Said on the row, because the benched piece and the one already worn read the same
+        // otherwise and they are two different clicks: one moves a piece off the bench, the other
+        // wears the same item in a second place.
+        label: candidate.arrival.from === "mirror" ? `${name} — the same one, worn here too` : name,
+        hint:
+          candidate.item.offhand === true
+            ? `offhand · ${Math.round(offhandWeaponShare(world.snapshot, 0) * 100)}%`
+            : candidate.item.rarity,
+        item: candidate.item,
+        arrival: candidate.arrival,
       });
     }
     return rows;
-  }, [candidates, worn, world.snapshot]);
+  }, [candidates, worn, alsoIn, world.snapshot]);
 
   // Dismissed by clicking anywhere that is not this row, and by Escape. Both are registered only
   // while the list is up, so a shut row costs nothing.
@@ -696,16 +904,17 @@ function SlotPicker({
   const choose = (id: string): void => {
     setOpen(false);
     if (id === NONE) {
-      if (wornIndex !== undefined) onUnequip(wornIndex);
+      if (at !== undefined) onVacate();
       return;
     }
-    onEquip(Number(id));
+    const candidate = candidates.find((c) => c.key === id);
+    if (candidate !== undefined) onChoose(candidate);
   };
 
   // Nothing to offer and nothing to take off is not a list, it is a dead end: an empty offhand
   // beside a two-handed weapon would open onto an empty box. The row stays a row.
   const offersNothing = options.length === 0;
-  const hoveredItem = options.find((o) => o.id === hovered)?.item;
+  const hoveredOption = options.find((o) => o.id === hovered);
 
   return (
     <div className="slot-picker" ref={wrapRef}>
@@ -740,8 +949,9 @@ function SlotPicker({
           anchorRef={wrapRef}
           label={label}
           worn={worn}
-          wornIndex={wornIndex}
-          candidate={hoveredItem}
+          at={at}
+          candidate={hoveredOption?.item}
+          arrival={hoveredOption?.arrival}
         />
       )}
     </div>
@@ -783,15 +993,18 @@ function SwapPreview({
   anchorRef,
   label,
   worn,
-  wornIndex,
+  at,
   candidate,
+  arrival,
 }: {
   anchorRef: RefObject<HTMLDivElement | null>;
   label: string;
   worn: Item | undefined;
-  wornIndex: number | undefined;
+  at: WornAt | undefined;
   /** The piece going on, or `undefined` for the `(none)` row. */
   candidate: Item | undefined;
+  /** Where it comes from — the move the click would make. */
+  arrival: Arrival | undefined;
 }): ReactNode {
   const doc = useBuild((s) => s.doc);
   const [box, setBox] = useState<DOMRect | null>(null);
@@ -804,13 +1017,8 @@ function SwapPreview({
     setBox(column?.getBoundingClientRect() ?? null);
   }, [anchorRef, candidate]);
 
-  const next = useMemo(
-    () =>
-      candidate === undefined
-        ? docWithSwap(doc, { removeIndex: wornIndex })
-        : docWithSwap(doc, { item: candidate, removeIndex: wornIndex }),
-    [doc, candidate, wornIndex],
-  );
+  // The same `applyMove` the click runs, so the preview prices exactly what choosing does.
+  const next = useMemo(() => applyMove(doc, { vacate: at, put: arrival }).doc, [doc, at, arrival]);
 
   const priced = useWhatIf(next);
 
@@ -876,23 +1084,24 @@ function EmptySlot({
   label,
   suppressed,
   candidates,
-  onEquip,
+  onChoose,
 }: {
   label: string;
   suppressed: boolean;
-  /** Benched items whose base belongs in this row, with their pool indices. */
-  candidates: { item: Item; i: number }[];
-  onEquip: (poolIndex: number) => void;
+  /** What could go here — see `candidatesFor`. */
+  candidates: SlotCandidate[];
+  onChoose: (candidate: SlotCandidate) => void;
 }): ReactNode {
   return (
     <div className={`slot-row empty${suppressed ? " suppressed" : ""}`}>
       <SlotPicker
         label={label}
         worn={undefined}
-        wornIndex={undefined}
+        at={undefined}
+        alsoIn={undefined}
         candidates={candidates}
-        onEquip={onEquip}
-        onUnequip={() => {}}
+        onChoose={onChoose}
+        onVacate={() => {}}
       >
         <span className="slot-name">{label}</span>
         {suppressed ? (
@@ -901,7 +1110,8 @@ function EmptySlot({
           <span className="faint text-sm">empty — nothing in the pool fits here</span>
         ) : (
           <span className="faint text-sm">
-            empty — {candidates.length} in the pool fit{candidates.length === 1 ? "s" : ""} here
+            empty — {candidates.length} option{candidates.length === 1 ? "" : "s"} fit
+            {candidates.length === 1 ? "s" : ""} here
           </span>
         )}
       </SlotPicker>
@@ -1058,8 +1268,8 @@ function ItemFinder({
         <button onClick={onImport}>Import item…</button>
       </div>
       <span className="faint text-sm">
-        Whatever you pick lands in the pool below, unequipped, and opens in the editor. A base
-        arrives as a rare with no affixes on it yet; a unique arrives with its own.
+        Whatever you pick appears in the pool below, unequipped, and opens in the editor. A base
+        appears as a rare with no affixes on it yet; a unique appears with its own.
       </span>
     </div>
   );
@@ -1237,6 +1447,7 @@ function PoolRow({
 function EditorCard({
   item,
   where,
+  wearing,
   suppressed,
   diagnostics,
   onChange,
@@ -1244,6 +1455,8 @@ function EditorCard({
 }: {
   item: Item;
   where: "gear" | "pool";
+  /** The document with a version of this item worn — what socket rankings price. */
+  wearing: ((item: Item) => BuildDoc) | undefined;
   suppressed: boolean;
   diagnostics: Diagnostic[];
   onChange: (item: Item) => void;
@@ -1275,7 +1488,13 @@ function EditorCard({
         </div>
       )}
 
-      <ItemEditor item={item} slotId={slotId} onChange={onChange} onRemove={onRemove} />
+      <ItemEditor
+        item={item}
+        slotId={slotId}
+        wearing={wearing}
+        onChange={onChange}
+        onRemove={onRemove}
+      />
 
       {/*
         The item as the game draws it, beside what taking it would change.
@@ -1347,6 +1566,7 @@ function EditorCard({
 function ItemRow({
   item,
   slotLabel,
+  alsoIn,
   overCapacity,
   suppressed,
   selected,
@@ -1357,6 +1577,8 @@ function ItemRow({
 }: {
   item: Item;
   slotLabel: string;
+  /** The other place this same item is worn in, when it is worn twice. */
+  alsoIn?: string | undefined;
   /** Past what the slot holds — kept visible, because hiding it would hide the error too. */
   overCapacity: boolean;
   /** In an offhand a two-handed weapon has emptied. */
@@ -1373,12 +1595,12 @@ function ItemRow({
    * where there is nothing to offer alternatives for. That row keeps the "off" button instead.
    */
   slot?: {
-    /** `item`'s index in `doc.gear`. */
-    index: number;
-    /** Benched pieces whose base belongs in this row, with their pool indices. */
-    candidates: { item: Item; i: number }[];
-    onEquip: (poolIndex: number) => void;
-    onUnequip: (gearIndex: number) => void;
+    /** Which place this row is. */
+    at: WornAt;
+    /** What could go here instead — see `candidatesFor`. */
+    candidates: SlotCandidate[];
+    onChoose: (candidate: SlotCandidate) => void;
+    onVacate: () => void;
   };
 }): ReactNode {
   const world = useWorld();
@@ -1406,6 +1628,22 @@ function ItemRow({
       </span>
       <RarityBadge rarity={item.rarity} />
       {isTwoHanded(world.snapshot, item.base) && <span className="badge warn">2H</span>}
+      {alsoIn !== undefined && (
+        <span
+          className="badge"
+          title={`Worn twice: the same item is also in ${alsoIn}. Not a copy — editing either edits both. Choose (none) here to wear it only once.`}
+        >
+          ×2
+        </span>
+      )}
+      {(item.offhand === true || (slot?.at.mirror === true && slot.at.weapon)) && (
+        <span
+          className="badge"
+          title="Held in the offhand: the game grants this share of every stat on it, raised by Dual-Wield Effectiveness"
+        >
+          offhand · {Math.round(offhandWeaponShare(world.snapshot, 0) * 100)}%
+        </span>
+      )}
       {overCapacity && (
         <span className="badge bad" title="More items in this slot than a character has of it">
           over capacity
@@ -1465,10 +1703,11 @@ function ItemRow({
           <SlotPicker
             label={slotLabel}
             worn={item}
-            wornIndex={slot.index}
+            at={slot.at}
+            alsoIn={alsoIn}
             candidates={slot.candidates}
-            onEquip={slot.onEquip}
-            onUnequip={slot.onUnequip}
+            onChoose={slot.onChoose}
+            onVacate={slot.onVacate}
             onOpen={() => {
               // The row is about to unmount, so its `onMouseLeave` will never fire.
               tooltip.clear();
@@ -1488,32 +1727,14 @@ function ItemRow({
  * Put this item on the clipboard as JSON.
  *
  * The same shape `fixtures/` holds and `ImportDialog` reads, so the three ways an item moves —
- * between builds, into a fixture, out of the game — are one shape rather than three. It confirms
- * in place rather than with a notification: at this size a button that does nothing visible reads
- * as a broken button.
+ * between builds, into a fixture, out of the game — are one shape rather than three.
  */
 function CopyItemButton({ item }: { item: Item }): ReactNode {
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1200);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
   return (
-    <button
+    <CopyJsonButton
+      value={item}
       title="Copy this item as JSON — paste it into another build with Import, or into a fixture"
-      onClick={(event) => {
-        event.stopPropagation();
-        void navigator.clipboard.writeText(JSON.stringify(item, null, 2)).then(
-          () => setCopied(true),
-          () => setCopied(false),
-        );
-      }}
-    >
-      {copied ? "copied" : "⧉ JSON"}
-    </button>
+    />
   );
 }
 
@@ -1570,7 +1791,7 @@ function OmenRow({
     );
   }
 
-  const filled = countOmenPieces(world.snapshot, doc.gear ?? [], omen, doc.character.level);
+  const filled = countOmenPieces(world.snapshot, wornItems(world.snapshot, doc.gear ?? []), omen, doc.character.level);
   const needed = omenBuckets(world.snapshot, omen).reduce(
     (min, bucket) => Math.min(min, bucket.pieces),
     Number.POSITIVE_INFINITY,

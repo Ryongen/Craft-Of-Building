@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildTargetEnemy } from "./target-presets.js";
+import { TARGET_PRESETS, buildTargetEnemy } from "./target-presets.js";
 import { BALANCE, RARITIES, makeSnapshot } from "./test-support.js";
 
 /**
@@ -84,4 +84,28 @@ test("a rarity the pack does not have falls back to common rather than to nothin
   // `setRarity` checks `rarityStatMultiplier(...) > 0` before using a rarity, and so does this.
   const uber = buildTargetEnemy(SNAPSHOT, "uber_boss", 100);
   assert.equal(uber.armor, 10 * 1 * CURVE_AT_100);
+});
+
+test("no target preset states an attack damage, because none of them can know one", () => {
+  // The invariant the whole incoming model rests on, pinned so a future edit cannot quietly
+  // break it. `mobOffence()`'s own docstring says its zeroes are a finding rather than a
+  // placeholder: `MobStatUtils.getMobBaseStats` gives a mob one line of offence, and it is
+  // accuracy. A preset that started filling in a hit would put a number under every defensive
+  // figure that no file in the install says, and would move every existing document's numbers
+  // the moment it shipped.
+  //
+  // An attacker profile is the explicit second click instead. See `ATTACKER_PROFILES`.
+  for (const preset of TARGET_PRESETS) {
+    const enemy = buildTargetEnemy(SNAPSHOT, preset.id, 100);
+    assert.equal(
+      enemy.offence?.vanillaAttackDamage,
+      undefined,
+      `${preset.id} must not invent an attack damage`,
+    );
+    assert.equal(
+      enemy.offence?.attacksPerSecond,
+      undefined,
+      `${preset.id} must not invent an attack rate`,
+    );
+  }
 });

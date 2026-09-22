@@ -61,9 +61,24 @@ protocol.registerSchemesAsPrivileged([
  * This has to run before anything reads getPath("userData"). Nothing does at module load —
  * settings.ts and snapshot.ts resolve their paths inside functions, never at import — so keep it
  * here, above the window and the handlers.
+ *
+ * Both kinds of build were renamed along with the app ("CTE2 Build Planner" and `cte2-pob-data`
+ * before it was Craft of Building). A folder under the new name wins; failing that, one under
+ * the old name is kept, so a beta tester's settings, autosave and extracted snapshot survive
+ * the upgrade; failing both, the new name is created.
  */
+function dataDir(parent: string, name: string, oldName: string): string {
+  const current = join(parent, name);
+  const old = join(parent, oldName);
+  return !existsSync(current) && existsSync(old) ? old : current;
+}
+
 const portableDir = process.env["PORTABLE_EXECUTABLE_DIR"];
-if (portableDir !== undefined) app.setPath("userData", join(portableDir, "cte2-pob-data"));
+if (portableDir !== undefined) {
+  app.setPath("userData", dataDir(portableDir, "cob-data", "cte2-pob-data"));
+} else if (app.isPackaged) {
+  app.setPath("userData", dataDir(app.getPath("appData"), "Craft of Building", "CTE2 Build Planner"));
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -100,7 +115,7 @@ function createWindow(): void {
     ...(icon === undefined ? {} : { icon }),
     show: false,
     backgroundColor: "#12141a",
-    title: "Path of Building — Craft to Exile 2",
+    title: "Craft of Building",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,

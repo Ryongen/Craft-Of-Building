@@ -49,7 +49,7 @@
  */
 
 import type { BuildDoc } from "@cte2/schema";
-import { CATEGORY, entry } from "@cte2/schema";
+import { CATEGORY, entry, wornItems } from "@cte2/schema";
 
 import { context, type Env, type StatContext } from "../context.js";
 import type { ExactMod } from "../modifier.js";
@@ -215,6 +215,7 @@ function reportStaleWeaponAttribute(
   if (total !== undefined && total > (VANILLA_ATTRIBUTE_DEFAULTS[ATTACK_DAMAGE] ?? 1)) return;
 
   const weapons = (build.gear ?? [])
+    .filter((item) => item.offhand !== true)
     .map((item) => item.base)
     .filter((base) => {
       const type = entry(env.snapshot, CATEGORY.baseGearType, base)?.data["weapon_type"];
@@ -300,7 +301,7 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
   // Enchantment levels, per equipped piece. `getEnchantCompatStats(Player, List<GearData>)`
   // gathers the distinct enchantments across all gear and hands every stack to each matching
   // entry, so the sum is over pieces and each entry fires once.
-  const enchanted = (build.gear ?? [])
+  const enchanted = wornItems(env.snapshot, build.gear ?? [])
     .map((item) => item.enchantments)
     .filter((e): e is Record<string, number> => e !== undefined);
 

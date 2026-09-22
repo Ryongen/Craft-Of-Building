@@ -156,6 +156,28 @@ export type Item = {
    * total. Protection IV on four pieces is not the same as Protection XVI on one.
    */
   enchantments?: Record<string, number>;
+  /**
+   * Held in the offhand rather than the mainhand. Only meaningful on a worn weapon.
+   *
+   * A base's `gear_slot` says which row every other piece belongs in, but not which hand a
+   * one-handed weapon is in. `GearData.isUsableBy` accepts a weapon in `OFFHAND` when its
+   * `WeaponTypes.can_dual_wield` is set, and `calcStatUtilization` then grants only
+   * `PERC_OFFHAND_WEP_STAT` percent of its stats, scaled by Dual-Wield Effectiveness — see
+   * `dualWieldable` and `offhandWeaponShare`.
+   *
+   * Benched items do not carry it: which hand is a fact about wearing, not about the item.
+   */
+  offhand?: true;
+  /**
+   * Worn a second time in the other place of its pair: both ring slots, or — for a weapon that
+   * can be dual wielded — the mainhand and the offhand.
+   *
+   * A reference rather than a copy, for theorycrafting "what if I had two of these": there is one
+   * item, so editing it edits both places and nothing can drift apart. `wornPieces` is the one
+   * place that turns it into the pieces actually worn, and everything that reads gear goes
+   * through it. Only meaningful on a worn item; benched items never carry it.
+   */
+  mirrored?: true;
 };
 
 /**
@@ -456,6 +478,51 @@ export type MobOffence = {
    * Same story as crit: it scales the hit, not your defences.
    */
   totalDamage?: number;
+  /**
+   * The mob's Minecraft `generic.attack_damage` attribute — **before** Mine and Slash touches it.
+   *
+   * `EntityData.mobBasicAttack`, verified in `Mine_and_Slash-1.20.1-6.4.13.jar`:
+   *
+   *     cooldowns.setOnCooldown(BASIC_ATTACK_COOLDOWN_ID, 5);
+   *     float multi = ServerContainer.get().VANILLA_MOB_DMG_AS_EXILE_DMG.get().floatValue();
+   *     num = (data.getAmount() * CompatConfig.get().mobPercentBonusDamage() / 100f)
+   *             + CompatConfig.get().mobFlatDmg();
+   *     num *= multi;
+   *     num = StatScaling.MOB_DAMAGE.scale(num, getLevel()); // this should be scaled last
+   *
+   * `data.getAmount()` is the vanilla attribute and is what goes here. Everything after it is
+   * derived rather than typed — the two compat terms, the server's
+   * `vanilla_mob_dmg_as_exile_dmg`, and the `MOB_DAMAGE_SCALING` curve, which on this pack's
+   * `original_balance` is `1 + 0.25 * (lvl - 1)` and so **×25.75 at level 100**. A zombie's 3.0
+   * becomes a hit of about 155 at that level, and no part of that factor is something a player
+   * should be asked to type.
+   *
+   * **Why this is stated and not derived.** `mmorpg_entity`'s 190 definitions carry `dmg_multi`,
+   * `hp_multi` and `stat_multi` and no attack damage at all; `dmg_multi` is already modelled, as
+   * {@link totalDamage}. And `MobStatUtils.getMobBaseStats` gives a mob one line of offence —
+   * accuracy. Nothing in the pack or the mod knows which Minecraft entity is in front of you, so
+   * a preset that invented a number would put it under every figure with no file to point at.
+   *
+   * **Why the attribute rather than the finished hit.** The finished hit depends on the mob's
+   * level and the attribute does not, so a document stating the attribute stays right when you
+   * re-level the enemy — and the factor between the two stays visible instead of being baked in.
+   *
+   * Unset means unstated, not zero: every figure that needs it reports zero *with the reason*
+   * rather than assuming a hit.
+   */
+  vanillaAttackDamage?: number;
+  /**
+   * How often the mob's AI swings, per second.
+   *
+   * Vanilla AI, not a Mine and Slash stat — a `MeleeAttackGoal` mob swings about once a second.
+   * The one ceiling the mod imposes is `BASIC_ATTACK_COOLDOWN_ID` at **5 ticks**, the
+   * `iconst_5` in the disassembly above, so nothing gets more than 4 basic attacks a second
+   * however fast its goal fires.
+   *
+   * World state in the strictest sense — which mob, in what terrain, at what range — so it is
+   * stated for the same reason {@link vanillaAttackDamage} is, and unset means unstated.
+   */
+  attacksPerSecond?: number;
 };
 
 export type EnemySetup = {
@@ -693,6 +760,15 @@ export type BuildConfig = {
    * the preset produced — the preset fills the block, the block is what the engine reads.
    */
   targetPreset?: string;
+  /**
+   * Which built-in attacker profile `enemy.offence`'s hit was filled from, when it was.
+   *
+   * The mirror of {@link targetPreset}, and deliberately a *second* choice rather than part of
+   * it: a target preset says what the mob can take, which is pack data, and a profile says what
+   * it swings with, which is a Minecraft attribute no file in the install names. Unset means no
+   * hit is stated and every incoming figure says so rather than assuming one.
+   */
+  attackerProfile?: string;
   /** Where the enemy stands, for the projectile geometry. Unset means `DEFAULT_PLACEMENT`. */
   target?: TargetPlacement;
   /**

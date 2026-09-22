@@ -221,12 +221,22 @@ export type {
 export { mobAffix, mobAffixDiagnostics, mobAffixIds, mobAffixMods } from "./damage/mob-affixes.js";
 export type { MobAffixMod, MobAffixView } from "./damage/mob-affixes.js";
 
+export { MAX_BASIC_ATTACKS_PER_SECOND, mobAttackRate, mobHitSize } from "./damage/incoming.js";
+export type { MobHit } from "./damage/incoming.js";
+
 export { defence } from "./damage/defence.js";
 export { selfSustain } from "./damage/self-sustain.js";
 export type { Pool, SelfSustain, SelfSustainInput } from "./damage/self-sustain.js";
 export { auraSources } from "./damage/auras.js";
 export type { AuraInput, AuraResult } from "./damage/auras.js";
-export type { Defence, DefenceOptions, ElementDefence, Pools } from "./damage/defence.js";
+export type {
+  Defence,
+  DefenceOptions,
+  ElementDefence,
+  OverTime,
+  OverTimeElement,
+  Pools,
+} from "./damage/defence.js";
 
 export type { BrokenLink, ComboChain, ComboStep } from "./damage/combo.js";
 

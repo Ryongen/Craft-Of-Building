@@ -948,13 +948,10 @@ function SkillCard({
       </div>
 
       <div className="notice info">
-        A support gem changes this skill, almost never the character sheet — the game keeps a
-        separate stat unit per spell and the sheet is the no-spell path, so expect the sidebar to
-        stay still when you link one. The four exceptions are the gems that grant an exile effect
-        (Fortify and the three charge-on-hit gems).{" "}
-        <strong>The gem list is ordered by what each one would add to this skill</strong> — its
+        A support gem changes this skill.
+        <strong>The gem list is ordered by what each one would add to this skill</strong>, its
         damage where it has any, and otherwise its cooldown and the duration of the buff it
-        applies, which is what Cooldown and Effect Duration buy on a skill that hits nothing.
+        applies, which is what Cooldown and Effect Duration grants on a skill that hits nothing.
       </div>
 
       {/*

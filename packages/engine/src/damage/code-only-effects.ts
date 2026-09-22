@@ -538,6 +538,61 @@ export function inCodeEffects(): InCodeEffect[] {
     },
   });
 
+  // --- damage taken to mana, FINAL_DAMAGE (100), Target --------------------------------
+  //
+  //     float restore = effect.data.getNumber() * data.getValue() / 100F; // todo dmg number
+  //     if (restore > 0) {
+  //         RestoreResourceEvent mana = EventBuilder
+  //                 .ofRestore(effect.source, effect.target, ResourceType.mana, RestoreType.heal, restore)
+  //                 .build();
+  //         mana.Activate();
+  //     }
+  //
+  // — `DamageTakenToMana$Effect`, with `canActivate` returning a bare `true`. Read out of
+  // `Mine_and_Slash-1.20.1-6.4.13.jar`, where the bytecode is the fork's line for line, down to
+  // the `getstatic RestoreType.heal`.
+  //
+  // **`heal`, not `leech`, and the difference is the whole point.** `RestoreResourceEvent.activate`
+  // branches
+  //
+  //     if (data.getRestoreType() == RestoreType.leech) {
+  //         this.targetData.leech.addLeech(data.getResourceType(), num);
+  //         return;
+  //     }
+  //     this.targetData.getResources().restore(target, data.getResourceType(), num);
+  //
+  // so a leech joins the pool that `<r>_leech_cap` meters out and a heal lands whole and at once.
+  // `leech()` in `resources.ts` already skips any record whose `restoreType` is not `leech`, so
+  // pushing this as a `heal` is what keeps the mana cap off it.
+  //
+  // This is a **Target**-side effect, so it only ever fires on a hit *you* take. Every figure the
+  // engine currently produces is a hit you deal, which is why porting it moves nothing today; it
+  // pays out once there is an incoming hit to run it on.
+  //
+  // Nothing in this pack grants the stat — a search of every registry finds the definition and no
+  // reference — so it is inert on every real build. That is a finding rather than a reason to
+  // leave it unported: an unimplemented stat is indistinguishable from one that reads zero, and
+  // the next pack update may well grant it.
+  out.push({
+    statId: "dmg_taken_to_mana",
+    priority: PRIORITY.FINAL_DAMAGE,
+    side: "Target",
+    runsOnZero: false,
+    run(ctx, value) {
+      const sink = ctx.restores;
+      if (sink === undefined) return;
+      const restore = (ctx.event.data.getNumber(EVENT.NUMBER) * value) / 100;
+      if (restore <= 0) return;
+      sink.push({
+        statId: "dmg_taken_to_mana",
+        effectId: "dmg_taken_to_mana",
+        resource: "mana",
+        restoreType: "heal",
+        amount: restore,
+      });
+    },
+  });
+
   // --- regeneration, on_restore_resource, Source --------------------------------------
   //
   // Two families, one per resource, and both fire on the same once-a-second tick:

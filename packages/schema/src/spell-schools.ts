@@ -243,3 +243,36 @@ export function schoolPerksInOrder(view: SpellSchoolView): { perkId: string; poi
 export function unknownSchoolPerks(snapshot: Snapshot, view: SpellSchoolView): string[] {
   return [...view.perks.keys()].filter((id) => perk(snapshot, id) === undefined).sort();
 }
+
+/**
+ * Points spent in one school, both pools together.
+ *
+ * The game has no such counter — its two `PointsDisplayButton`s are per pool and across every
+ * school — but "how much of this class have I bought" is what decides which of your two classes
+ * is the one you are actually playing, and that is the question the planner's class screen has
+ * to answer before it can pin one of them in place.
+ */
+export function pointsSpentInSchool(snapshot: Snapshot, build: BuildDoc, schoolId: string): number {
+  const allocated = build.character.schools;
+  if (!allocated) return 0;
+  let spent = 0;
+  for (const [perkId, level] of Object.entries(allocated)) {
+    if (!Number.isFinite(level) || level < 1) continue;
+    if (schoolOfPerk(snapshot, perkId) === schoolId) spent += level;
+  }
+  return spent;
+}
+
+/**
+ * The schools a document has points in, the one with the most points first.
+ *
+ * Ties break on the school id so the order never depends on how the document happened to be
+ * serialised: a build reloaded from disk must put the same class on the same side as the build
+ * that was saved, or the screen moves under you for no reason you can see.
+ */
+export function schoolsByPointsSpent(snapshot: Snapshot, build: BuildDoc): string[] {
+  return allocatedSchools(snapshot, build)
+    .map((id) => ({ id, spent: pointsSpentInSchool(snapshot, build, id) }))
+    .sort((a, b) => b.spent - a.spent || a.id.localeCompare(b.id))
+    .map((s) => s.id);
+}

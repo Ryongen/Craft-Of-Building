@@ -23,6 +23,7 @@ import { useBuild } from "../state/build-store.js";
 import { useDerived } from "../state/derived.js";
 import { useWorld } from "../state/snapshot.js";
 import { AddPicker } from "./AddPicker.js";
+import { CopyJsonButton, copyEnvelope } from "./CopyJsonButton.js";
 import { GemRarityRoll, gemBand, gemRarities } from "./GemRoll.js";
 import { Picker, type PickerOption } from "./Picker.js";
 import { StatLines } from "./StatLines.js";
@@ -318,6 +319,11 @@ function AugmentRow({
         <span className="faint grow ellipsis text-sm" title={summary}>
           {summary}
         </span>
+        <CopyJsonButton
+          compact
+          value={copyEnvelope("aura", auraName(snapshot, aura.id), aura)}
+          title="Copy this Augment as JSON — paste it into another build with Import"
+        />
         <button
           title="Remove this Augment"
           onClick={(event) => {

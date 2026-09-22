@@ -99,11 +99,16 @@ const ACCOUNTED = {
 
   // --- known gaps, tracked ------------------------------------------------------------
   "summon_health": ["gap", "a pet's hit points; the planner models what pets deal, not how long they live"],
-  "bleed_receive_chance": ["gap", "target-side ailment chance; 4 exile effects use it"],
-  "burn_receive_chance": ["gap", "target-side ailment chance"],
-  "electrify_receive_chance": ["gap", "target-side ailment chance"],
-  "freeze_receive_chance": ["gap", "target-side ailment chance"],
-  "poison_receive_chance": ["gap", "target-side ailment chance"],
+  // `AilmentReceiveChance` is `AilmentChance` with `Side()` returning `Target` — same priority,
+  // same six gates, same `invokestatic AilmentChance.activate` in the 6.4.13 jar. So it is read
+  // off the target sheet in `damage/ailments.ts` alongside your own `<ailment>_chance`, as two
+  // independent rolls. Three of the four effects that grant it (`infection`, `wounds`,
+  // `plague_aura_effect`) put it on the mob, which makes it an offensive stat on your hit.
+  "bleed_receive_chance": ["elsewhere", "read from the target sheet in damage/ailments.ts"],
+  "burn_receive_chance": ["elsewhere", "read from the target sheet in damage/ailments.ts"],
+  "electrify_receive_chance": ["elsewhere", "read from the target sheet in damage/ailments.ts"],
+  "freeze_receive_chance": ["elsewhere", "read from the target sheet in damage/ailments.ts"],
+  "poison_receive_chance": ["elsewhere", "read from the target sheet in damage/ailments.ts"],
   // The five `<ailment>_proc_chance` stats were one blanket entry whose stated reason — "nothing
   // in this pack grants one" — was simply false: `mmorpg_base_stats/mob` grants every mob
   // `electrify_proc_chance 10` and `freeze_proc_chance 5`, the mercenary block grants both, and
@@ -124,7 +129,6 @@ const ACCOUNTED = {
   "phys_taken_as_all": ["gap", "definition only in this pack"],
   "phys_to_random": ["gap", "a random target element is an average, not a copy; definition only"],
   "phys_taken_as_random": ["gap", "a random target element is an average, not a copy; definition only"],
-  "dmg_taken_to_mana": ["gap", "definition only in this pack"],
   "magic_shield_heal": ["gap", "2 perks"],
   "learn_boss_cc_resist": ["dead", "a `learn_` marker, not a damage effect"],
   "heal_cleanse": ["gap", "not a damage or defence stat"],

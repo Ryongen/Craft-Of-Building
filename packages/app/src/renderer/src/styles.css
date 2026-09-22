@@ -281,6 +281,11 @@ a {
 .main-pane {
   display: grid;
   grid-template-rows: auto 1fr;
+  /* The column has to be told it may be narrower than its contents. A grid's implicit column is
+     `auto`, which means max-content, so a panel wider than the window did not scroll inside its
+     own `overflow: auto` — it widened this pane and slid under the stat sheet, which is drawn
+     over the same row. `min-width: 0` on this element alone does not reach the column. */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -372,6 +377,35 @@ a {
 .tabs button.active {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+
+/* The technical toggle: a picture, not a checkbox, so it reads as decoration. Dimmed while off;
+   full colour while on. It takes the right-hand end unless the stage switcher already has. */
+.tabs .technical-toggle {
+  margin-left: auto;
+  padding: 2px var(--space-3);
+}
+
+.tabs .tab-stage + .technical-toggle {
+  margin-left: 0;
+}
+
+.technical-toggle img {
+  display: block;
+  height: 22px;
+  width: auto;
+  opacity: 0.35;
+  filter: grayscale(1);
+  transition: opacity 120ms, filter 120ms;
+}
+
+.technical-toggle:hover img {
+  opacity: 0.7;
+}
+
+.technical-toggle.on img {
+  opacity: 1;
+  filter: none;
 }
 
 .panel {
@@ -2124,6 +2158,39 @@ textarea.paste:focus {
   width: 16px;
   height: 16px;
   image-rendering: pixelated;
+}
+
+/* Two classes, side by side. Each pane sizes to its own grid — ten 38px cells plus the level
+   column, about 500px — and wraps under the other one on a window too narrow for both.
+
+   The `min-width` is what makes it wrap rather than shrink, and it is the whole trick: a flex
+   item may shrink below its basis, so two 500px panes in 700px of window squeeze to 350 each and
+   the grids inside them scroll sideways, which is worse than either pane alone. A floor at the
+   grid's own width leaves no room for a second item on the line, so the second one wraps. */
+.school-panes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+
+.school-pane {
+  flex: 1 1 500px;
+  min-width: 500px;
+  max-width: 560px;
+}
+
+.school-pane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+/* The pinned class is in the strip to say where it is, not to be clicked. */
+.school-tab.pinned {
+  opacity: 0.85;
+  cursor: default;
 }
 
 .school-grid {

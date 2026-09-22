@@ -644,6 +644,103 @@ test("an offhand beside a two-handed weapon is an error, because it grants nothi
   assert.ok(codes(diagnostics, "error").includes("offhand-with-two-handed-weapon"));
 });
 
+/** Swords can be dual wielded and bows cannot — the pack's `mmorpg_weapon_type` flags. */
+function dualWieldSnapshot(): ReturnType<typeof makeSnapshot> {
+  return makeSnapshot({
+    mmorpg_gear_rarity: RARITIES,
+    mmorpg_game_balance: { original_balance: BALANCE },
+    mmorpg_gear_slot: {
+      sword: { id: "sword", fam: "Weapon" },
+      bow: { id: "bow", fam: "Weapon" },
+      ring: { id: "ring", fam: "Jewelry" },
+    },
+    mmorpg_base_gear_types: {
+      sword: { ...baseGear("sword", "sword", ["weapon_family", "sword"]), weapon_type: "sword" },
+      bow: { ...baseGear("bow", "bow", ["weapon_family", "bow"]), weapon_type: "bow" },
+      ring: baseGear("ring", "ring", ["jewelry_family"]),
+    },
+    mmorpg_weapon_type: {
+      sword: { id: "sword", can_dual_wield: true },
+      bow: { id: "bow", can_dual_wield: false },
+    },
+  });
+}
+
+const OFFHAND_CODES = [
+  "offhand-not-a-weapon",
+  "offhand-weapon-not-dual-wieldable",
+  "offhand-weapon-blocked",
+  "slot-family-over-capacity",
+];
+
+test("a sword in each hand is a legal loadout, not two mainhands", () => {
+  const diagnostics = validateBuild(
+    build({
+      gear: [
+        { base: "sword", rarity: "common", itemLevel: 1 },
+        { base: "sword", rarity: "common", itemLevel: 1, offhand: true },
+      ],
+    }),
+    dualWieldSnapshot(),
+  );
+  const found = codes(diagnostics).filter((code) => OFFHAND_CODES.includes(code));
+  assert.deepEqual(found, [], JSON.stringify(diagnostics));
+});
+
+test("a weapon that cannot be dual wielded is an error in the offhand", () => {
+  const diagnostics = validateBuild(
+    build({ gear: [{ base: "bow", rarity: "common", itemLevel: 1, offhand: true }] }),
+    dualWieldSnapshot(),
+  );
+  assert.ok(codes(diagnostics, "error").includes("offhand-weapon-not-dual-wieldable"));
+});
+
+test("an offhand sword behind a bow is blocked by DualWieldUtils.mainHandBlocksOffhandWeapon", () => {
+  const diagnostics = validateBuild(
+    build({
+      gear: [
+        { base: "bow", rarity: "common", itemLevel: 1 },
+        { base: "sword", rarity: "common", itemLevel: 1, offhand: true },
+      ],
+    }),
+    dualWieldSnapshot(),
+  );
+  assert.ok(codes(diagnostics, "error").includes("offhand-weapon-blocked"));
+});
+
+test("a mirrored ring fills both ring slots without going over capacity", () => {
+  const ring: Item = { base: "ring", rarity: "common", itemLevel: 1, mirrored: true };
+  const once = validateBuild(build({ gear: [ring] }), dualWieldSnapshot());
+  assert.ok(!codes(once).includes("slot-over-capacity"), JSON.stringify(once));
+  // A third ring beside it is one too many, because the mirror is a real second ring.
+  const extra = validateBuild(
+    build({ gear: [ring, { base: "ring", rarity: "common", itemLevel: 1 }] }),
+    dualWieldSnapshot(),
+  );
+  assert.ok(codes(extra, "error").includes("slot-over-capacity"));
+});
+
+test("a mirrored sword is a legal pair of hands; a mirrored bow is not", () => {
+  const sword = validateBuild(
+    build({ gear: [{ base: "sword", rarity: "common", itemLevel: 1, mirrored: true }] }),
+    dualWieldSnapshot(),
+  );
+  assert.deepEqual(codes(sword).filter((c) => OFFHAND_CODES.includes(c) || c === "mirror-not-pairable"), []);
+  const bow = validateBuild(
+    build({ gear: [{ base: "bow", rarity: "common", itemLevel: 1, mirrored: true }] }),
+    dualWieldSnapshot(),
+  );
+  assert.ok(codes(bow, "error").includes("mirror-not-pairable"));
+});
+
+test("the offhand flag on a ring names no hand", () => {
+  const diagnostics = validateBuild(
+    build({ gear: [{ base: "ring", rarity: "common", itemLevel: 1, offhand: true }] }),
+    dualWieldSnapshot(),
+  );
+  assert.ok(codes(diagnostics, "error").includes("offhand-not-a-weapon"));
+});
+
 test("an offhand beside a one-handed weapon is fine", () => {
   const diagnostics = validateBuild(
     build({

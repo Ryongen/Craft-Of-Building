@@ -98,6 +98,7 @@ export const CATEGORY = {
   talentTree: "mmorpg_talent_tree",
   unique: "mmorpg_unique_gears",
   valueCalc: "mmorpg_value_calc",
+  weaponType: "mmorpg_weapon_type",
   wizard: "mmorpg_wizard",
 } as const;
 
@@ -923,6 +924,144 @@ export const TWO_HANDED_TAG = "two_handed";
 /** Whether this base occupies both hands, and so suppresses the offhand entirely. */
 export function isTwoHanded(snapshot: Snapshot, baseId: string): boolean {
   return baseGearType(snapshot, baseId)?.tags.includes(TWO_HANDED_TAG) ?? false;
+}
+
+// ---------------------------------------------------------------------------
+// Dual wielding: a one-handed weapon in the offhand
+// ---------------------------------------------------------------------------
+
+/** `SlotTags.weapon_family`, which `DualWieldUtils` checks before it looks at the weapon type. */
+const WEAPON_FAMILY_TAG = "weapon_family";
+
+/** `can_dual_wield` on this base's `mmorpg_weapon_type`, or `undefined` for a non-weapon. */
+function canDualWield(snapshot: Snapshot, baseId: string): boolean | undefined {
+  const base = baseGearType(snapshot, baseId);
+  if (base === undefined || !base.tags.includes(WEAPON_FAMILY_TAG)) return undefined;
+  if (base.weaponType === undefined) return undefined;
+  return data(snapshot, CATEGORY.weaponType, base.weaponType)?.["can_dual_wield"] === true;
+}
+
+/**
+ * Whether this base may be held in the offhand — `DualWieldUtils.isDualWieldWeapon`.
+ *
+ * The pack's `mmorpg_weapon_type` registry is the whole answer: axe, dagger, gauntlet, hammer,
+ * staff and sword carry `can_dual_wield: true`; bow, crossbow, greatsword, scythe, spear and
+ * trident do not. Checked against the 6.4.13 jar.
+ */
+export function dualWieldable(snapshot: Snapshot, baseId: string): boolean {
+  return canDualWield(snapshot, baseId) === true;
+}
+
+/**
+ * Whether a mainhand weapon of this base stops an offhand *weapon* from counting —
+ * `DualWieldUtils.mainHandBlocksOffhandWeapon`, which is `isTwoHandedWeapon(mainhand)`.
+ *
+ * Mine and Slash's own two-handed test, and not the same set as {@link isTwoHanded}: it is every
+ * weapon that cannot be dual wielded, so a bow or a trident blocks an offhand sword too. A shield
+ * or tome is unaffected by it — `isUsableBy` only applies it to a weapon in `OFFHAND`.
+ */
+export function blocksOffhandWeapon(snapshot: Snapshot, baseId: string): boolean {
+  return canDualWield(snapshot, baseId) === false;
+}
+
+/** One place something is worn. `mirror` is the second place of an item marked `mirrored`. */
+export type WornPiece = { item: Item; index: number; mirror: boolean };
+
+/** Whether this item may be worn in both places of a pair — both ring slots, or both hands. */
+export function canMirror(snapshot: Snapshot, item: Item): boolean {
+  const slotId = baseGearType(snapshot, item.base)?.gearSlot;
+  if (slotId === undefined) return false;
+  if ((SLOT_CAPACITY[slotId] ?? 1) >= 2) return true;
+  return dualWieldable(snapshot, item.base);
+}
+
+/**
+ * `doc.gear` as the pieces actually worn: a `mirrored` item becomes two, the second in the other
+ * ring slot or in the offhand.
+ *
+ * Everything that counts, sums or searches worn gear reads this rather than `doc.gear`, so a
+ * mirrored ring is two rings to the stat sheet, the set counter and the omen alike. Idempotent —
+ * the pieces it returns carry no `mirrored` flag — so a helper handed either list answers the
+ * same. A flag on an item that cannot be mirrored is ignored here and reported by the validator.
+ */
+export function wornPieces(snapshot: Snapshot, gear: readonly Item[]): WornPiece[] {
+  return gear.flatMap((item, index) => {
+    if (item.mirrored !== true || !canMirror(snapshot, item)) return [{ item, index, mirror: false }];
+    const { mirrored: _mirrored, offhand: _offhand, ...plain } = item;
+    const second = dualWieldable(snapshot, item.base) ? { ...plain, offhand: true as const } : plain;
+    return [
+      { item: plain, index, mirror: false },
+      { item: second, index, mirror: true },
+    ];
+  });
+}
+
+/** {@link wornPieces} without the bookkeeping. */
+export function wornItems(snapshot: Snapshot, gear: readonly Item[]): Item[] {
+  return wornPieces(snapshot, gear).map((piece) => piece.item);
+}
+
+/** Whether this worn item is a weapon in the mainhand — the one a swing and `WEAPON_TYPE` use. */
+export function isMainhandWeapon(snapshot: Snapshot, item: Item): boolean {
+  if (item.offhand === true) return false;
+  const slotId = baseGearType(snapshot, item.base)?.gearSlot;
+  return slotId !== undefined && slotFamily(snapshot, slotId) === "Weapon";
+}
+
+/** The mainhand weapon, if one is worn. */
+export function mainhandWeapon(snapshot: Snapshot, gear: readonly Item[]): Item | undefined {
+  return wornItems(snapshot, gear).find((item) => isMainhandWeapon(snapshot, item));
+}
+
+/**
+ * Whether a worn offhand weapon grants anything at all — `GearData.isUsableBy` for `OFFHAND`.
+ *
+ *     if (type.isWeapon()) {
+ *         if (type.weaponType().can_dual_wield) {
+ *             if (slot == EquipmentSlot.OFFHAND) {
+ *                 return !DualWieldUtils.mainHandBlocksOffhandWeapon(data.getEntity());
+ *             }
+ *         }
+ *         return slot == EquipmentSlot.MAINHAND;
+ *     }
+ *
+ * So a weapon that cannot be dual wielded grants nothing from the offhand, and one that can
+ * grants nothing beside a mainhand that blocks it. An empty mainhand does not block.
+ */
+export function offhandWeaponCounts(snapshot: Snapshot, item: Item, gear: readonly Item[]): boolean {
+  if (item.offhand !== true || !dualWieldable(snapshot, item.base)) return false;
+  const main = mainhandWeapon(snapshot, gear);
+  return main === undefined || !blocksOffhandWeapon(snapshot, main.base);
+}
+
+/**
+ * `DualWieldUtils.isDualWielding` — a dual-wieldable weapon in *each* hand. What the
+ * `is_dual_wielding` stat condition asks, and so what `dual_wield_damage` is gated on.
+ */
+export function isDualWielding(snapshot: Snapshot, gear: readonly Item[]): boolean {
+  const main = mainhandWeapon(snapshot, gear);
+  if (main === undefined || !dualWieldable(snapshot, main.base)) return false;
+  return wornItems(snapshot, gear).some((item) => item.offhand === true && dualWieldable(snapshot, item.base));
+}
+
+/** `PERC_OFFHAND_WEP_STAT`'s default in `ServerContainer` — also what the pack ships. */
+export const DEFAULT_OFFHAND_WEAPON_STAT_PERCENT = 25;
+
+/**
+ * The fraction of an offhand weapon's stats the character gets —
+ * `DualWieldUtils.getOffhandStatPercent`, divided by 100.
+ *
+ *     PERC_OFFHAND_WEP_STAT.get() * Math.max(0, 1F + effectiveness / 100F)
+ *
+ * Effectiveness multiplies the share rather than adding to it, so +10% turns 25% into 27.5%.
+ * `GearData` then multiplies *every* stat the item carries by it — base stats, affixes, sockets
+ * and the unique's own lines alike.
+ */
+export function offhandWeaponShare(snapshot: Snapshot, effectiveness: number): number {
+  const percent =
+    serverConfigNumber(snapshot, "general.PERC_OFFHAND_WEP_STAT") ??
+    DEFAULT_OFFHAND_WEAPON_STAT_PERCENT;
+  return (percent / 100) * Math.max(0, 1 + effectiveness / 100);
 }
 
 // ---------------------------------------------------------------------------

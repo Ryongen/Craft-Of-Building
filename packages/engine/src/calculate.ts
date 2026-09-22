@@ -12,7 +12,13 @@
  */
 
 import type { BuildDoc, Diagnostic, SkillSetup } from "@cte2/schema";
-import { DEFAULT_PLAYER_BASE_STATS_ID, isAuraEnabled, supportLinks } from "@cte2/schema";
+import {
+  DEFAULT_PLAYER_BASE_STATS_ID,
+  isAuraEnabled,
+  offhandWeaponCounts,
+  supportLinks,
+  wornItems,
+} from "@cte2/schema";
 import type { Snapshot } from "@cte2/extractor";
 
 import { balance } from "./balance.js";
@@ -95,6 +101,13 @@ export type EngineOptions = {
    * sheet with no buffs on it at all.
    */
   effects?: EffectState;
+  /**
+   * The Dual-Wield Effectiveness an offhand weapon's share is computed with.
+   *
+   * Internal: `calculate` settles it itself when an offhand weapon is worn (see
+   * {@link settleDualWield}), and a caller has no better value to offer.
+   */
+  dualWieldEffectiveness?: number;
 };
 
 /** `Mth.clamp(entity.getMaxHealth(), 0, 500)` — the ceiling on what vanilla hearts contribute. */
@@ -295,6 +308,36 @@ function settle(
   return calculate(build, snapshot, { ...options, effects: state });
 }
 
+/** Whether any worn offhand weapon grants stats, and so reads Dual-Wield Effectiveness. */
+function wearsOffhandWeapon(build: BuildDoc, snapshot: Snapshot): boolean {
+  const gear = wornItems(snapshot, build.gear ?? []);
+  return gear.some((item) => offhandWeaponCounts(snapshot, item, gear));
+}
+
+/**
+ * Runs the sheet until the offhand weapon's share agrees with the Dual-Wield Effectiveness it
+ * produced.
+ *
+ * The same circle `CachedEntityStats` has: gear is cached before stats are calculated, so the
+ * share is computed from the previous calculation's effectiveness, and `afterStatCalc` marks gear
+ * dirty whenever the new value differs by more than 0.01. Effectiveness comes from perks and
+ * affixes rather than from the offhand itself in this pack, so the second pass settles it; the
+ * cap is the one {@link MAX_EFFECT_PASSES} uses and for the same reason.
+ */
+function settleDualWield(build: BuildDoc, snapshot: Snapshot, options: EngineOptions): EngineResult {
+  let effectiveness = 0;
+  for (let pass = 0; pass < MAX_EFFECT_PASSES; pass++) {
+    const result = calculate(build, snapshot, { ...options, dualWieldEffectiveness: effectiveness });
+    const next = result.stats.get(DUAL_WIELD_EFFECTIVENESS)?.value ?? 0;
+    if (Math.abs(next - effectiveness) <= 0.01) return result;
+    effectiveness = next;
+  }
+  return calculate(build, snapshot, { ...options, dualWieldEffectiveness: effectiveness });
+}
+
+/** `DualWieldEffectiveness`'s GUID. */
+const DUAL_WIELD_EFFECTIVENESS = "dual_wield_effectiveness";
+
 /** Two states agree when the same effects are up at the same stacks. Nothing else feeds back. */
 function sameEffects(a: EffectState, b: EffectState): boolean {
   if (a.active.size !== b.active.size) return false;
@@ -309,6 +352,9 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
   // it out is itself a sheet — so the whole job belongs to `resolveEffects`, which owns the loop.
   const effects = options.effects;
   if (effects === undefined) return resolveEffects(build, snapshot, options);
+  if (options.dualWieldEffectiveness === undefined && wearsOffhandWeapon(build, snapshot)) {
+    return settleDualWield(build, snapshot, options);
+  }
 
   const index = statIndex(snapshot);
   const bal = balance(snapshot, options.balanceId);
@@ -317,7 +363,7 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
 
   // Gear and perks are built ahead of the list because the jewel budget is read off them, and
   // a jewel that has no socket is not collected at all. They go back into the list in place.
-  const gearContexts = collectGear(env, build.gear ?? []);
+  const gearContexts = collectGear(env, build.gear ?? [], options.dualWieldEffectiveness ?? 0);
   const perkContexts = collectPerks(env, build);
 
   // 1. Collect. Order within the list does not matter — everything is summed into the

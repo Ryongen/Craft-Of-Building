@@ -84,7 +84,9 @@ export function ItemDiffCard(): ReactNode {
     if (item === null || source === null) return undefined;
     return positions.map((position, i) => ({
       key: String(i),
-      doc: position.worn
+      doc: position.candidate !== undefined
+        ? position.candidate
+        : position.worn
         ? // Taking it off: the build without it, and nothing going on. `source` is the removal —
           // a worn position is by definition the entry of `doc.gear` the item already occupies.
           docWithSwap(doc, { source })

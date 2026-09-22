@@ -57,6 +57,7 @@ import { useWorld } from "../../state/snapshot.js";
 import { Accordion } from "../../ui/Accordion.js";
 import { NumberField, RollSlider, useRollDraft } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
+import { CopyJsonButton, copyEnvelope } from "../../ui/CopyJsonButton.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { exactModSummary, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
@@ -487,6 +488,11 @@ function JewelCard({
         <span className="faint grow ellipsis text-sm">
           {summary.length === 0 ? "no affixes" : summary}
         </span>
+        <CopyJsonButton
+          compact
+          value={copyEnvelope("jewel", jewelName(snapshot, jewel), jewel)}
+          title="Copy this jewel as JSON — paste it into another build with Import"
+        />
         <button
           title="Remove this jewel"
           onClick={(event) => {

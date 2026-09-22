@@ -24,7 +24,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, ElementName, EnemySetup, Severity, SkillSetup } from "@cte2/schema";
-import { CATEGORY, CODE_ONLY_TRANSFERS, ELEMENTS, SINGLE_ELEMENTS, entry } from "@cte2/schema";
+import { CATEGORY, CODE_ONLY_TRANSFERS, ELEMENTS, SINGLE_ELEMENTS, entry, isDualWielding } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { calculate, type EngineResult, type EngineStat } from "../calculate.js";
@@ -536,6 +536,8 @@ function runEvent(
     pinnedBooleans: new Set([EVENT.CRIT]),
     disableSourceStats: takenAs,
     sourceIsTarget: shared.selfHit,
+    sourceDualWielding: isDualWielding(shared.snapshot, shared.build.gear ?? []),
+    ...(shared.selfHit ? { targetDualWielding: isDualWielding(shared.snapshot, shared.build.gear ?? []) } : {}),
   };
 
   // `initBeforeActivating()` raises a whole `DamageInitEvent` before the hit's own effect list is
@@ -1532,6 +1534,8 @@ function ailmentEventDamage(
     // Carried from the hit that caused it: an ailment off a self-hit is one you gave yourself,
     // and its own sweep reads the same sheets on the same two sides.
     sourceIsTarget: shared.selfHit,
+    sourceDualWielding: isDualWielding(shared.snapshot, shared.build.gear ?? []),
+    ...(shared.selfHit ? { targetDualWielding: isDualWielding(shared.snapshot, shared.build.gear ?? []) } : {}),
   };
 
   const steps: LayerStep[] = [];
@@ -1584,6 +1588,7 @@ function spellStyle(spell: Record<string, unknown>): string {
  */
 function playStyle(snapshot: Snapshot, build: BuildDoc): string {
   for (const item of build.gear ?? []) {
+    if (item.offhand === true) continue;
     const base = entry(snapshot, CATEGORY.baseGearType, item.base)?.data;
     const type = base?.["weapon_type"];
     if (typeof type !== "string" || type.length === 0 || type === "none") continue;
@@ -1608,11 +1613,12 @@ export const WEAPON_BASIC_ATTACK_MULTI = "weapon_basic_attack_dmg_multi";
  * `GearSlot.getBasicDamageMulti()` for the weapon in hand, or `undefined` when unarmed.
  *
  * The same walk as {@link weaponType} and for the same reason: a build document has no "mainhand"
- * field, so the weapon is whichever equipped item has a weapon slot. The first match wins, which
- * is what the game does too — a swing uses one weapon.
+ * field, so the weapon is whichever equipped item has a weapon slot and is not flagged `offhand`.
+ * The first match wins, which is what the game does too — a swing uses the mainhand.
  */
 function basicAttackWeaponMulti(shared: Shared): number | undefined {
   for (const item of shared.build.gear ?? []) {
+    if (item.offhand === true) continue;
     const base = entry(shared.snapshot, CATEGORY.baseGearType, item.base)?.data;
     const slotId = base?.["gear_slot"];
     if (typeof slotId !== "string" || slotId.length === 0) continue;
@@ -1629,6 +1635,7 @@ function basicAttackWeaponMulti(shared: Shared): number | undefined {
 
 function weaponType(shared: Shared): string {
   for (const item of shared.build.gear ?? []) {
+    if (item.offhand === true) continue;
     const base = entry(shared.snapshot, CATEGORY.baseGearType, item.base)?.data;
     const type = base?.["weapon_type"];
     if (typeof type === "string" && type.length > 0 && type !== "none") return type;

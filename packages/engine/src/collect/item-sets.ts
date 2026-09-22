@@ -42,7 +42,7 @@
  */
 
 import type { BuildDoc, Item } from "@cte2/schema";
-import { CATEGORY } from "@cte2/schema";
+import { CATEGORY, wornItems } from "@cte2/schema";
 
 import { context, type Env, type StatContext } from "../context.js";
 import { parseRolledMods, rollToExact, type ExactMod } from "../modifier.js";
@@ -143,7 +143,7 @@ export function equippedSets(env: Env, gear: readonly Item[]): EquippedSet[] {
 export function collectItemSets(env: Env, build: BuildDoc): StatContext[] {
   const sets = readSets(env);
   if (sets.length === 0) return [];
-  const worn = new Map(equippedSets(env, build.gear ?? []).map((e) => [e.setId, e]));
+  const worn = new Map(equippedSets(env, wornItems(env.snapshot, build.gear ?? [])).map((e) => [e.setId, e]));
   if (worn.size === 0) return [];
 
   const out: StatContext[] = [];

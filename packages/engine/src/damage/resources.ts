@@ -284,11 +284,11 @@ export function resources(
   blood.note =
     healthToBloodPercent > 0
       ? `Blood has no regeneration tick of its own. This is ${healthToBloodPercent.toFixed(1)}% of ` +
-        `your health regeneration, redirected by \`hp_resto_to_blood\`, with the blood event's own ` +
-        `percents applied on top. Health leech feeds it too, but only from a basic attack — ` +
+        `your health regeneration, redirected by Hp regen to blood, with the blood modifiers's own ` +
+        `percents applied on top. Health leech feeds it too, but only from a basic attack,` +
         `\`HealthRestorationToBloodEffect\` refuses any restore that carries a spell.`
       : `Blood has no regeneration tick of its own, and nothing in this build carries ` +
-        `\`hp_resto_to_blood\` to redirect health regeneration into it. Blood refills from leech ` +
+        `Hp regen to blood to redirect health regeneration into it. Blood refills from leech ` +
         `and on-kill stats only.`;
   byResource.push(blood);
 
@@ -299,7 +299,7 @@ export function resources(
       code: "blood-magic-active",
       path: "tree",
       message:
-        `\`blood_user\` is on, so every mana **and energy** cost is paid from blood instead — ` +
+        `\`blood_user\` is on, so every mana **and energy** cost is paid from blood instead, ` +
         `\`BloodUserEffect\` rewrites the resource on the spend event and changes nothing else. ` +
         `Mana and energy keep regenerating and stop being spent; blood is what has to keep up, ` +
         `and its only source is ` +

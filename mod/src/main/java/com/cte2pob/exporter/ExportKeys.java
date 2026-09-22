@@ -17,9 +17,9 @@ public final class ExportKeys {
      * like any other key.
      */
     public static final KeyMapping EXPORT = new KeyMapping(
-            "key.cte2pob.export",
+            "key.craftofbuilding.export",
             KeyConflictContext.IN_GAME,
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_F6,
-            "key.categories.cte2pob");
+            "key.categories.craftofbuilding");
 }

@@ -19,7 +19,17 @@
  */
 
 import type { Item, Jewel } from "@cte2/schema";
-import { CATEGORY, affix, baseGearType, entry, gearRarity, slotFamily } from "@cte2/schema";
+import {
+  CATEGORY,
+  affix,
+  baseGearType,
+  entry,
+  gearRarity,
+  offhandWeaponCounts,
+  offhandWeaponShare,
+  slotFamily,
+  wornPieces,
+} from "@cte2/schema";
 
 import { context, type Env, type StatContext } from "../context.js";
 import {
@@ -44,8 +54,46 @@ import {
 // only `p` and `imp` where `AffixData` also stores `rar`.
 type AffixRollLike = { affixId: string; rollPercent: number; tier?: string };
 
-export function collectGear(env: Env, items: readonly Item[]): StatContext[] {
-  return items.flatMap((item, i) => collectItem(env, item, `gear[${i}]`));
+/**
+ * Every worn item's stats.
+ *
+ * `dualWieldEffectiveness` is the character's Dual-Wield Effectiveness, which only an offhand
+ * weapon reads. The game takes it from the *previous* stat calculation and redoes the gear pass
+ * when the next one disagrees (`CachedEntityStats.afterStatCalc`); `settle` in `calculate.ts`
+ * runs the same loop.
+ */
+export function collectGear(
+  env: Env,
+  gear: readonly Item[],
+  dualWieldEffectiveness = 0,
+): StatContext[] {
+  // The pieces worn, so a `mirrored` ring counts twice and a mirrored sword's offhand half takes
+  // the offhand share. The second place keeps the entry's path, so a diagnostic still lands on it.
+  const pieces = wornPieces(env.snapshot, gear);
+  const items = pieces.map((piece) => piece.item);
+  return pieces.flatMap(({ item, index, mirror }) => {
+    const path = mirror ? `gear[${index}].mirrored` : `gear[${index}]`;
+    // The second place is the same item, so whatever it has to say was said by the first.
+    const env_ = mirror ? { ...env, report: () => {} } : env;
+    if (item.offhand !== true || !isWeaponBase(env_, item.base)) return collectItem(env_, item, path);
+
+    // `GearData.isUsableBy`: a weapon in `OFFHAND` is refused outright unless it can be dual
+    // wielded and the mainhand does not block it. The validator names which.
+    if (!offhandWeaponCounts(env.snapshot, item, items)) return [];
+
+    // `GearData.calcStatUtilization` → `percentStatUtilization`, then
+    // `stats.forEach(s -> s.multiplyBy(multi))` over everything the item carries.
+    const share = offhandWeaponShare(env.snapshot, dualWieldEffectiveness);
+    return collectItem(env_, item, path).map((ctx) => ({
+      ...ctx,
+      stats: ctx.stats.map((mod) => ({ ...mod, value: mod.value * share })),
+    }));
+  });
+}
+
+function isWeaponBase(env: Env, baseId: string): boolean {
+  const slotId = baseGearType(env.snapshot, baseId)?.gearSlot;
+  return slotId !== undefined && slotFamily(env.snapshot, slotId) === "Weapon";
 }
 
 function collectItem(env: Env, item: Item, path: string): StatContext[] {

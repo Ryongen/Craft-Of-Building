@@ -206,15 +206,15 @@ export function FullDpsCard({
       )}
 
       <div className="faint text-sm mt-3 prose">
-        Tick the skills you actually press. Casting an <em>attack</em> arms one shared global
-        cooldown, so a combo extender you cast to enable a finisher costs the finisher real time
-        &mdash; which is why this reads lower than the finisher on its own, and why that is the
-        honest number. A <strong>buff</strong> or a <strong>curse</strong> costs the pass only its
-        upkeep: it is re-pressed when what it applied runs out, which for a curse is its duration
+        Tick the skills you actually press. Casting an <em>attack</em> activates one shared global
+        cooldown, so a combo extender you cast to enable a finisher costs the finisher real time,
+        which is why this reads lower than the finisher on its own, and why that is the
+        real number. A <strong>buff</strong> or a <strong>curse</strong> costs the pass only its
+        upkeep: it is re-casted when what it applied runs out, which for a curse is its duration
         on the pack rather than its cooldown, and for a toggle such as Banishing Blade is never.
         An <strong>aura</strong> is free the same way and deals its damage on its own clock, so
         ticking one adds what it pulses for and takes nothing away. Their stats are on your sheet
-        whether or not they are ticked here &mdash; availability comes from the skill bar, and the
+        whether or not they are ticked here, availability comes from the skill bar, and the
         <strong> enabled</strong> box on the Skills tab is the only thing that takes one off it.
       </div>
     </div>

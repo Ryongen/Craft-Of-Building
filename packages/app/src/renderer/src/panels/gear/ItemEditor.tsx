@@ -65,14 +65,16 @@ import {
   uniqueRarityId,
   type AffixRoll,
   type AffixType,
+  type BuildDoc,
   type EnchantCompatView,
   type Item,
   type RunewordView,
   type SocketFamily,
 } from "@cte2/schema";
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
+import { useRanking, type Ranking, type Vitals } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
 import { useWorld } from "../../state/snapshot.js";
@@ -198,11 +200,17 @@ const QUALITY_TITLE =
 export function ItemEditor({
   item,
   slotId,
+  wearing,
   onChange,
   onRemove,
 }: {
   item: Item;
   slotId: string;
+  /**
+   * The document with a given version of this item worn, for pricing socket choices. Absent,
+   * "Sort by DPS" has nothing to price against and is disabled.
+   */
+  wearing?: ((item: Item) => BuildDoc) | undefined;
   onChange: (item: Item) => void;
   onRemove: () => void;
 }): ReactNode {
@@ -630,7 +638,7 @@ export function ItemEditor({
               (item.runeword === undefined ? "" : ` · ${runewordName(snapshot, item.runeword)}`)
         }
       >
-        <Sockets item={item} patch={patch} />
+        <Sockets item={item} patch={patch} wearing={wearing} />
       </Accordion>
 
       {/*
@@ -1456,11 +1464,81 @@ function AffixRow({
  *    runes in, because that is the only way to get one in game: you insert runes and the game
  *    hands you the longest runeword they complete.
  */
-function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => void }): ReactNode {
+/**
+ * `GemRank.PINNACLE`'s tier — the gems that only drop from Pinnacle bosses.
+ *
+ * `PinnacleGemLootGen` rolls exactly this tier, and the pack gives it drop weight 0, which is what
+ * puts "Only drops from Pinnacle Boss kills" on its tooltip (`BaseGemItem`, `weight <= 0`).
+ * Divine (tier 6) keeps weight 1 and drops anywhere, so it is never hidden.
+ */
+const PINNACLE_GEM_TIER = 7;
+
+/** The ranking row for the item as it stands — the zero every other row is measured from. */
+const AS_IS = "\u0000as-is";
+
+/** What a socket list can be ordered by. One at a time: two orders cannot share one list. */
+type SortMode = "none" | "dps" | "ehp";
+
+const SORT_METRIC: Record<Exclude<SortMode, "none">, { read: (v: Vitals) => number; unit: string }> = {
+  dps: { read: (v) => v.totalDps, unit: "DPS" },
+  // The weakest element's EHP, so a resist gem lands where the build is actually thinnest.
+  ehp: { read: (v) => v.ehp, unit: "EHP" },
+};
+
+/**
+ * `options` ordered by what each adds to the chosen figure, best first, each hint led by it.
+ *
+ * Rows still being priced follow in their original order, so the list is usable while the sweep
+ * fills it in rather than missing entries until it finishes.
+ */
+function rankedOptions(
+  options: readonly PickerOption[],
+  ranking: Ranking<string>,
+  mode: Exclude<SortMode, "none">,
+): PickerOption[] {
+  const { read, unit } = SORT_METRIC[mode];
+  const asIs = ranking.rows.find((row) => row.id === AS_IS);
+  if (asIs === undefined) return [...options];
+  const zero = read(asIs.vitals);
+
+  const byId = new Map(options.map((option) => [option.id, option]));
+  const priced: { option: PickerOption; gain: number }[] = [];
+  for (const row of ranking.rows) {
+    const option = byId.get(row.id);
+    if (option === undefined) continue;
+    byId.delete(row.id);
+    priced.push({ option, gain: zero > 0 ? (read(row.vitals) / zero - 1) * 100 : 0 });
+  }
+  priced.sort((a, b) => b.gain - a.gain);
+  const out = priced.map(({ option, gain }) => {
+    const pct = `${gain >= 0 ? "+" : ""}${gain.toFixed(1)}% ${unit}`;
+    return { ...option, hint: option.hint ? `${pct} · ${option.hint}` : pct };
+  });
+  return [...out, ...byId.values()];
+}
+
+/** `options`, with `value` added back if a filter took it out — a row must still name its gem. */
+function keeping(options: readonly PickerOption[], all: readonly PickerOption[], value: string): readonly PickerOption[] {
+  if (options.some((option) => option.id === value)) return options;
+  const own = all.find((option) => option.id === value);
+  return own === undefined ? options : [own, ...options];
+}
+
+function Sockets({
+  item,
+  patch,
+  wearing,
+}: {
+  item: Item;
+  patch: (next: Patch<Item>) => void;
+  wearing: ((item: Item) => BuildDoc) | undefined;
+}): ReactNode {
   const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
   const rarity = world.rarity(item.rarity);
+  const [sortBy, setSortBy] = useState<SortMode>("none");
+  const [showPinnacle, setShowPinnacle] = useState(false);
 
   const sockets = item.sockets ?? [];
   const runes = item.runes ?? [];
@@ -1471,7 +1549,74 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
   const slotId = baseGearType(snapshot, item.base)?.gearSlot;
   const isOffhand = slotId !== undefined && slotFamily(snapshot, slotId) === "OffHand";
 
-  const gemOptions = useMemo<PickerOption[]>(
+  const gemIds = useMemo(
+    () =>
+      showPinnacle
+        ? world.gemIds
+        : world.gemIds.filter((id) => (gem(snapshot, id)?.tier ?? 0) !== PINNACLE_GEM_TIER),
+    [world.gemIds, snapshot, showPinnacle],
+  );
+
+  // A rune with no line for this slot cannot be inserted (`Chats.NOT_FAMILY`), so pricing one
+  // would only rank a choice the game refuses.
+  const insertableRunes = useMemo(
+    () =>
+      world.runeIds.filter((id) => {
+        const view = rune(snapshot, id);
+        return view !== undefined && statsForFamily(view, family).length > 0;
+      }),
+    [world.runeIds, snapshot, family],
+  );
+
+  /**
+   * Each gem and rune priced as *one more* socket on this item, as worn.
+   *
+   * One more rather than "in this row": the list a row opens and the list "Add gem" opens are
+   * the same list, and what orders it is what the socketable is worth to the character. The
+   * item as it stands is priced alongside as {@link AS_IS}, so the percent beside each row is
+   * what that one gem adds — on a benched item as much as a worn one, where the build on screen
+   * would otherwise have the whole item's value folded into every row. Runes are priced at a
+   * full roll, because a new rune arrives at its floor and ranking floors ranks luck.
+   */
+  const gemCandidates = useMemo(() => [AS_IS, ...gemIds], [gemIds]);
+  const runeCandidates = useMemo(() => [AS_IS, ...insertableRunes], [insertableRunes]);
+  const applyGem = useCallback(
+    (id: string) =>
+      wearing!(id === AS_IS ? item : { ...item, sockets: [...(item.sockets ?? []), id] }),
+    [wearing, item],
+  );
+  const applyRune = useCallback(
+    (id: string) =>
+      wearing!(
+        id === AS_IS
+          ? item
+          : {
+              ...item,
+              runes: [...(item.runes ?? []), id],
+              runeRolls: [
+                ...(item.runes ?? []).map((_, i) => item.runeRolls?.[i] ?? 0),
+                100,
+              ],
+            },
+      ),
+    [wearing, item],
+  );
+  const keyOf = useCallback((id: string) => id, []);
+  const canRank = sortBy !== "none" && wearing !== undefined;
+  const gemRanking = useRanking({
+    candidates: gemCandidates,
+    apply: applyGem,
+    keyOf,
+    enabled: canRank && (rarity?.maxGems ?? 0) > 0,
+  });
+  const runeRanking = useRanking({
+    candidates: runeCandidates,
+    apply: applyRune,
+    keyOf,
+    enabled: canRank && (rarity?.maxRunes ?? 0) > 0,
+  });
+
+  const allGemOptions = useMemo<PickerOption[]>(
     () =>
       world.gemIds.map((id) => {
         const view = gem(snapshot, id);
@@ -1485,8 +1630,13 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
       }),
     [world.gemIds, snapshot, family],
   );
+  const gemOptions = useMemo(() => {
+    const kept = new Set(gemIds);
+    const shown = allGemOptions.filter((option) => kept.has(option.id));
+    return canRank ? rankedOptions(shown, gemRanking, sortBy) : shown;
+  }, [gemIds, canRank, sortBy, allGemOptions, gemRanking]);
 
-  const runeOptions = useMemo<PickerOption[]>(
+  const allRuneOptions = useMemo<PickerOption[]>(
     () =>
       world.runeIds.map((id) => {
         const view = rune(snapshot, id);
@@ -1504,6 +1654,11 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
       }),
     [world.runeIds, snapshot, family],
   );
+  const runeOptions = useMemo(
+    () =>
+      canRank ? rankedOptions(allRuneOptions, runeRanking, sortBy) : allRuneOptions,
+    [canRank, sortBy, allRuneOptions, runeRanking],
+  );
 
   const runewords = useMemo(
     () => runewordsForItem(snapshot, item.base, rarity),
@@ -1511,6 +1666,31 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
   );
 
   if (rarity === undefined) return null;
+
+  // One toggle, drawn beside both lists: sorting is a way of reading socketables, not a
+  // setting that differs between gems and runes.
+  // Two buttons over one mode, drawn beside both lists: pressing one releases the other, and
+  // pressing the lit one turns sorting off.
+  const sortButton = (mode: Exclude<SortMode, "none">, label: string, what: string): ReactNode => (
+    <button
+      className={sortBy === mode ? "primary" : ""}
+      aria-pressed={sortBy === mode}
+      disabled={wearing === undefined}
+      title={
+        `Order the lists by how much each one adds to ${what} as one more socket on this item, ` +
+        "worn. Runes are priced at a full roll."
+      }
+      onClick={() => setSortBy((was) => (was === mode ? "none" : mode))}
+    >
+      {label}
+    </button>
+  );
+  const sortToggle = (
+    <>
+      {sortButton("dps", "Sort by DPS", "total DPS")}
+      {sortButton("ehp", "Sort by EHP", "effective HP against your weakest element")}
+    </>
+  );
 
   const filled = sockets.length + runes.length;
   const free = rarity.sockets.max - filled;
@@ -1602,12 +1782,12 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
         <div key={index} className="mb-2">
           <div className="row">
             <Picker
-              options={gemOptions}
+              options={keeping(gemOptions, allGemOptions, gemId)}
               value={gemId}
               onChange={(id) =>
                 id !== undefined && patch({ sockets: sockets.map((g, i) => (i === index ? id : g)) })
               }
-              width={200}
+              width={280}
             />
             {/* A gem has no roll: `Gem.getFor(fam).toExactStat(lvl)` takes no percent, unlike
                 the rune beside it. Saying so is better than an absent control. */}
@@ -1633,7 +1813,7 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
           label="Add gem"
           placeholder="Which gem?"
           options={gemOptions}
-          width={260}
+          width={360}
           disabled={!gemsAllowed || free <= 0 || sockets.length >= rarity.maxGems}
           {...(!gemsAllowed
             ? { title: `${rarity.id} cannot hold a gem` }
@@ -1642,6 +1822,25 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
               : {})}
           onAdd={(id) => patch({ sockets: [...sockets, id] })}
         />
+        {sortToggle}
+        <button
+          className={showPinnacle ? "primary" : ""}
+          aria-pressed={showPinnacle}
+          disabled={!gemsAllowed}
+          title={
+            showPinnacle
+              ? "Showing Pinnacle gems, which only drop from Pinnacle bosses. Click to hide them."
+              : "Pinnacle gems only drop from Pinnacle bosses, so they are hidden. Click to show them."
+          }
+          onClick={() => setShowPinnacle((was) => !was)}
+        >
+          Pinnacle Gems
+        </button>
+        {canRank && gemsAllowed && gemRanking.pending && (
+          <span className="faint text-sm">
+            pricing {gemRanking.done} of {gemRanking.total}…
+          </span>
+        )}
       </div>
 
       {runes.map((runeId, index) => (
@@ -1653,7 +1852,7 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
               onChange={(id) =>
                 id !== undefined && patch({ runes: runes.map((r, i) => (i === index ? id : r)) })
               }
-              width={200}
+              width={280}
             />
             {/* `SocketData.p` — rolled when the rune goes in, and raised rather than re-rolled
                 if you insert the same rune again. */}
@@ -1691,11 +1890,17 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
           label="Add rune"
           placeholder="Which rune?"
           options={runeOptions}
-          width={260}
+          width={360}
           disabled={free <= 0 || runes.length >= rarity.maxRunes}
           {...(free <= 0 ? { title: `All ${rarity.sockets.max} socket(s) are filled` } : {})}
           onAdd={(id) => patch({ runes: [...runes, id], runeRolls: [...runeRolls, 0] })}
         />
+        {sortToggle}
+        {canRank && runeRanking.pending && (
+          <span className="faint text-sm">
+            pricing {runeRanking.done} of {runeRanking.total}…
+          </span>
+        )}
         {free <= 0 && (
           <span className="faint text-sm">
             {rarity.sockets.max} socket{rarity.sockets.max === 1 ? "" : "s"}, all filled

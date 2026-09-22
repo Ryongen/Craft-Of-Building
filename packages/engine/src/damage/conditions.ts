@@ -207,6 +207,13 @@ function evaluateSerializer(
       return best;
     }
 
+    case "is_dual_wielding":
+      // `DualWieldUtils.isDualWielding(event.getSide(statSource))` — a one-handed weapon in
+      // each hand, answered from the gear of whichever side the stat sits on.
+      return (side === "Source" ? ctx.sourceDualWielding : ctx.targetDualWielding) === true
+        ? TRUE
+        : FALSE;
+
     case "source_is_target":
       // A self-damage check, and the only place in the model where it is true: a damage act
       // aimed at a `self` selector, resolved through `simulateHit`'s `selfHit`. Every ordinary

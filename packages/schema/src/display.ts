@@ -862,7 +862,7 @@ export const SHEET_GROUPS: readonly SheetGroup[] = [
   {
     id: "energy",
     name: "Energy",
-    stats: ["energy", "energy_regen", "energy_leech_cap", "energy_on_hit_hit"],
+    stats: ["energy", "energy_regen", "energy_cost", "energy_leech_cap", "energy_on_hit_hit"],
   },
   {
     id: "mana",

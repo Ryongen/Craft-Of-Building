@@ -7,7 +7,7 @@ version = project.mod_version
 group = 'com.cte2pob'
 
 base {
-    archivesName = "cte2pob-exporter-${minecraft_version}"
+    archivesName = "cob-exporter-${minecraft_version}"
 }
 
 java {
@@ -63,10 +63,10 @@ dependencies {
 tasks.named('jar') {
     manifest {
         attributes([
-            'Specification-Title'   : 'CTE2 PoB Exporter',
-            'Specification-Vendor'  : 'cte2-pob',
+            'Specification-Title'   : 'Craft of Building Exporter',
+            'Specification-Vendor'  : 'Ryongen',
             'Specification-Version' : '1',
-            'Implementation-Title'  : 'CTE2 PoB Exporter',
+            'Implementation-Title'  : 'Craft of Building Exporter',
             'Implementation-Version': project.version,
         ])
     }

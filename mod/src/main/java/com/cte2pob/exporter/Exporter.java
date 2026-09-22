@@ -28,6 +28,13 @@ import java.time.format.DateTimeFormatter;
  *
  * <p>It also goes to the clipboard, because the common case is pasting it somewhere rather than
  * hunting for the file.
+ *
+ * <p>{@link RawExport}'s sidecar is written only when asked for ({@code /cobexport raw}). It was
+ * written on every export while the gear mapping was young and the only way to get an item into
+ * the planner by hand; neither is true now - {@link GearExport} carries every field the build
+ * document has, and {@link ItemCopy} puts a single item on the clipboard in the shape the planner
+ * reads. What it is still worth is a character expensive to farm again, where a dump of the
+ * untranslated NBT is cheap insurance against the mapping improving later.
  */
 public final class Exporter {
 
@@ -37,7 +44,8 @@ public final class Exporter {
     private Exporter() {
     }
 
-    public static void export(Minecraft mc, LocalPlayer player, String packVersion) throws IOException {
+    public static void export(Minecraft mc, LocalPlayer player, String packVersion, boolean raw)
+            throws IOException {
         Warnings warn = new Warnings();
         String mnsVersion = modVersion("mmorpg");
 
@@ -47,13 +55,12 @@ public final class Exporter {
             // launcher metadata, not game state - and a fixture's whole purpose is to be
             // invalidated by a pack update. So it is asked for rather than invented.
             warn.add("packVersion is \"unknown\". Nothing in game exposes the Craft to Exile 2 version, so "
-                    + "pass it yourself with /pobexport \"2.0.2\" or edit the field afterwards. Without it a "
+                    + "pass it yourself with /cobexport \"2.0.2\" or edit the field afterwards. Without it a "
                     + "stale fixture cannot be told from a regression.");
         }
 
         JsonObject build = BuildExport.build(player, warn, packVersion, mnsVersion);
         JsonObject observed = ObservedExport.observed(player, warn, packVersion, mnsVersion);
-        JsonObject raw = RawExport.raw(player, warn);
 
         int level = build.getAsJsonObject("character").get("level").getAsInt();
         String name = sanitise(player.getGameProfile().getName()) + "-lvl" + level + "-"
@@ -76,12 +83,15 @@ public final class Exporter {
 
         String json = GSON.toJson(fixture);
 
-        Path dir = mc.gameDirectory.toPath().resolve("cte2-pob-exports");
+        Path dir = mc.gameDirectory.toPath().resolve("cob-exports");
         Files.createDirectories(dir);
         Path file = dir.resolve(name + ".json");
         Files.writeString(file, json, StandardCharsets.UTF_8);
-        Path rawFile = dir.resolve(name + ".raw.json");
-        Files.writeString(rawFile, GSON.toJson(raw), StandardCharsets.UTF_8);
+        Path rawFile = null;
+        if (raw) {
+            rawFile = dir.resolve(name + ".raw.json");
+            Files.writeString(rawFile, GSON.toJson(RawExport.raw(player, warn)), StandardCharsets.UTF_8);
+        }
 
         try {
             mc.keyboardHandler.setClipboard(json);
@@ -89,23 +99,27 @@ public final class Exporter {
             warn.add("Could not write to the clipboard: " + e);
         }
 
-        report(player, file, observed, warn);
+        report(player, file, rawFile, observed, warn);
     }
 
     private static String notes(JsonObject observed, Warnings warn) {
         int stats = observed.getAsJsonArray("stats").size();
-        return "Exported in game by cte2pob-exporter " + Cte2PobExporter.VERSION + ". " + stats
+        return "Exported in game by cob-exporter " + Cte2PobExporter.VERSION + ". " + stats
                 + " stat(s) read from the synced stat container. " + warn.size()
                 + " thing(s) this capture could not do exactly - see `exporter.warnings`.";
     }
 
-    private static void report(LocalPlayer player, Path file, JsonObject observed, Warnings warn) {
+    private static void report(LocalPlayer player, Path file, Path rawFile, JsonObject observed, Warnings warn) {
         int stats = observed.getAsJsonArray("stats").size();
 
         player.sendSystemMessage(Component.literal("[PoB] Exported " + stats + " stats + your build")
                 .withStyle(ChatFormatting.GREEN));
         player.sendSystemMessage(Component.literal("      " + file).withStyle(ChatFormatting.GRAY));
         player.sendSystemMessage(Component.literal("      copied to clipboard").withStyle(ChatFormatting.GRAY));
+        if (rawFile != null) {
+            player.sendSystemMessage(Component.literal("      raw NBT sidecar: " + rawFile.getFileName())
+                    .withStyle(ChatFormatting.GRAY));
+        }
 
         if (warn.size() > 0) {
             player.sendSystemMessage(Component

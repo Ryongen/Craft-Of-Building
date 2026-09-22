@@ -16,6 +16,7 @@ import type {
   DpsResult,
   ElementDefence,
   LayerStep,
+  OverTime,
   Resources,
   SelfSustain,
 } from "@cte2/engine";
@@ -50,6 +51,8 @@ const DEFENCE_PANELS = [
   "defence.self",
   "defence.layers",
   "defence.layers-unavoided",
+  "defence.over-time",
+  "defence.when-hit",
   "defence.stats",
 ] as const;
 
@@ -102,6 +105,64 @@ export function DefencePanel(): ReactNode {
           >
             <RegenTable resources={resources} />
           </Panel>
+
+          {/*
+            How long you last, rather than how big a hit you survive.
+
+            Always rendered, never hidden: the empty state is the whole point. A card that simply
+            vanished when no attacker was stated would be indistinguishable from a build that has
+            nothing to show, and the two are very different answers. Open by default when the
+            drain is not covered, for the same reason Your own damage is.
+          */}
+          <Panel
+            id="defence.over-time"
+            title="Under attack"
+            tone={
+              defence.overTime === undefined
+                ? undefined
+                : defence.overTime.deadliest.sustain.sustainable
+                  ? undefined
+                  : "warn"
+            }
+            summary={
+              defence.overTime === undefined
+                ? "no attacker stated"
+                : defence.overTime.deadliest.sustain.sustainable
+                  ? "you out-regenerate it"
+                  : `dead in ${smart(defence.overTime.deadliest.sustain.secondsToDeath)}s to ${elementLabel(defence.overTime.deadliest.element)}`
+            }
+            defaultOpen={
+              defence.overTime !== undefined && !defence.overTime.deadliest.sustain.sustainable
+            }
+          >
+            <OverTimeCard overTime={defence.overTime} />
+          </Panel>
+
+          {/*
+            What an incoming hit sets off. Same empty-state rule as above.
+          */}
+          {defence.overTime !== undefined &&
+            (defence.overTime.procs.length > 0 ||
+              defence.overTime.ailments.length > 0 ||
+              defence.overTime.restoresPerSecond.length > 0) && (
+            <Panel
+              id="defence.when-hit"
+              title="When you are hit"
+              summary={[
+                defence.overTime.procs.length > 0
+                  ? `${defence.overTime.procs.length} proc${defence.overTime.procs.length === 1 ? "" : "s"}`
+                  : undefined,
+                defence.overTime.ailments.length > 0
+                  ? `${defence.overTime.ailments.length} ailment${defence.overTime.ailments.length === 1 ? "" : "s"} on you`
+                  : undefined,
+              ]
+                .filter((part) => part !== undefined)
+                .join(" · ")}
+              defaultOpen={false}
+            >
+              <WhenHitCard overTime={defence.overTime} />
+            </Panel>
+          )}
 
           {/*
             The damage this build does to itself, which is a defensive question and was only ever
@@ -383,12 +444,12 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
       <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
         <Plain>
           You count as in combat for ten seconds after every hit you land or take, so a rotation
-          never leaves it — the in-combat column is the one that has to pay for your casts, and it
+          never leaves it, the in-combat column is the one that has to pay for your casts, and it
           is the one the Damage tab&apos;s Sustain card uses.{" "}
         </Plain>
         <Tech>
           <code>in_combat</code> is a ten-second cooldown that every hit you land or take
-          re-stamps, so a rotation never leaves it — the in-combat column is the one that has to pay
+          re-stamps, so a rotation never leaves it, the in-combat column is the one that has to pay
           for your casts, and it is the one the Damage tab&apos;s Sustain card uses.{" "}
         </Tech>
         {fights ? (
@@ -413,10 +474,8 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
         ) : (
           <>
             <Plain>
-              They agree here: the in-combat regeneration multiplier is{" "}
-              {resources.inCombatRegenMulti}, which is what this pack ships (the mod&apos;s own
-              default is 0.5 — Config &rarr; Server if your server changed it), and nothing in this
-              build needs you to be out of combat.
+              Nothing in this
+              build needs you to be out of combat (except Mercenary respawn).
             </Plain>
             <Tech>
               They agree here: <code>in_combat_regen_multi</code> is{" "}
@@ -680,7 +739,7 @@ function AttackerNote({ defence }: { defence: Defence }): ReactNode {
     <div className="faint text-sm mt-4">
       Measured against a level {defence.attackerLevel} attacker
       {offence === undefined ? (
-        <> with no stats of its own — pick a target preset in Config to give it MnS&apos;s.</>
+        <> with no stats of its own, pick a target preset in Config to give it MnS&apos;s.</>
       ) : (
         <>
           {" "}
@@ -762,6 +821,234 @@ function Breakdown({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+
+/**
+ * How long you last under the stated attacker, per element.
+ *
+ * The empty state is deliberately a paragraph rather than a blank: "no attacker stated" and "you
+ * take no damage" are very different answers, and a card that showed nothing would conflate them.
+ * It names the two fields and where they live, because the fix is one click away and a reader who
+ * does not know that will read the blank as a limitation of the tool.
+ */
+function OverTimeCard({ overTime }: { overTime: OverTime | undefined }): ReactNode {
+  if (overTime === undefined) {
+    return (
+      <div className="card">
+        <>
+          <Plain>
+            <p className="faint">
+              Nothing here says how long you survive, because this build does not say what it is
+              fighting. The figures above answer the other question — the biggest single hit you
+              could take from full.
+            </p>
+          </Plain>
+          <Tech>
+            <p className="faint">
+              <code>config.enemy.offence</code> states neither <code>vanillaAttackDamage</code> nor{" "}
+              <code>attacksPerSecond</code>, and neither is derivable:{" "}
+              <code>mmorpg_entity</code> carries <code>dmg_multi</code> and no attack damage, and{" "}
+              <code>MobStatUtils.getMobBaseStats</code> gives a mob one line of offence, which is
+              accuracy.
+            </p>
+          </Tech>
+        </>
+        <p className="faint text-sm">
+          Set the enemy&rsquo;s attack damage and how often it swings on the Config tab — an
+          attacker profile fills both in one click.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="row gap-8 wrap">
+        <Figure label="Raw per hit" value={smart(overTime.rawPerHit)} />
+        <Figure label="Swings / sec" value={num(overTime.ratePerSecond, 2)} />
+        {overTime.manaAbsorbSeconds !== undefined && (
+          <Figure
+            label="Mana buffer"
+            value={
+              Number.isFinite(overTime.manaAbsorbSeconds)
+                ? `${smart(overTime.manaAbsorbSeconds)}s`
+                : "holds"
+            }
+          />
+        )}
+      </div>
+
+      <table className="grid mt-3">
+        <thead>
+          <tr>
+            <th>Element</th>
+            <th className="num" title="Post-mitigation, one swing">
+              Per hit
+            </th>
+            <th className="num">Per second</th>
+            <th
+              className="num"
+              title="What your shield and health regeneration between hits do not cover"
+            >
+              Net loss/s
+            </th>
+            <th className="num">Dead in</th>
+            <th
+              className="num"
+              title="Hits survived from full, counting the recovery between them"
+            >
+              Hits
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {overTime.byElement.map((entry) => (
+            <tr
+              key={entry.element}
+              className={entry.element === overTime.deadliest.element ? "warn" : undefined}
+            >
+              <td style={{ color: elementColour(entry.element) }}>
+                {elementLabel(entry.element)}
+              </td>
+              <td className="num">{smart(entry.perHit)}</td>
+              <td className="num">{smart(entry.perSecond)}</td>
+              <td className="num">
+                {entry.sustain.sustainable ? "—" : smart(entry.sustain.netLossPerSecond)}
+              </td>
+              <td className="num">
+                {entry.sustain.sustainable ? "never" : `${smart(entry.sustain.secondsToDeath)}s`}
+              </td>
+              <td className="num">
+                {Number.isFinite(entry.hitsSurvived) ? smart(entry.hitsSurvived) : "∞"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <>
+        <Plain>
+          <p className="faint text-sm mt-3">
+            Shield regeneration pays first, because the shield is hit first; health regeneration
+            covers what is left. Dead in is measured from full, against what neither covers.
+          </p>
+        </Plain>
+        <Tech>
+          <p className="faint text-sm mt-3">
+            The same <code>selfSustain</code> walk Holy Fire&rsquo;s recoil gets: shield
+            regeneration is capped by the drain and by the regen, health regeneration takes the
+            remainder, and <code>netLossPerSecond</code> is what neither covers. Mitigation is the
+            defence pass&rsquo;s own <code>taken</code> fraction — nothing here re-derives a layer.
+          </p>
+        </Tech>
+      </>
+    </div>
+  );
+}
+
+/** The defensive procs, with the rate they have been waiting for. */
+function WhenHitCard({ overTime }: { overTime: OverTime }): ReactNode {
+  const world = useWorld();
+
+  return (
+    <div className="card">
+      <table className="grid">
+        <thead>
+          <tr>
+            <th>Casts</th>
+            <th>From</th>
+            <th className="num">Chance</th>
+            <th className="num" title="Triggers a second, before the roll">
+              Triggers/s
+            </th>
+            <th className="num">Casts/s</th>
+          </tr>
+        </thead>
+        <tbody>
+          {overTime.procs.map((proc) => (
+            <tr key={`${proc.statId}:${proc.spellId}`}>
+              <td>{spellName(world.snapshot, proc.spellId)}</td>
+              <td className="faint">{statName(world.snapshot, proc.statId)}</td>
+              <td className="num">{num(proc.chance * 100, 1)}%</td>
+              <td className="num">
+                {proc.limit === undefined ? num(proc.triggersPerSecond, 2) : "—"}
+              </td>
+              <td className="num">
+                {proc.limit === undefined ? (
+                  num(proc.perSecond, 2)
+                ) : (
+                  <span className="faint">not rated</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {overTime.ailments.length > 0 && (
+        <table className="grid mt-3">
+          <thead>
+            <tr>
+              <th>You suffer</th>
+              <th className="num">Chance</th>
+              <th className="num">Per second</th>
+            </tr>
+          </thead>
+          <tbody>
+            {overTime.ailments.map((ailment) => (
+              <tr key={ailment.ailment} className="warn">
+                <td style={{ color: elementColour(ailment.element) }}>{ailment.ailment}</td>
+                <td className="num">{num(ailment.chance * 100, 0)}%</td>
+                <td className="num">{smart(ailment.damagePerSecond)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {overTime.restoresPerSecond.length > 0 && (
+        <table className="grid mt-3">
+          <thead>
+            <tr>
+              <th>Restores</th>
+              <th className="num">Per second</th>
+            </tr>
+          </thead>
+          <tbody>
+            {overTime.restoresPerSecond.map((record) => (
+              <tr key={`${record.statId}:${record.resource}`}>
+                <td>{statName(world.snapshot, record.statId)}</td>
+                <td className="num">
+                  {smart(record.amount)} {record.resource}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <>
+        <Plain>
+          <p className="faint text-sm mt-3">
+            These fire when the enemy hits you, so their rate is how often that happens. A proc
+            that fires when you <em>block</em> or <em>dodge</em> is listed without a rate: those
+            depend on which way each hit went, which this figure averages over.
+          </p>
+        </Plain>
+        <Tech>
+          <p className="faint text-sm mt-3">
+            <code>Target</code>-side <code>proc_spell</code> blocks. Their chances are the defence
+            sweep&rsquo;s own — every <code>ifs</code> folded in — and only the rate is new. A
+            block gated on <code>is_is_blocked_true</code> or <code>is_is_dodged_true</code> keeps
+            its <code>when-hit</code> limit, because block, dodge and spell dodge are folded into
+            one avoidance outcome by the sweep, and splitting them would mean re-deriving the{" "}
+            <code>DodgeRating</code> and <code>SpellDodgeEffect</code> curves here.
+          </p>
+        </Tech>
+      </>
     </div>
   );
 }

@@ -15,7 +15,6 @@ import com.robertx22.mine_and_slash.database.data.omen.OmenData;
 import com.robertx22.mine_and_slash.database.data.perks.Perk;
 import com.robertx22.mine_and_slash.database.data.talent_tree.TalentTree;
 import com.robertx22.mine_and_slash.saveclasses.PointData;
-import com.robertx22.mine_and_slash.saveclasses.gearitem.gear_parts.AffixData;
 import com.robertx22.mine_and_slash.saveclasses.item_classes.GearItemData;
 import com.robertx22.mine_and_slash.saveclasses.jewel.JewelItemData;
 import com.robertx22.mine_and_slash.saveclasses.skill_gem.SkillGemData;
@@ -62,7 +61,7 @@ public final class BuildExport {
         meta.addProperty("createdAt", Exporter.today());
         meta.addProperty("mineAndSlashVersion", mnsVersion);
         meta.addProperty("packVersion", packVersion);
-        meta.addProperty("notes", "Exported from the game by cte2pob-exporter " + Cte2PobExporter.VERSION + ".");
+        meta.addProperty("notes", "Exported from the game by cob-exporter " + Cte2PobExporter.VERSION + ".");
         build.add("meta", meta);
 
         build.add("character", character(player, pd, en, warn));
@@ -278,34 +277,7 @@ public final class BuildExport {
             return;
         }
 
-        JsonObject out = new JsonObject();
-        out.addProperty("id", omen.id);
-        out.addProperty("itemLevel", omen.lvl);
-        out.addProperty("rarity", omen.rar);
-
-        if (omen.rarities != null && !omen.rarities.isEmpty()) {
-            JsonObject requires = new JsonObject();
-            omen.rarities.forEach((type, count) -> requires.addProperty(type.name(), count));
-            out.add("requires", requires);
-        }
-
-        if (omen.slot_req != null && !omen.slot_req.isEmpty()) {
-            JsonArray reqs = new JsonArray();
-            for (OmenData.OmenSlotReq req : omen.slot_req) {
-                JsonObject entry = new JsonObject();
-                entry.addProperty("slot", req.slot);
-                entry.addProperty("rarityType", req.rtype.name());
-                reqs.add(entry);
-            }
-            out.add("slotRequirements", reqs);
-        }
-
-        JsonArray affixes = affixArray(omen.aff);
-        if (affixes.size() > 0) {
-            out.add("affixes", affixes);
-        }
-
-        build.add("omen", out);
+        build.add("omen", ItemDoc.omen(omen));
     }
 
     private static void jewels(PlayerData pd, JsonObject build, Warnings warn) {
@@ -329,54 +301,13 @@ public final class BuildExport {
             if (jewel == null) {
                 continue;
             }
-            JsonObject out = new JsonObject();
-            out.addProperty("rarity", jewel.rar);
-            out.addProperty("itemLevel", jewel.lvl);
-            // `JewelItemData.style` — a PlayStyle id. It names the jewel (Meteorite, Viridian
-            // or Stardust) and it decides which affixes could have rolled on it, so a capture
-            // without it reads back as a str jewel and a Stardust one looks illegal.
-            out.addProperty("style", jewel.style);
-
-            JsonArray affixes = affixArray(jewel.affixes);
-            if (affixes.size() > 0) {
-                out.add("affixes", affixes);
-            }
-            JsonArray corruptions = affixArray(jewel.cor);
-            if (corruptions.size() > 0) {
-                out.add("corruptions", corruptions);
-            }
-
-            if (jewel.uniq != null && jewel.uniq.id != null && !jewel.uniq.id.isEmpty()) {
-                JsonObject unique = new JsonObject();
-                unique.addProperty("id", jewel.uniq.id);
-                unique.addProperty("rollPercent", jewel.uniq.perc);
-                try {
-                    unique.addProperty("tier", jewel.uniq.getCraftedTier().ordinal());
-                } catch (Exception ignored) {
-                    // The tier only decides how many of the unique's stats it carries; without it
-                    // the id and roll are still the two numbers that matter.
-                }
-                out.add("unique", unique);
-            }
-
-            if (jewel.auraStats != null && !jewel.auraStats.isEmpty()) {
-                JsonArray auraStats = new JsonArray();
-                for (var stat : jewel.auraStats) {
-                    if (stat == null || stat.affix == null || stat.affix.isEmpty()) {
-                        continue;
-                    }
-                    JsonObject entry = new JsonObject();
-                    entry.addProperty("affixId", stat.affix);
-                    entry.addProperty("rollPercent", stat.perc);
-                    entry.addProperty("itemLevel", stat.lvl);
-                    auraStats.add(entry);
-                }
-                if (auraStats.size() > 0) {
-                    out.add("auraStats", auraStats);
-                    warn.add("jewel[" + i + "]: carries " + auraStats.size() + " aura-conditional stat(s), "
-                            + "each live only while the aura named by its affix `eye_aura_req` is "
-                            + "socketed. Unsocket that aura and these stop counting.");
-                }
+            JsonObject out = ItemDoc.jewel(jewel);
+            // The aura-conditional stats are exported but not yet applied by the engine, so the
+            // capture says so rather than letting a fixture disagree for a reason nobody can see.
+            if (out.has("auraStats")) {
+                warn.add("jewel[" + i + "]: carries " + out.getAsJsonArray("auraStats").size()
+                        + " aura-conditional stat(s), each live only while the aura named by its affix "
+                        + "`eye_aura_req` is socketed. Unsocket that aura and these stop counting.");
             }
             // Which tree socket a jewel sits in is not recorded by the game's jewel inventory,
             // so `socket` is left out rather than guessed. The engine does not need it.
@@ -764,23 +695,5 @@ public final class BuildExport {
             }
         }
         return true;
-    }
-
-    private static JsonArray affixArray(List<AffixData> affixes) {
-        JsonArray array = new JsonArray();
-        if (affixes == null) {
-            return array;
-        }
-        for (AffixData affix : affixes) {
-            if (affix == null || affix.isEmpty()) {
-                continue;
-            }
-            JsonObject roll = new JsonObject();
-            roll.addProperty("affixId", affix.id);
-            roll.addProperty("tier", affix.rar);
-            roll.addProperty("rollPercent", affix.p);
-            array.add(roll);
-        }
-        return array;
     }
 }
