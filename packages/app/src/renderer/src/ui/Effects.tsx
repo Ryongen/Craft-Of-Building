@@ -15,11 +15,20 @@
  */
 
 import type { EffectOption, EffectState } from "@cte2/engine";
-import { auraName, exileEffectName, supportGemName, type EffectSetup } from "@cte2/schema";
+import {
+  auraName,
+  exileEffectName,
+  spellName,
+  statName,
+  supportGemName,
+  type EffectSetup,
+} from "@cte2/schema";
 import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../state/build-store.js";
 import { useWorld } from "../state/snapshot.js";
+import { useHint, type Hint } from "./copy/hint.js";
+import { useTechnical } from "./detail-mode.js";
 import { NumberField } from "./fields.js";
 import { Picker, type PickerOption } from "./Picker.js";
 import { useEffectProvenance } from "./Provenance.js";
@@ -116,16 +125,17 @@ function Group({
   onChange,
 }: {
   label?: string;
-  hint?: string;
+  hint?: Hint;
   options: EffectOption[];
   onChange: (id: string, setup: EffectSetup | undefined) => void;
 }): ReactNode {
+  const text = useHint(hint);
   return (
     <div style={{ marginTop: label === undefined ? 0 : 6 }}>
       {label !== undefined && (
-        <div className="faint text-xs" style={{ marginBottom: 3 }} title={hint}>
+        <div className="faint text-xs" style={{ marginBottom: 3 }} title={text}>
           {label}
-          {hint !== undefined && " *"}
+          {text !== undefined && " *"}
         </div>
       )}
       <div className="row wrap gap-5">
@@ -146,6 +156,7 @@ export function EffectToggle({
   onChange: (id: string, setup: EffectSetup | undefined) => void;
 }): ReactNode {
   const world = useWorld();
+  const [technical] = useTechnical();
   const on = option.stacks > 0;
   /*
     What the buff actually grants, as a card rather than as a line of the `title` string.
@@ -161,11 +172,12 @@ export function EffectToggle({
   const grants = option.grantedBy
     .map((g) =>
       g.kind === "spell"
-        ? `the skill ${g.spellId}`
+        ? `the skill ${spellName(world.snapshot, g.spellId) ?? g.spellId}`
         : g.kind === "stat"
-          ? `the stat ${g.statId}`
+          ? `the stat ${statName(world.snapshot, g.statId) ?? g.statId}`
           : g.kind === "support"
-            ? `the ${supportGemName(world.snapshot, g.gemId)} support gem in ${g.spellId}`
+            ? `the ${supportGemName(world.snapshot, g.gemId)} support gem in ` +
+              `${spellName(world.snapshot, g.spellId) ?? g.spellId}`
             : g.kind === "aura"
               ? `the ${auraName(world.snapshot, g.auraId)} Augment`
               : g.kind === "captured"
@@ -227,7 +239,7 @@ export function EffectToggle({
         opacity: option.excludedBy === undefined && blocked === undefined ? 1 : 0.5,
       }}
       title={
-        `${exileEffectName(world.snapshot, option.id)} (${option.id})\n` +
+        `${exileEffectName(world.snapshot, option.id)}${technical ? ` (${option.id})` : ""}\n` +
         `Granted by ${grants}${capNote}.\n` +
         `${strength}\n` +
         (option.side === "target" ? "Lands on the enemy, not on you.\n" : "") +
@@ -244,7 +256,7 @@ export function EffectToggle({
           onChange={(event) => onChange(option.id, event.target.checked ? true : false)}
         />
         <span className="text-sm has-source" {...where.props}>
-          {option.id}
+          {technical ? option.id : (exileEffectName(world.snapshot, option.id) ?? option.id)}
           {where.node}
         </span>
       </label>

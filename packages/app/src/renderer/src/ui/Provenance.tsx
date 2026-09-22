@@ -47,6 +47,7 @@ import { provenanceOf, type Provenance } from "./mod-source.js";
 import type { ModContribution } from "../state/derived.js";
 import { IconCache } from "../panels/tree/icons.js";
 import { CELL, centreOn, draw } from "../panels/tree/render.js";
+import { useTechnical } from "./detail-mode.js";
 
 /** The mini map's viewport, in pixels. */
 const PEEK = { width: 264, height: 184 };
@@ -223,6 +224,7 @@ function PerkPeek({
   perkId: string;
   at: At;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -282,7 +284,7 @@ function PerkPeek({
     <div className="item-window tt-perk floating" style={floatingStyle(at, CARD)}>
       <div className="tt-header">
         <div className="tt-title-container">
-          <div className="tt-title" title={perkId}>
+          <div className="tt-title" title={technical ? perkId : undefined}>
             {perkName(world.snapshot, perkId)}
           </div>
           <div className="tt-subtitle">

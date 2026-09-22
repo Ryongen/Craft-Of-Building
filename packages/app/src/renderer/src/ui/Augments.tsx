@@ -29,6 +29,9 @@ import { StatLines } from "./StatLines.js";
 import { useRollDraft } from "./fields.js";
 import { smart } from "./format.js";
 import { exactModSummary, modDetail, modKeywords } from "./mods.js";
+import { Plain, Tech, resolveHint } from "./copy/hint.js";
+import { AUGMENTS_COPY } from "./copy/augments.js";
+import { useTechnical } from "./detail-mode.js";
 
 export function AugmentList({
   compact = false,
@@ -105,14 +108,23 @@ export function AugmentList({
       <CapacityBar capacity={capacity} />
 
       {!compact && (
-        <div className="notice">
-          Every Augment is a gem with a rarity and a roll of its own
-          (<code>SkillGemData.rar</code> and <code>.perc</code>). The rarity grants nothing
-          directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a
-          common one 0-17. One with no roll set computes at the bottom of its band and says so in
-          Diagnostics. <code>aura_effect</code> — Augment Effect — scales whatever these grant,
-          and is applied.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            Every Augment is a gem with a rarity and a roll of its own. The rarity grants nothing directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a common one 0-17. One with no roll set computes at the bottom of its band and says so in Diagnostics. Augment Effect scales whatever these grant, and is applied.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            Every Augment is a gem with a rarity and a roll of its own
+            (<code>SkillGemData.rar</code> and <code>.perc</code>). The rarity grants nothing
+            directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a
+            common one 0-17. One with no roll set computes at the bottom of its band and says so in
+            Diagnostics. <code>aura_effect</code> — Augment Effect — scales whatever these grant,
+            and is applied.
+          </div>
+        </Tech>
+        </>
       )}
 
       {auras.map((aura, index) => (
@@ -187,13 +199,22 @@ function CapacityBar({ capacity }: { capacity: AuraCapacity }): ReactNode {
       </div>
 
       {over && (
-        <div className="notice">
-          <strong>Over capacity by {-capacity.remaining}.</strong>{" "}
-          <code>removeAurasIfCantWear</code> unequips <strong>every</strong> Augment on the
-          character the moment <code>getRemainingSpirit()</code> goes negative — not just the
-          last one — so this is a character wearing none of them. The engine still sums them all,
-          which is why this is a note rather than something the panel does for you.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            Over capacity by {-capacity.remaining}. Exceeding your available capacity causes the game to unequip all Augments on your character, not just the latest one, leaving you with no active Augments. The planner still totals their stats as a reference note rather than unequipping them automatically.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            <strong>Over capacity by {-capacity.remaining}.</strong>{" "}
+            <code>removeAurasIfCantWear</code> unequips <strong>every</strong> Augment on the
+            character the moment <code>getRemainingSpirit()</code> goes negative — not just the
+            last one — so this is a character wearing none of them. The engine still sums them all,
+            which is why this is a note rather than something the panel does for you.
+          </div>
+        </Tech>
+        </>
       )}
     </>
   );
@@ -226,6 +247,7 @@ function AugmentRow({
   onChange: (next: AuraSetup) => void;
   onRemove: () => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
   const level = useBuild((s) => s.doc.character.level);
@@ -286,7 +308,7 @@ function AugmentRow({
         {tooLow && (
           <span
             className="badge bad"
-            title="AuraGem.min_lvl. The game unequips every Augment on the character when one of them is above your level, not just this one."
+            title={resolveHint(AUGMENTS_COPY.overLevel, technical)}
           >
             needs level {minLevel}
           </span>

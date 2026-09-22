@@ -27,6 +27,8 @@ import type { ReactNode } from "react";
 import { damageRates } from "../../state/compare.js";
 import { useDerived, type DerivedBuild } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
+import { Plain, Tech, useHint, type Hint } from "../../ui/copy/hint.js";
+import { STATS_COPY } from "../../ui/copy/stats.js";
 import { num, smart } from "../../ui/format.js";
 import { elementLabel } from "../../ui/palette.js";
 import { StepRow } from "../../ui/StepRow.js";
@@ -125,16 +127,17 @@ function Detail({
 }: {
   title: string;
   /** One sentence on what the figure is. Never the arithmetic — that is the rows. */
-  lead: string;
+  lead: Hint;
   children?: ReactNode;
 }): ReactNode {
+  const text = useHint(lead);
   return (
     <div className="breakdown">
       <div className="row mb-3">
         <strong className="grow ellipsis">{title}</strong>
         <span className="badge">derived figure</span>
       </div>
-      <p className="muted text-sm mt-0 mb-4 selectable prose">{lead}</p>
+      <p className="muted text-sm mt-0 mb-4 selectable prose">{text}</p>
       {children}
     </div>
   );
@@ -150,15 +153,16 @@ function Term({
 }: {
   label: ReactNode;
   value: string;
-  hint?: string | undefined;
+  hint?: Hint | undefined;
   strong?: boolean;
   onSelect?: (() => void) | undefined;
 }): ReactNode {
+  const text = useHint(hint);
   return (
     <StepRow
       label={strong ? <strong>{label}</strong> : label}
       value={value}
-      {...(hint === undefined ? {} : { title: hint })}
+      {...(text === undefined ? {} : { title: text })}
       {...(onSelect === undefined ? {} : { onClick: onSelect })}
     />
   );
@@ -313,7 +317,7 @@ function FigureDetail({
             <Term
               label="Casting"
               value={`${num(rate.castSeconds, 2)}s`}
-              hint="cast_time_ticks, divided by your cast or attack speed."
+              hint={STATS_COPY.castTime}
               onSelect={stat(rate.channelled ? "cast_speed" : "attack_cast_speed")}
             />
             <Term
@@ -321,10 +325,10 @@ function FigureDetail({
               value={`${num(rate.cooldownSeconds, 2)}s`}
               hint={
                 rate.chargeBased
-                  ? "A charge spell's rate is how fast a charge comes back, not its cooldown — the game force-writes cooldown_ticks to 3 when charges are declared."
+                  ? STATS_COPY.chargeRate
                   : rate.castSpeedBound
-                    ? "Bound by cast speed rather than by the spell's own cooldown: getEffectiveCooldownTicks is max(cooldown_ticks, cast_speed_ticks)."
-                    : "The spell's own cooldown, reduced by cdr."
+                    ? STATS_COPY.castSpeedBound
+                    : STATS_COPY.ownCooldown
               }
               onSelect={stat("cdr")}
             />
@@ -332,7 +336,7 @@ function FigureDetail({
               <Term
                 label="Casts per cycle"
                 value={String(rate.castsPerCycle)}
-                hint="times_to_cast — one press fires the spell more than once."
+                hint={STATS_COPY.timesToCast}
               />
             )}
             {rate.globalCooldownSeconds > 0 && (
@@ -353,7 +357,7 @@ function FigureDetail({
       return (
         <Detail
           title={`Crit multiplier — ${spell}`}
-          lead="What a crit is actually worth on this skill, measured rather than read off a stat: the crit branch divided by the non-crit one. Double damage and the conversion children are inside it, which is why it is not simply 1 + critical_damage."
+          lead={STATS_COPY.critMultiLead}
         >
           <div className="steps">
             <Term label="Non-crit" value={smart(damage.hit.total)} />
@@ -374,7 +378,7 @@ function FigureDetail({
       return (
         <Detail
           title={`Chance to hit — ${spell}`}
-          lead="The share of this skill's hits the target does not dodge — damage_block's multiplier. It is already folded into every damage figure, as expectation rather than as a roll, so this says how much of the number above is the miss."
+          lead={STATS_COPY.hitChanceLead}
         >
           <div className="steps">
             <Term
@@ -438,7 +442,7 @@ function FigureDetail({
             <Term
               label="Hit that tips it"
               value={smart(damage.average.total)}
-              hint="It lands as well. The two are separate events: `shatterAccumulated` fires an `EventBuilder.ofDamage` of its own."
+              hint={STATS_COPY.ailmentAlsoLands}
               onSelect={() => onFocus({ kind: "figure", id: "hit" })}
             />
             <Term label="Pool released" value={smart(dps.ailmentHit)} />
@@ -477,13 +481,22 @@ function FigureDetail({
               onSelect={() => onFocus({ kind: "figure", id: "ailment-dps" })}
             />
           </div>
-          <div className="faint text-sm mt-4 prose">
-            Both halves are on the ailment clock and both are already inside Combined DPS. They
-            are two rows because nothing else about them is alike: a DoT is a rate that is either
-            up or not, and this is a pool that is either released or wasted, moved by{" "}
-            <code>freeze_chance</code> and <code>freeze_proc_chance</code> rather than by{" "}
-            <code>dot_speed</code>.
-          </div>
+          <>
+          <Plain>
+            <div className="faint text-sm mt-4 prose">
+              Both components operate on ailment timing and are included in Combined DPS. They occupy separate rows because they function differently: damage over time is a continuous rate, while shatter damage accumulates into a pool that either detonates or expires, driven by freeze chance and shatter activation chance rather than damage over time speed.
+            </div>
+          </Plain>
+          <Tech>
+            <div className="faint text-sm mt-4 prose">
+              Both halves are on the ailment clock and both are already inside Combined DPS. They
+              are two rows because nothing else about them is alike: a DoT is a rate that is either
+              up or not, and this is a pool that is either released or wasted, moved by{" "}
+              <code>freeze_chance</code> and <code>freeze_proc_chance</code> rather than by{" "}
+              <code>dot_speed</code>.
+            </div>
+          </Tech>
+          </>
         </Detail>
       );
 
@@ -572,14 +585,14 @@ function FigureDetail({
             <Term
               label="Mitigated"
               value={`${num(self.mitigated * 100, 1)}%`}
-              hint="Your armour, your resists and your dmg_received. Increases to damage and crit do not apply — no_attacker_stats_on_selfdmg switches the attacker half of the sweep off — but mitigation does."
+              hint={STATS_COPY.selfDamageTaken}
             />
             <Term label="You take, per cast" value={smart(self.perCast)} />
             <Term label="Drain" value={`${smart(sustain.drainPerSecond)}/s`} strong />
             <Term
               label="Magic shield regeneration pays"
               value={`${smart(sustain.fromShieldRegen)}/s`}
-              hint="First, because the shield absorbs before health does. A build with no magic shield pays nothing from here, however much magic_shield_regen its gear rolls."
+              hint={STATS_COPY.selfDamageShield}
               onSelect={stat("magic_shield_regen")}
             />
             <Term
@@ -635,7 +648,7 @@ function FigureDetail({
             <Term
               label="Per cast"
               value={smart(perCast)}
-              hint="mana_cost or ene_cost on the spell, times the product of the gems' manaMulti."
+              hint={STATS_COPY.costBase}
               onSelect={stat(mana ? "mana_cost" : "spirit_cost")}
             />
             <Term
@@ -647,7 +660,7 @@ function FigureDetail({
             <Term
               label="Regeneration, in combat"
               value={`${smart(regen)}/s`}
-              hint="in_combat is a ten-second cooldown that every hit re-stamps, so a rotation never leaves it. Anything gated on being out of combat is worth nothing here."
+              hint={STATS_COPY.inCombat}
               onSelect={stat(`${pool}_regen`)}
             />
             {budget !== undefined && (
@@ -800,7 +813,7 @@ function FullDpsDetail({
           <Term
             label="Procs"
             value={smart(full.procDps)}
-            hint="Merged across the whole pass against one shared set of `proc_cooldown_ticks`, not added up per skill."
+            hint={STATS_COPY.procShared}
           />
         )}
         {dots > 0.005 && (

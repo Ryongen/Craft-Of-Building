@@ -12,6 +12,7 @@ import type { ExtractSummary } from "@shared/ipc";
 
 import { App } from "./app.js";
 import { SnapshotProvider } from "./state/snapshot.js";
+import { Plain, Tech } from "./ui/copy/hint.js";
 
 type Phase =
   | { kind: "loading" }
@@ -91,11 +92,20 @@ export function Root(): ReactNode {
     return (
       <Centered>
         <div>Reading your install…</div>
-        <p className="muted mt-4">
-          Merging every <code>mmorpg</code> registry, copying the GUI textures, and resolving gear
-          sprites out of every jar in <code>mods/</code>. This takes a few seconds and only ever
-          reads from the modpack folder.
-        </p>
+        <>
+        <Plain>
+          <p className="muted mt-4">
+            Merging game registries, copying interface textures, and loading gear sprites from installed mod files. This takes a few seconds and reads exclusively from your modpack folder.
+          </p>
+        </Plain>
+        <Tech>
+          <p className="muted mt-4">
+            Merging every <code>mmorpg</code> registry, copying the GUI textures, and resolving gear
+            sprites out of every jar in <code>mods/</code>. This takes a few seconds and only ever
+            reads from the modpack folder.
+          </p>
+        </Tech>
+        </>
       </Centered>
     );
   }

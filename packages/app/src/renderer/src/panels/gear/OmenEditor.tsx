@@ -54,6 +54,9 @@ import { useWorld } from "../../state/snapshot.js";
 import { NumberField, smart } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
+import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
+import { GEAR_COPY } from "../../ui/copy/gear.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 /** The pack renames omens to "Codex"; `item.mmorpg.omen` is the key that says so. */
 function omenWord(snapshot: Parameters<typeof text>[0]): string {
@@ -158,13 +161,22 @@ export function OmenEditor({
         )}
       </div>
 
-      <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
-        An {omenWord(snapshot).toLowerCase()} grants nothing on its own. Raising a requirement
-        raises the payout — <code>getStatPercent</code> is ten per required piece plus ten per
-        slot requirement, times the rarity&apos;s <code>stat_multi</code> — but also raises what
-        you have to wear to collect it. The <strong>mainhand never counts</strong>:
-        <code>recalcGears</code> collects armour, the offhand and the jewellery curios only.
-      </div>
+      <>
+      <Plain>
+        <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
+          An {omenWord(snapshot).toLowerCase()} grants no stats by itself. Increasing requirements boosts the bonus, adding ten percent per required piece and ten percent per slot requirement, scaled by rarity, but requires equipping more matching gear to activate. Mainhand weapons never count: only armour, offhands, and jewellery curios satisfy requirements.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
+          An {omenWord(snapshot).toLowerCase()} grants nothing on its own. Raising a requirement
+          raises the payout — <code>getStatPercent</code> is ten per required piece plus ten per
+          slot requirement, times the rarity&apos;s <code>stat_multi</code> — but also raises what
+          you have to wear to collect it. The <strong>mainhand never counts</strong>:
+          <code>recalcGears</code> collects armour, the offhand and the jewellery curios only.
+        </div>
+      </Tech>
+      </>
 
       <Requirements omen={omen} patch={patch} />
       <SlotRequirements omen={omen} patch={patch} />
@@ -372,6 +384,7 @@ function OmenAffixes({
   percent: number;
   patch: (next: Patch<OmenSetup>) => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const { snapshot } = useWorld();
   const affixes = omen.affixes ?? [];
 
@@ -413,10 +426,10 @@ function OmenAffixes({
           {/* Both of these were controls. `adata.rar = rar.GUID()` and
               `adata.p = OmenData.getStatPercent(...)` — the omen fills them in, so the row
               reports them and the two omen fields above are where they are changed. */}
-          <span className="badge" title="AffixData.rar — an omen's affix takes the omen's rarity">
+          <span className="badge" title={resolveHint(GEAR_COPY.omenAffixRarity, technical)}>
             {omen.rarity}
           </span>
-          <span className="badge" title="AffixData.p — the same derived percent as the omen's own mods">
+          <span className="badge" title={resolveHint(GEAR_COPY.omenAffixRoll, technical)}>
             at {percent}%
           </span>
           <div className="grow" />

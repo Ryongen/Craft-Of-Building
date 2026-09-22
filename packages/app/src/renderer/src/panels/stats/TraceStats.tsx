@@ -14,7 +14,7 @@
  * the trace rather than a table of ids.
  */
 
-import { statDisplay, statName } from "@cte2/schema";
+import { statDesc, statDisplay, statName } from "@cte2/schema";
 import type { EventTrace, LayerStep } from "@cte2/engine";
 import type { ReactNode } from "react";
 
@@ -24,6 +24,7 @@ import { USABLE_NOUN, num, smart } from "../../ui/format.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import type { SheetFocus } from "./SheetDetail.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 /**
  * Every stat that fed a layer on one side of a trace, in the order the layers ran.
@@ -137,6 +138,7 @@ export function TraceStatList({
   /** What to say when the trace named nothing, which is a real answer rather than a failure. */
   empty: string;
 }): ReactNode {
+  const [technical] = useTechnical();
   const { snapshot } = useWorld();
   const derived = useDerived();
 
@@ -170,7 +172,7 @@ export function TraceStatList({
           <div
             key={statId}
             className={`stat-row${isOpen ? " selected" : ""}`}
-            title={statId}
+            title={technical ? statId : (statDesc(snapshot, statId) ?? undefined)}
             onClick={() => onSelect({ kind, statId } as SheetFocus)}
           >
             <StatIcon statId={statId} />

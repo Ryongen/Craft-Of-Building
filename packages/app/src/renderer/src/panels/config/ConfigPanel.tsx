@@ -55,6 +55,7 @@ import { NumberField, RollSlider } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { FoodDiversity } from "./FoodDiversity.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 export function ConfigPanel(): ReactNode {
   return (
@@ -126,17 +127,26 @@ function ServerSection(): ReactNode {
             </button>
           )}
         </div>
-        <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
-          <code>in_combat_regen_multi</code> is a <strong>server</strong> config rather than pack
-          data, and is read from <code>defaultconfigs/mine_and_slash-server.toml</code> in the
-          install you extracted from — override it here if the server you play on differs. Craft
-          to Exile 2 ships <code>1.0</code>; Mine and Slash&apos;s own default is <code>0.5</code>.{" "}
-          <code>in_combat</code> is a ten-second cooldown that
-          every hit you land or take re-stamps, so a rotation never leaves it — this scales the
-          regeneration column the Defence tab prints and the one the Damage tab&apos;s Sustain card
-          spends. Energy is exempt by name in <code>RestoreResourceEvent.activate</code> and is
-          never scaled by it.
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
+            In-combat regeneration is a server setting read from your server configuration file—override it here if the server you play on differs. Craft to Exile 2 ships with 1.0; Mine and Slash's default is 0.5. You count as in combat for ten seconds after taking or dealing a hit, so an active rotation never leaves combat—this scales the regeneration column listed on the Defence tab and spent by the Damage tab's Sustain card. Energy is exempt and is never scaled by this multiplier.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
+            <code>in_combat_regen_multi</code> is a <strong>server</strong> config rather than pack
+            data, and is read from <code>defaultconfigs/mine_and_slash-server.toml</code> in the
+            install you extracted from — override it here if the server you play on differs. Craft
+            to Exile 2 ships <code>1.0</code>; Mine and Slash&apos;s own default is <code>0.5</code>.{" "}
+            <code>in_combat</code> is a ten-second cooldown that
+            every hit you land or take re-stamps, so a rotation never leaves it — this scales the
+            regeneration column the Defence tab prints and the one the Damage tab&apos;s Sustain card
+            spends. Energy is exempt by name in <code>RestoreResourceEvent.activate</code> and is
+            never scaled by it.
+          </div>
+        </Tech>
+        </>
       </div>
     </>
   );
@@ -179,13 +189,22 @@ function EnemySection(): ReactNode {
   return (
     <>
       <div className="section-title">Enemy</div>
-      <div className="notice info">
-        Stated, never derived. Building a mob from <code>mmorpg_entity</code> and its rarity
-        would put a second unverified stat calculation underneath every damage number, and a
-        mismatch against the game would no longer say which half was wrong. A preset below
-        <em> fills</em> these rows and then gets out of the way &mdash; the engine still reads
-        only what is written here, and every field stays yours to edit.
-      </div>
+      <>
+      <Plain>
+        <div className="notice info">
+          A preset below fills these rows and gets out of the way so the engine reads only what is written here, and every field is yours to edit.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="notice info">
+          Stated, never derived. Building a mob from <code>mmorpg_entity</code> and its rarity
+          would put a second unverified stat calculation underneath every damage number, and a
+          mismatch against the game would no longer say which half was wrong. A preset below
+          <em> fills</em> these rows and then gets out of the way &mdash; the engine still reads
+          only what is written here, and every field stays yours to edit.
+        </div>
+      </Tech>
+      </>
 
       <div className="card">
         <div className="row wrap mb-2">
@@ -210,16 +229,25 @@ function EnemySection(): ReactNode {
             </span>
           )}
         </div>
-        <div className="faint text-sm mb-5" style={{ maxWidth: 760 }}>
-          The Training Dummy mod&apos;s own targets, built the same way:{" "}
-          <code>10 &times; stat_multi</code> of armour put through the level curve, and that same
-          number again as every non-physical resistance, flat and unscaled. No mob in Mine and
-          Slash has physical resistance &mdash; armour alone stops a physical hit &mdash; and a
-          boss&apos;s raw resistance swallows that much penetration before the 75% clamp is even
-          reached. <strong>Max resist</strong> is the one that is not a rarity: it solves its
-          armour for 75% physical mitigation, as the dummy does, which is roughly three times a
-          boss&apos;s own.
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mb-5" style={{ maxWidth: 760 }}>
+            The Training Dummy mod's targets match standard monster scaling: ten times the standard stat multiplier in level-scaled armour, plus that same amount as flat, unscaled non-physical resistance. No mob in Mine and Slash has innate physical resistance, armour alone stops physical damage and a boss's raw resistance absorbs penetration before hitting the 75% cap. The max resistance target works differently: it adjusts armour to achieve 75% physical mitigation, roughly three times what a boss possesses.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mb-5" style={{ maxWidth: 760 }}>
+            The Training Dummy mod&apos;s own targets, built the same way:{" "}
+            <code>10 &times; stat_multi</code> of armour put through the level curve, and that same
+            number again as every non-physical resistance, flat and unscaled. No mob in Mine and
+            Slash has physical resistance &mdash; armour alone stops a physical hit &mdash; and a
+            boss&apos;s raw resistance swallows that much penetration before the 75% clamp is even
+            reached. <strong>Max resist</strong> is the one that is not a rarity: it solves its
+            armour for 75% physical mitigation, as the dummy does, which is roughly three times a
+            boss&apos;s own.
+          </div>
+        </Tech>
+        </>
         <div className="row wrap gap-8">
           <div className="field">
             <label>Level</label>
@@ -333,23 +361,41 @@ function EnemySection(): ReactNode {
             </div>
           ))}
         </div>
-        <div className="faint text-sm mt-3">
-          <code>ElementalResist.getUsableValue</code> is{" "}
-          <code>clamp(75 + max_&lt;element&gt;_resist, min, 90)</code>, so this is an{" "}
-          <em>addition</em> to the cap rather than the cap itself, and{" "}
-          <code>MaxElementalResist.max</code> is {MAX_ELEMENTAL_RESIST} — exactly enough to reach
-          the 90% hard cap and no more.
-        </div>
-        <div className="faint text-sm mt-3">
-          Penetration is <strong>not</strong> floored at 0. <code>ElementalResist.min</code> is
-          -300 and <code>getUsableValue</code> clamps to it, so enough penetration drives a
-          resist negative and the mitigation layer becomes a multiplier — up to x4.0 damage at
-          -300. The one case where it is wasted is a resist of <em>exactly</em> 0: the stat is
-          never swept, because <code>ElementalResistEffect</code> does not override{" "}
-          <code>runsOnZeroStat</code>. Armour is the mirror image — it does override it, so it
-          runs at 0 armour, and the sign flip on <code>afterPene</code> caps amplification at
-          x1.9. Both asymmetries are in the mod, not here.
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-3">
+            This stat adds to the mob base resistance cap rather than setting the cap directly, capped at an addition of {MAX_ELEMENTAL_RESIST}—exactly enough to reach the 90% hard cap and no higher.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-3">
+            <code>ElementalResist.getUsableValue</code> is{" "}
+            <code>clamp(75 + max_&lt;element&gt;_resist, min, 90)</code>, so this is an{" "}
+            <em>addition</em> to the cap rather than the cap itself, and{" "}
+            <code>MaxElementalResist.max</code> is {MAX_ELEMENTAL_RESIST} — exactly enough to reach
+            the 90% hard cap and no more.
+          </div>
+        </Tech>
+        </>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-3">
+            Penetration is not capped at 0%. Resistance can drop as low as -300%, turning mitigation into a damage multiplier up to x4.0. Penetration is wasted only against a target with exactly 0% resistance, as calculations are skipped. Armour works differently: penetration applies even at 0 armour, but quirks in the calculation cap damage amplification at x1.9.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-3">
+            Penetration is <strong>not</strong> floored at 0. <code>ElementalResist.min</code> is
+            -300 and <code>getUsableValue</code> clamps to it, so enough penetration drives a
+            resist negative and the mitigation layer becomes a multiplier — up to x4.0 damage at
+            -300. The one case where it is wasted is a resist of <em>exactly</em> 0: the stat is
+            never swept, because <code>ElementalResistEffect</code> does not override{" "}
+            <code>runsOnZeroStat</code>. Armour is the mirror image — it does override it, so it
+            runs at 0 armour, and the sign flip on <code>afterPene</code> caps amplification at
+            x1.9. Both asymmetries are in the mod, not here.
+          </div>
+        </Tech>
+        </>
       </div>
     </>
   );
@@ -597,11 +643,20 @@ function FoodSection(): ReactNode {
   return (
     <>
       <div className="section-title">Food and elixirs</div>
-      <div className="notice">
-        <code>StatBuff.getStats</code> rolls at <code>perc + lvl</code> — the crafted roll{" "}
-        <em>plus</em> the food's level — so a level {level} food lands {level} points past its
-        own band. The roll below is the crafted part alone, as the game stores it.
-      </div>
+      <>
+      <Plain>
+        <div className="notice">
+          Food stats combine the crafted roll with the item's level, so level {level} food gains {level} extra points above its stat band. The roll shown below is the crafted portion alone, exactly as saved by the game.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="notice">
+          <code>StatBuff.getStats</code> rolls at <code>perc + lvl</code> — the crafted roll{" "}
+          <em>plus</em> the food's level — so a level {level} food lands {level} points past its
+          own band. The roll below is the crafted part alone, as the game stores it.
+        </div>
+      </Tech>
+      </>
 
       {buffs.map((buff, index) => (
         <div key={`${buff.id}-${index}`} className="row wrap mb-2">

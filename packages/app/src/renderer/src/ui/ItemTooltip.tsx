@@ -55,6 +55,7 @@ import { useDerived } from "../state/derived.js";
 import { useWorld } from "../state/snapshot.js";
 import { GearIcon, ItemIcon } from "./GearIcon.js";
 import { itemSections, jewelSections, type ItemSection, type StatLine } from "./item-stats.js";
+import { useTechnical } from "./detail-mode.js";
 
 /**
  * The card's assumed size, for flipping it near the edge of the window.
@@ -243,6 +244,7 @@ export function ItemWindow({
  * that goes quiet about the part of the jewel the reader is deciding about.
  */
 function CategoryGroup({ section }: { section: ItemSection }): ReactNode {
+  const [technical] = useTechnical();
   if (section.lines.length === 0) return null;
 
   return (
@@ -257,7 +259,11 @@ function CategoryGroup({ section }: { section: ItemSection }): ReactNode {
         // `worse` rather than "negative": the game colours a line by `minus_is_good`, so −15
         // Mana Cost stays green and −40% Attack Speed does not. `totalLines` has already
         // applied that rule — this only paints what it decided.
-        <div key={i} className={`tt-line${line.good ? "" : " worse"}`} title={line.statId}>
+        <div
+          key={i}
+          className={`tt-line${line.good ? "" : " worse"}`}
+          title={technical ? line.statId : undefined}
+        >
           {renderFormattedStatLine(line.text)}
         </div>
       ))}

@@ -32,6 +32,7 @@ import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { NumberField } from "../../ui/fields.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 export function FoodDiversity(): ReactNode {
   const { snapshot } = useWorld();
@@ -78,9 +79,16 @@ export function FoodDiversity(): ReactNode {
 
         {captured && (
           <div className="notice mt-3">
-            This build carries <code>character.attributes</code> captured from the game. Those win
-            wherever the game actually reported a value — so a captured{" "}
-            <code>max_health</code> keeps its number and is not counted twice.{" "}
+            <Plain>
+              This build carries attributes captured from the game. Those win wherever the game
+              actually reported a value — so a captured maximum health keeps its number and is
+              not counted twice.{" "}
+            </Plain>
+            <Tech>
+              This build carries <code>character.attributes</code> captured from the game. Those win
+              wherever the game actually reported a value — so a captured{" "}
+              <code>max_health</code> keeps its number and is not counted twice.{" "}
+            </Tech>
             {filled === undefined ? (
               <>
                 Nothing here needed filling in: every attribute these benefits grant was already
@@ -92,13 +100,22 @@ export function FoodDiversity(): ReactNode {
           </div>
         )}
 
-        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-          These grant vanilla attributes, which <code>mmorpg_stat_compat</code> converts into real
-          stats — health, magic shield, dodge and weapon damage among them. Nothing about your gear
-          reveals them, and the in-game exporter reads the <code>kubejs:</code> ones as zero, which
-          is why this box still matters on an imported build.
-          {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+            These grant vanilla attributes, which the game converts into real stats like health, magic shield, dodge, and weapon damage. Gear stats do not reveal them, and exported character files ignore custom script attributes, which is why this section remains necessary on imported builds. {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+            These grant vanilla attributes, which <code>mmorpg_stat_compat</code> converts into real
+            stats — health, magic shield, dodge and weapon damage among them. Nothing about your gear
+            reveals them, and the in-game exporter reads the <code>kubejs:</code> ones as zero, which
+            is why this box still matters on an imported build.
+            {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}
+          </div>
+        </Tech>
+        </>
       </div>
     </>
   );

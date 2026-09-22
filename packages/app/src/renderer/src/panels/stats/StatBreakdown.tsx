@@ -56,6 +56,7 @@ import { num, signed, smart } from "../../ui/format.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import { StepRow } from "../../ui/StepRow.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * The kinds a contribution rolls up into, in the order they are shown.
@@ -294,21 +295,36 @@ export function StatBreakdown({
               </a>
             </span>
           ))}{" "}
-          before anything resolves, then zeroes itself (<code>ITransferToOtherStats</code>). It
-          reads <strong>0</strong> on the sheet no matter what feeds it — the value is not lost,
-          it moved.
+          <Plain>
+            before anything resolves, then zeroes itself. It reads <strong>0</strong> on the sheet
+            no matter what feeds it — the value is not lost, it moved.
+          </Plain>
+          <Tech>
+            before anything resolves, then zeroes itself (<code>ITransferToOtherStats</code>). It
+            reads <strong>0</strong> on the sheet no matter what feeds it — the value is not lost,
+            it moved.
+          </Tech>
         </div>
       )}
 
       {stat.dmgMulti !== 1 && (
-        <div className="notice">
-          This stat is <code>MULTIPLICATIVE_DAMAGE</code>: its MORE modifiers are deliberately{" "}
-          <em>not</em> in the value above. They are carried as{" "}
-          <strong>×{num(stat.dmgMulti, 3)}</strong> and spent once, later, in the damage layer.
-          Anything reading this stat&apos;s value — including every <code>one_to_other</code>{" "}
-          that adds from it — sees the number without that multiplier, which is what the game
-          does too.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            This is a multiplicative damage stat: its MORE multipliers are excluded from the base value shown above. Instead, they are saved as a x{num(stat.dmgMulti, 3)} multiplier and applied during final damage calculations. Any effect reading this stat including stat conversions, uses the unmultiplied base number, matching in-game behavior.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            This stat is <code>MULTIPLICATIVE_DAMAGE</code>: its MORE modifiers are deliberately{" "}
+            <em>not</em> in the value above. They are carried as{" "}
+            <strong>×{num(stat.dmgMulti, 3)}</strong> and spent once, later, in the damage layer.
+            Anything reading this stat&apos;s value — including every <code>one_to_other</code>{" "}
+            that adds from it — sees the number without that multiplier, which is what the game
+            does too.
+          </div>
+        </Tech>
+        </>
       )}
 
       {breakdown.contributions.length === 0 && breakdown.derived.length === 0 && (

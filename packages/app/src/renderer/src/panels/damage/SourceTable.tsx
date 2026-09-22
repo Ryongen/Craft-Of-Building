@@ -5,6 +5,7 @@ import { type ReactNode } from "react";
 import { useBuild } from "../../state/build-store.js";
 import { NumberField } from "../../ui/fields.js";
 import { num, smart } from "../../ui/fields.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * Every `damage` act one cast produces, and how much of each one reaches the target.
@@ -116,14 +117,23 @@ export function SourceTable({ dps }: { dps: DpsResult }): ReactNode {
         </tbody>
       </table>
 
-      <div className="faint text-sm mt-3 prose">
-        <strong>Lands</strong> is derived, not assumed: each projectile is flown with the
-        game&apos;s own integration &mdash; <code>proj_speed</code>, <code>proj_accel</code> and{" "}
-        <code>yaw_velocity</code>, spread the way <code>ProjectileCastHelper</code> spreads them
-        &mdash; and the pulses that fall inside the area radius of the target are counted. Type
-        over it only when you know something the simulation cannot, such as a mob that will not
-        stand still in a ground effect.
-      </div>
+      <>
+      <Plain>
+        <div className="faint text-sm mt-3 prose">
+          Landing hits are simulated rather than assumed: each projectile is calculated using its speed, acceleration, and arc spread, counting hits that land within the target's area radius. Override this number only when you know something the simulation cannot account for, such as a mob moving out of a ground effect.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="faint text-sm mt-3 prose">
+          <strong>Lands</strong> is derived, not assumed: each projectile is flown with the
+          game&apos;s own integration &mdash; <code>proj_speed</code>, <code>proj_accel</code> and{" "}
+          <code>yaw_velocity</code>, spread the way <code>ProjectileCastHelper</code> spreads them
+          &mdash; and the pulses that fall inside the area radius of the target are counted. Type
+          over it only when you know something the simulation cannot, such as a mob that will not
+          stand still in a ground effect.
+        </div>
+      </Tech>
+      </>
     </>
   );
 }

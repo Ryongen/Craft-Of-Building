@@ -23,6 +23,7 @@ import { importItem, type AffixRoll, type ImportIssue, type ImportResult, type I
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useWorld } from "../../state/snapshot.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** What the in-game tooltip looks like when Shift is held, as a worked example. */
 const EXAMPLE = `Promised Lapis Amulet of the Wind
@@ -99,14 +100,23 @@ export function ImportDialog({
           <button onClick={onClose}>Close</button>
         </div>
 
-        <div className="notice info mb-5">
-          <strong>Hold Shift over the item before copying its tooltip.</strong> Without it the
-          game merges every affix into one list with no ranges and no tiers
-          (<code>GearTooltipUtils</code> branches on <code>useInDepthStats()</code>), and two
-          affixes granting the same stat are already added together — there is nothing left to
-          take apart. <code>/data get entity @s SelectedItem</code> works whatever you are
-          holding and is exact.
-        </div>
+        <>
+        <Plain>
+          <div className="notice info mb-5">
+            Hold Shift while hovering the item, then copy its tooltip. Without Shift the game merges every affix into one list with no ranges and no tiers, and two affixes granting the same stat arrive already added together, with no way to tell them apart afterwards. /data get entity @s SelectedItem works whatever you are holding, and is exact.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice info mb-5">
+            <strong>Hold Shift over the item before copying its tooltip.</strong> Without it the
+            game merges every affix into one list with no ranges and no tiers
+            (<code>GearTooltipUtils</code> branches on <code>useInDepthStats()</code>), and two
+            affixes granting the same stat are already added together — there is nothing left to
+            take apart. <code>/data get entity @s SelectedItem</code> works whatever you are
+            holding and is exact.
+          </div>
+        </Tech>
+        </>
 
         <textarea
           className="paste"

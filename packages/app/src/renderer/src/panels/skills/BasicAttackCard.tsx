@@ -28,6 +28,9 @@ import { useWorld } from "../../state/snapshot.js";
 import { Fact } from "../../ui/Fact.js";
 import { NumberField } from "../../ui/fields.js";
 import { num, smart } from "../../ui/format.js";
+import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
+import { SKILLS_COPY } from "../../ui/copy/skills.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 export function BasicAttackCard(): ReactNode {
   const derived = useDerived();
@@ -38,11 +41,20 @@ export function BasicAttackCard(): ReactNode {
       <div className="section-title mt-0">Basic attack</div>
 
       {basic === undefined ? (
-        <div className="faint mb-4">
-          Nothing to swing. A character holding no weapon has no basic attack, and the two boxes
-          below are still worth filling in — <code>attack_damage_compat</code> reads the attribute
-          whether or not anything is equipped.
-        </div>
+        <>
+        <Plain>
+          <div className="faint mb-4">
+            Nothing to swing. Unarmed characters have no basic attack, but entering values below is still useful—the game applies weapon attack damage bonuses to total damage whether a weapon is equipped or not.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint mb-4">
+            Nothing to swing. A character holding no weapon has no basic attack, and the two boxes
+            below are still worth filling in — <code>attack_damage_compat</code> reads the attribute
+            whether or not anything is equipped.
+          </div>
+        </Tech>
+        </>
       ) : (
         <>
           <div className="row wrap gap-7 mb-4">
@@ -69,12 +81,21 @@ export function BasicAttackCard(): ReactNode {
               a single hit rather than a per-second one. Fill in the weapon speed below.
             </div>
           ) : basic.frozen ? (
-            <div className="notice">
-              The rate came from a capture&apos;s finished attribute rather than from the
-              weapon&apos;s own speed times this build&apos;s <code>attack_speed</code>, so it is
-              right for the character that was captured and will not move when you change gear.
-              The box below is what unfreezes it.
-            </div>
+            <>
+            <Plain>
+              <div className="notice">
+                This attack rate was imported directly as a final calculated value rather than computed from base weapon speed and attack speed bonuses. It accurately reflects the captured character state, but will not update when gear changes until separated below.
+              </div>
+            </Plain>
+            <Tech>
+              <div className="notice">
+                The rate came from a capture&apos;s finished attribute rather than from the
+                weapon&apos;s own speed times this build&apos;s <code>attack_speed</code>, so it is
+                right for the character that was captured and will not move when you change gear.
+                The box below is what unfreezes it.
+              </div>
+            </Tech>
+            </>
           ) : null}
           <div className="faint text-sm mb-4">
             On its own clock, like ailments and summons: pressing a Skill does not stop you
@@ -103,6 +124,7 @@ export function BasicAttackCard(): ReactNode {
  * capture ever held.
  */
 function WeaponSpeed(): ReactNode {
+  const [technical] = useTechnical();
   const doc = useBuild((s) => s.doc);
   const setBaseAttackSpeed = useBuild((s) => s.setBaseAttackSpeed);
   const derived = useDerived();
@@ -126,26 +148,35 @@ function WeaponSpeed(): ReactNode {
         />
         <span className="faint text-sm">the weapon&apos;s own swings per second</span>
         {swings !== undefined && (
-          <span className="badge" title="The weapon's own rate times your attack_speed stat">
+          <span className="badge" title={resolveHint(SKILLS_COPY.weaponRate, technical)}>
             {swings.toFixed(2)}/s at {percent.toFixed(1)}% attack speed
           </span>
         )}
         {base === undefined && captured !== undefined && (
           <span
             className="badge warn"
-            title="Your capture's attribute already has this build's attack_speed baked into it, so the rate cannot respond to an edit until the two halves are separated."
+            title={resolveHint(SKILLS_COPY.capturedRate, technical)}
           >
             frozen at the captured {captured.toFixed(2)}/s
           </span>
         )}
       </div>
 
-      <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-        Vanilla&apos;s <code>attack_speed</code> attribute is the weapon&apos;s own rate multiplied
-        by your <code>attack_speed</code> stat, and a capture records only the finished product.
-        Splitting them is what lets the figure above move when your gear does. An axe is about
-        1.2/s, a dagger about 2.5/s; opening a capture fills this in for the weapon you had.
-      </div>
+      <>
+      <Plain>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          Base attack speed combines weapon speed with your character's attack speed stat, but exported character files store only the final result. Separating base weapon speed from attack speed stats allows calculations to update dynamically when gear changes. Axes attack around 1.2 times per second, while daggers hit around 2.5 times per second.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          Vanilla&apos;s <code>attack_speed</code> attribute is the weapon&apos;s own rate multiplied
+          by your <code>attack_speed</code> stat, and a capture records only the finished product.
+          Splitting them is what lets the figure above move when your gear does. An axe is about
+          1.2/s, a dagger about 2.5/s; opening a capture fills this in for the weapon you had.
+        </div>
+      </Tech>
+      </>
     </div>
   );
 }
@@ -166,6 +197,7 @@ function WeaponSpeed(): ReactNode {
  * number rather than fighting it.
  */
 function WeaponAttackDamage(): ReactNode {
+  const [technical] = useTechnical();
   const { snapshot } = useWorld();
   const doc = useBuild((s) => s.doc);
   const setWeaponAttackDamage = useBuild((s) => s.setWeaponAttackDamage);
@@ -197,27 +229,36 @@ function WeaponAttackDamage(): ReactNode {
           vanilla <code>generic.attack_damage</code>, 1.0 bare-handed
         </span>
         {total > 0 && (
-          <span className="badge" title="attack_damage_compat converts it at 0.5x into total_damage">
+          <span className="badge" title={resolveHint(SKILLS_COPY.attackDamageCompat, technical)}>
             +{smart(total)}% to every hit
           </span>
         )}
         {stale && (
           <span
             className="badge warn"
-            title="A weapon is equipped but this is still the bare-handed value, so total_damage reads zero and every damage number on the page is low."
+            title={resolveHint(SKILLS_COPY.unarmedValue, technical)}
           >
             {weapons.join(", ")} equipped, still bare-handed
           </span>
         )}
       </div>
 
-      <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-        A weapon&apos;s attack damage is a Minecraft item property, so no registry the extractor
-        reads can supply it — only a capture taken <em>with the weapon in hand</em>, or this box.{" "}
-        <code>attack_damage_compat</code> halves it into <code>total_damage</code>, which is
-        additive damage with no condition attached: it moves every element of every hit, so a
-        missing weapon here is a flat shortfall on the whole Damage tab.
-      </div>
+      <>
+      <Plain>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          Weapon attack damage is a base Minecraft item property that export tools cannot read directly, it must come from an imported character snapshot or be entered here manually. Half of this value becomes total damage, which boosts all damage types across every hit, so leaving this empty creates a heavy loss on the Damage tab.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          A weapon&apos;s attack damage is a Minecraft item property, so no registry the extractor
+          reads can supply it — only a capture taken <em>with the weapon in hand</em>, or this box.{" "}
+          <code>attack_damage_compat</code> halves it into <code>total_damage</code>, which is
+          additive damage with no condition attached: it moves every element of every hit, so a
+          missing weapon here is a flat shortfall on the whole Damage tab.
+        </div>
+      </Tech>
+      </>
     </div>
   );
 }

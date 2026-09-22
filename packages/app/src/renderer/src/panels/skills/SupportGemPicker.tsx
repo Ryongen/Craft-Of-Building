@@ -44,6 +44,9 @@ import type { GemPreset } from "../../ui/GemRoll.js";
 import { useGemTooltip } from "../../ui/SpellTooltip.js";
 import { supportGemCard } from "../../ui/spell-stats.js";
 import { percent, round, signGlyph, smart } from "../../ui/format.js";
+import { SKILLS_COPY } from "../../ui/copy/skills.js";
+import { useTechnical } from "../../ui/detail-mode.js";
+import { resolveHint } from "../../ui/copy/hint.js";
 
 /** Below this the two figures are the same number and the difference is float noise. */
 const NOISE = 1e-6;
@@ -298,6 +301,7 @@ function GemRow({
   preset: GemPreset | undefined;
   onPick: (event: React.MouseEvent) => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const characterLevel = useBuild((s) => s.doc.character.level);
   const dps = row.comparison.headline.find((d) => d.key === "dps");
@@ -395,7 +399,7 @@ function GemRow({
       )}
 
       {costMulti !== 1 && (
-        <span className="faint gem-rank-cost" title="SocketedGem.getManaCostMulti">
+        <span className="faint gem-rank-cost" title={resolveHint(SKILLS_COPY.gemCostMulti, technical)}>
           ×{costMulti.toFixed(2)}
         </span>
       )}

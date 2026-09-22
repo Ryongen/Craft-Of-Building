@@ -53,8 +53,12 @@ import { ComboCard } from "./ComboCard.js";
 import { RateCard } from "./RateCard.js";
 import { TraceBlock } from "./Trace.js";
 import { Outcome } from "./Outcome.js";
+import { DAMAGE_COPY } from "../../ui/copy/damage.js";
+import { useTechnical } from "../../ui/detail-mode.js";
+import { resolveHint } from "../../ui/copy/hint.js";
 
 export function DamagePanel(): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const derived = useDerived();
   const doc = useBuild((s) => s.doc);
@@ -308,7 +312,7 @@ export function DamagePanel(): ReactNode {
                 note={
                   <>
                     {ELEMENTS[shownHit.element]?.displayName || shownHit.element}
-                    <span title="dmg_effectiveness — how much of your added damage this act carries">
+                    <span title={resolveHint(DAMAGE_COPY.dmgEffectiveness, technical)}>
                       {" · "}
                       {num(shownHit.dmgEffectiveness * 100, 0)}% effectiveness
                     </span>
@@ -470,7 +474,7 @@ export function DamagePanel(): ReactNode {
             summary={
               <>
                 {sustain.blood && (
-                  <span className="badge warn" title="`blood_user`: every mana and energy cost is paid from blood">
+                  <span className="badge warn" title={resolveHint(DAMAGE_COPY.bloodUser, technical)}>
                     blood magic
                   </span>
                 )}
@@ -490,7 +494,7 @@ export function DamagePanel(): ReactNode {
                   {rotationOnly > 0 && (
                     <span
                       className="badge"
-                      title="Gated off this skill by a `spell_has_tag`, and fired by another skill you ticked into the rotation. The Full DPS figure counts them."
+                      title={resolveHint(DAMAGE_COPY.triggeredBySkill, technical)}
                     >
                       +{rotationOnly} from the rotation
                     </span>

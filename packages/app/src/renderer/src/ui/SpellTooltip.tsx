@@ -23,6 +23,7 @@ import { renderFormattedStatLine } from "./ItemTooltip.js";
 import { smart } from "./format.js";
 import type { CardFact, GemCard, SpellCard } from "./spell-stats.js";
 import type { StatLine } from "./item-stats.js";
+import { useTechnical } from "./detail-mode.js";
 
 /** Assumed sizes for the edge flip. A skill's card is the taller of the two by some way. */
 const SPELL_CARD = { width: 340, height: 420 };
@@ -287,13 +288,14 @@ export function GemWindow({
  * read green. See `totalLines`.
  */
 function StatBlock({ lines }: { lines: readonly StatLine[] }): ReactNode {
+  const [technical] = useTechnical();
   return (
     <>
       {lines.map((line, i) => (
         <div
           key={`${line.statId}-${i}`}
           className={`tt-line${line.good ? "" : " worse"}`}
-          title={line.statId}
+          title={technical ? line.statId : undefined}
         >
           {renderFormattedStatLine(line.text)}
         </div>

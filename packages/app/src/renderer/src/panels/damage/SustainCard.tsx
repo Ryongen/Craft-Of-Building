@@ -2,6 +2,7 @@ import { type DpsResult } from "@cte2/engine";
 import { type ReactNode } from "react";
 
 import { num, smart } from "../../ui/fields.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * The verdict, in one line, for the folding panel's head.
@@ -150,12 +151,21 @@ function LeechDetail({ leech }: { leech: DpsResult["cost"]["leech"] }): ReactNod
 
       {capped.length > 0 && (
         <div className="faint text-sm mt-4 prose">
-          <strong>Capped.</strong> Leech is banked, not restored:{" "}
-          <code>onSecondUseLeeches</code> pays out{" "}
-          <code>&lt;resource&gt;_leech_cap</code>% of the pool each second and clamps the bank to
-          five seconds of that. More leech on gear buys{" "}
-          {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here — a
-          bigger pool or a higher cap does. The base cap is 5% on every pool.
+          <Plain>
+            <strong>Capped.</strong> Leech is banked, not restored: each second it pays out a
+            percentage of the pool and the bank is clamped to five seconds of that. More leech on
+            gear buys{" "}
+            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here
+            — a bigger pool or a higher cap does. The base cap is 5% on every pool.
+          </Plain>
+          <Tech>
+            <strong>Capped.</strong> Leech is banked, not restored:{" "}
+            <code>onSecondUseLeeches</code> pays out{" "}
+            <code>&lt;resource&gt;_leech_cap</code>% of the pool each second and clamps the bank to
+            five seconds of that. More leech on gear buys{" "}
+            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here — a
+            bigger pool or a higher cap does. The base cap is 5% on every pool.
+          </Tech>
         </div>
       )}
 

@@ -18,6 +18,9 @@ import type { ReactNode } from "react";
 
 import { useWorld } from "../state/snapshot.js";
 import { RollSlider } from "./fields.js";
+import { AUGMENTS_COPY } from "./copy/augments.js";
+import { useTechnical } from "./detail-mode.js";
+import { resolveHint } from "./copy/hint.js";
 
 /** What a gem's `rollPercent` may be, given its rarity. Unstated rarity means unconstrained. */
 export function gemBand(
@@ -81,6 +84,7 @@ export function GemRarityRoll({
   shownRoll?: number;
   onPreview?: (rollPercent: number) => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const band = gemBand(world, gem.rarity);
   const ladder = gemRarities(world);
@@ -90,7 +94,7 @@ export function GemRarityRoll({
       <select
         className={gem.rarity === undefined ? undefined : `rarity-${gem.rarity}`}
         value={gem.rarity ?? ""}
-        title="SkillGemData.rar — the band this gem's roll was drawn from"
+        title={resolveHint(AUGMENTS_COPY.rarityBand, technical)}
         onChange={(event) => {
           const rarity = event.target.value;
           if (rarity === "") {

@@ -66,6 +66,10 @@ import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { smart } from "../../ui/format.js";
 import { SupportGemPicker } from "./SupportGemPicker.js";
 import { BasicAttackCard } from "./BasicAttackCard.js";
+import { SKILLS_COPY } from "../../ui/copy/skills.js";
+import { useTechnical } from "../../ui/detail-mode.js";
+import { resolveHint } from "../../ui/copy/hint.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** Which row of the left column is open. The basic attack is not a document index. */
 type Selection = { kind: "skill"; index: number } | { kind: "basic" };
@@ -500,6 +504,7 @@ function SkillCard({
   /** Eight Skills are already on. A disabled one here cannot be switched back on.  */
   barFull: boolean;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
   const derived = useDerived();
@@ -694,24 +699,45 @@ function SkillCard({
           {excluded === "mercenary" ? (
             <>
               <strong>This is the mercenary&apos;s version of the skill.</strong>{" "}
-              <code>{skill.spellId}</code> is in the hired companion&apos;s tree
-              (<code>mmorpg_mercenary</code>), not yours — it caps at rank 1 and carries the
-              companion&apos;s cooldowns, so every number below is about a skill your character
-              cannot cast.
+              <Plain>
+                {spellName(world.snapshot, skill.spellId) ?? "It"} is in the hired companion&apos;s
+                tree, not yours — it caps at rank 1 and carries the companion&apos;s cooldowns, so
+                every number below is about a skill your character cannot cast.
+              </Plain>
+              <Tech>
+                <code>{skill.spellId}</code> is in the hired companion&apos;s tree
+                (<code>mmorpg_mercenary</code>), not yours — it caps at rank 1 and carries the
+                companion&apos;s cooldowns, so every number below is about a skill your character
+                cannot cast.
+              </Tech>
             </>
           ) : excluded === "wizard" ? (
             <>
               <strong>This is a wizard&apos;s version of the skill.</strong>{" "}
-              <code>{skill.spellId}</code> is one of the spells an <code>mmorpg_wizard</code>
-              {" "}casts at you — a hostile mob&apos;s copy, with the mob&apos;s numbers. No class
-              teaches it, so your character cannot cast it.
+              <Plain>
+                {spellName(world.snapshot, skill.spellId) ?? "It"} is one of the spells a hostile
+                wizard casts at you — a mob&apos;s copy, with the mob&apos;s numbers. No class
+                teaches it, so your character cannot cast it.
+              </Plain>
+              <Tech>
+                <code>{skill.spellId}</code> is one of the spells an <code>mmorpg_wizard</code>
+                {" "}casts at you — a hostile mob&apos;s copy, with the mob&apos;s numbers. No class
+                teaches it, so your character cannot cast it.
+              </Tech>
             </>
           ) : (
             <>
               <strong>This version of the skill has been retired.</strong>{" "}
-              <code>{skill.spellId}</code> is a spell the pack replaced: nothing in the game
-              reaches it any more — no class perk teaches it, nothing summons or procs it — so
-              the numbers below describe a skill you cannot obtain.
+              <Plain>
+                {spellName(world.snapshot, skill.spellId) ?? "It"} is a spell the pack replaced:
+                nothing in the game reaches it any more — no class perk teaches it, nothing
+                summons or procs it — so the numbers below describe a skill you cannot obtain.
+              </Plain>
+              <Tech>
+                <code>{skill.spellId}</code> is a spell the pack replaced: nothing in the game
+                reaches it any more — no class perk teaches it, nothing summons or procs it — so
+                the numbers below describe a skill you cannot obtain.
+              </Tech>
             </>
           )}{" "}
           It shares its display name with the live one, which is how it ended up here.{" "}
@@ -848,7 +874,7 @@ function SkillCard({
           </button>
         )}
         {doc.character.level < requiredLevel && (
-          <span className="badge bad" title="Spell.getRequiredLevel — the character level gate">
+          <span className="badge bad" title={resolveHint(SKILLS_COPY.requiredLevel, technical)}>
             needs level {requiredLevel}
           </span>
         )}
@@ -914,7 +940,7 @@ function SkillCard({
           <span
             className="faint text-sm"
             style={{ fontWeight: "normal", marginLeft: 8 }}
-            title="SocketedGem.getManaCostMulti — each linked gem's `manaMulti`, multiplied together and applied to both the mana and the energy cost. A gem switched off is an empty socket and charges nothing."
+            title={resolveHint(SKILLS_COPY.gemCostMultiAll, technical)}
           >
             — cost multiplier {costMulti.toFixed(2)}×
           </span>
@@ -1024,6 +1050,7 @@ function SupportGemRow({
   }) => void;
   onRemove: () => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
   const band = gemBand(world, link.rarity);
@@ -1085,7 +1112,7 @@ function SupportGemRow({
             {gemCostMulti > 1 && (
               <span
                 className="badge bad"
-                title="SocketedGem.getManaCostMulti — this gem alone. The heading above multiplies every socketed gem's together."
+                title={resolveHint(SKILLS_COPY.gemCostMultiOne, technical)}
               >
                 ×{gemCostMulti.toFixed(2)} cost
               </span>
@@ -1099,7 +1126,7 @@ function SupportGemRow({
               <span
                 key={`${line.statId}-${at}`}
                 className={`gem-mod${line.tone === "" ? "" : ` ${line.tone}`}`}
-                title={line.statId}
+                title={technical ? line.statId : undefined}
               >
                 {line.text}
               </span>

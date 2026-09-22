@@ -40,6 +40,7 @@ import { num, smart } from "../../ui/format.js";
 import { Splitter } from "../../ui/Splitter.js";
 import { SheetDetail, type SheetFocus } from "./SheetDetail.js";
 import { StatList } from "./StatList.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** Whether the header's figures read per hit or per second. */
 type Mode = "hit" | "dps";
@@ -230,14 +231,23 @@ function SkillHeader({
         number cannot explain, said once here rather than under every section that happens to
         contain an example of one.
       */}
-      <div className="muted text-sm mt-3 prose">
-        <span className="badge warn">×N</span> is a <code>MULTIPLICATIVE_DAMAGE</code> stat holding
-        its whole contribution back for the damage layer, which is why several of those read 0.{" "}
-        <span className="badge bad">cap</span> is a hard ceiling reached.{" "}
-        <strong>43.10% (1,575.9)</strong> is an <code>IUsableStat</code>: the percent the rating
-        converts to in play, and the rating behind it. Click any row for where its number came
-        from.
-      </div>
+      <>
+      <Plain>
+        <div className="muted text-sm mt-3 prose">
+          Multiplier values (like xN) represent multiplicative damage stats that apply directly during final damage calculations, which is why their sheet values show as 0. Reaching a cap indicates a hard ceiling. Values formatted like 43.10% (1,575.9) show the effective in-game percentage followed by the underlying rating score that generates it. Click any row to view its exact source calculation.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="muted text-sm mt-3 prose">
+          <span className="badge warn">×N</span> is a <code>MULTIPLICATIVE_DAMAGE</code> stat holding
+          its whole contribution back for the damage layer, which is why several of those read 0.{" "}
+          <span className="badge bad">cap</span> is a hard ceiling reached.{" "}
+          <strong>43.10% (1,575.9)</strong> is an <code>IUsableStat</code>: the percent the rating
+          converts to in play, and the rating behind it. Click any row for where its number came
+          from.
+        </div>
+      </Tech>
+      </>
     </div>
   );
 }

@@ -65,6 +65,7 @@ import { useWorld } from "../../state/snapshot.js";
 import { GemWindow, SpellWindow } from "../../ui/SpellTooltip.js";
 import { useHoverCard, type At } from "../../ui/HoverCard.js";
 import { perkCard, spellCard } from "../../ui/spell-stats.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** `SpellSchool.MAX_X_ROWS` / `MAX_Y_ROWS` — the grid the screen draws into. */
 const COLUMNS = 10;
@@ -147,10 +148,19 @@ export function SchoolPanel(): ReactNode {
   if (schoolIds.length === 0) {
     return (
       <div className="panel">
-        <div className="notice">
-          This snapshot has no <code>mmorpg_spell_school</code> entries, so there are no classes
-          to allocate into.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            This snapshot contains no class data, so there are no class trees to spend points in.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            This snapshot has no <code>mmorpg_spell_school</code> entries, so there are no classes
+            to allocate into.
+          </div>
+        </Tech>
+        </>
       </div>
     );
   }
@@ -194,11 +204,20 @@ export function SchoolPanel(): ReactNode {
       </div>
 
       {solo && (
-        <div className="notice info">
-          <strong>Solo class bonus active:</strong> +10% MORE total damage and +5 damage
-          reduction, from <code>SpellSchoolsData</code>. Putting a single point in a second class
-          removes both.
-        </div>
+        <>
+        <Plain>
+          <div className="notice info">
+            Solo class bonus active: +10% MORE total damage and +5 flat damage reduction. Allocating even a single point in a second class removes both bonuses.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice info">
+            <strong>Solo class bonus active:</strong> +10% MORE total damage and +5 damage
+            reduction, from <code>SpellSchoolsData</code>. Putting a single point in a second class
+            removes both.
+          </div>
+        </Tech>
+        </>
       )}
 
       <div className="school-tabs">
@@ -254,10 +273,16 @@ export function SchoolPanel(): ReactNode {
               </span>
             ))}
           <br />
-          Each of those is a <code>learn_{"<spell>"}</code> stat on the sheet, which is where{" "}
-          <code>SpellCastingData.calcSpellLevels</code> reads a spell&apos;s rank from — plus any
-          bonus ranks from <code>+ to spell level</code> stats, which the sheet carries
-          separately.
+          <Plain>
+            Each of those sets that spell&apos;s base rank, which your bonuses to spell level are
+            then added on top of — the sheet carries those separately.
+          </Plain>
+          <Tech>
+            Each of those is a <code>learn_{"<spell>"}</code> stat on the sheet, which is where{" "}
+            <code>SpellCastingData.calcSpellLevels</code> reads a spell&apos;s rank from — plus any
+            bonus ranks from <code>+ to spell level</code> stats, which the sheet carries
+            separately.
+          </Tech>
         </div>
       )}
     </div>
@@ -318,10 +343,19 @@ function SchoolGrid({
   return (
     <>
       {blockedByClassLimit && (
-        <div className="notice">
-          Points here would be a <strong>third class</strong>, which{" "}
-          <code>canLearn</code> refuses outright. Reset one of your two classes first.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            You cannot allocate points into a third class. Reset one of your current two classes first.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            Points here would be a <strong>third class</strong>, which{" "}
+            <code>canLearn</code> refuses outright. Reset one of your two classes first.
+          </div>
+        </Tech>
+        </>
       )}
 
       <div className="school-grid">
@@ -359,11 +393,20 @@ function SchoolGrid({
       </div>
 
       {missing.length > 0 && (
-        <div className="notice">
-          {missing.length} perk id(s) in this school&apos;s grid have no{" "}
-          <code>mmorpg_perk</code> entry: <code>{missing.join(", ")}</code>. That is a pack bug —
-          the game renders nothing for them too.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            {missing.length} perk entry in this school grid is missing from game data: {missing.join(", ")}. This is a modpack bug, and the game displays nothing for them either.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            {missing.length} perk id(s) in this school&apos;s grid have no{" "}
+            <code>mmorpg_perk</code> entry: <code>{missing.join(", ")}</code>. That is a pack bug —
+            the game renders nothing for them too.
+          </div>
+        </Tech>
+        </>
       )}
     </>
   );

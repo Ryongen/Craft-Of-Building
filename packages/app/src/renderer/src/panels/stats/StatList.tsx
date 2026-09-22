@@ -41,6 +41,7 @@ import { USABLE_NOUN, num, smart } from "../../ui/format.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 export type SheetRow = {
   display: StatDisplay;
@@ -179,6 +180,7 @@ function StatRow({
   selected: boolean;
   onSelect: () => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const { snapshot } = useWorld();
   const { display, stat, label, desc } = row;
   const capped = stat.hardcap > 0 && stat.value >= stat.hardcap;
@@ -197,9 +199,15 @@ function StatRow({
       <span
         className="name"
         style={{ color: statLook(snapshot, display.id).colour }}
-        title={desc === undefined ? display.id : `${desc}
+        title={
+          technical
+            ? desc === undefined
+              ? display.id
+              : `${desc}
 
-${display.id}`}
+${display.id}`
+            : desc
+        }
       >
         {label}
       </span>

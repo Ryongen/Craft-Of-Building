@@ -50,6 +50,7 @@ import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { NumberField } from "../../ui/fields.js";
 import { smart } from "../../ui/format.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** `AllocateStatPacket.MAX_ALLOCATE_AT_ONCE` — what a shift-click sends. */
 const SHIFT_STEP = 5;
@@ -89,11 +90,20 @@ export function StatPoints({
 
   if (coreStats.length === 0) {
     return compact ? null : (
-      <div className="notice">
-        No stat in this snapshot uses the <code>core_stat</code> serializer, so there is
-        nothing a level-up point could be spent on. That would be a pack change worth looking
-        at rather than something to work around here.
-      </div>
+      <>
+      <Plain>
+        <div className="notice">
+          No stat in this snapshot counts as a core stat, so there is nothing a level-up point could be spent on. That would be a pack change worth looking at rather than something to work around here.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="notice">
+          No stat in this snapshot uses the <code>core_stat</code> serializer, so there is
+          nothing a level-up point could be spent on. That would be a pack change worth looking
+          at rather than something to work around here.
+        </div>
+      </Tech>
+      </>
     );
   }
 
@@ -154,18 +164,27 @@ export function StatPoints({
       ))}
 
       {!compact && (
-        <div className="faint text-sm mt-5" style={{ lineHeight: 1.5 }}>
-          One point is <strong>+1</strong>, at every character level —{" "}
-          <code>StatPointsData</code> passes a hardcoded level of 1 to{" "}
-          <code>ExactStatData.levelScaled</code>, and the core-stat scaling curve at level 1 is
-          exactly 1. Levelling grants more points; it never makes the ones you already spent
-          worth more.
-          <br />
-          The <strong>total</strong> is the stat on the character sheet, which includes gear,
-          perks and auras as well as these points. What each point grants is applied by the
-          engine&apos;s core-stat pass, so a percentage bonus to the granted stat reaches what the
-          attribute itself granted.
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm mt-5" style={{ lineHeight: 1.5 }}>
+            Each spent point grants +1 regardless of level. Levelling grants more points, but never increases the value of points already spent. The total matches your character sheet, including bonuses from gear, perks, and auras alongside these points. Percentage stat bonuses apply after attribute conversion, so percentage boosts scale the stats granted by these points.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm mt-5" style={{ lineHeight: 1.5 }}>
+            One point is <strong>+1</strong>, at every character level —{" "}
+            <code>StatPointsData</code> passes a hardcoded level of 1 to{" "}
+            <code>ExactStatData.levelScaled</code>, and the core-stat scaling curve at level 1 is
+            exactly 1. Levelling grants more points; it never makes the ones you already spent
+            worth more.
+            <br />
+            The <strong>total</strong> is the stat on the character sheet, which includes gear,
+            perks and auras as well as these points. What each point grants is applied by the
+            engine&apos;s core-stat pass, so a percentage bonus to the granted stat reaches what the
+            attribute itself granted.
+          </div>
+        </Tech>
+        </>
       )}
     </>
   );

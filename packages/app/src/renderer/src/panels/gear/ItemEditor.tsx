@@ -89,6 +89,9 @@ import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
+import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
+import { GEAR_COPY } from "../../ui/copy/gear.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 
 /**
@@ -203,6 +206,7 @@ export function ItemEditor({
   onChange: (item: Item) => void;
   onRemove: () => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
 
@@ -651,7 +655,7 @@ export function ItemEditor({
       <Accordion
         title="Enchantments"
         count={enchantmentCount}
-        summary="Minecraft's own, converted by mmorpg_stat_compat"
+        summary={resolveHint(GEAR_COPY.vanillaAttribute, technical)}
       >
         <Enchantments item={item} patch={patch} />
       </Accordion>
@@ -1453,6 +1457,7 @@ function AffixRow({
  *    hands you the longest runeword they complete.
  */
 function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => void }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
   const rarity = world.rarity(item.rarity);
@@ -1567,7 +1572,7 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
 
       <div
         className="faint text-sm mb-3"
-        title="GearSocketsData.so holds gems and runes in one list; getEmptySockets() subtracts the whole list."
+        title={resolveHint(GEAR_COPY.sharedSockets, technical)}
       >
         Gems and runes share the same sockets. This slot reads each socketable&apos;s{" "}
         <code>{FAMILY_STAT_LIST[family]}</code> line
@@ -1577,11 +1582,20 @@ function Sockets({ item, patch }: { item: Item; patch: (next: Patch<Item>) => vo
       </div>
 
       {!gemsAllowed && (
-        <div className="notice">
-          <strong>{rarity.id}</strong> has <code>max_gems: 0</code>, so no gem can go in one of
-          these at all — <code>GemItem.canBeModified</code> refuses outright rather than capping.
-          Runed gear takes runes.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            {rarity.id} allows zero gems, so no gem can be inserted into it. Runed gear accepts runes instead.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            <strong>{rarity.id}</strong> has <code>max_gems: 0</code>, so no gem can go in one of
+            these at all — <code>GemItem.canBeModified</code> refuses outright rather than capping.
+            Runed gear takes runes.
+          </div>
+        </Tech>
+        </>
       )}
 
       {sockets.map((gemId, index) => (
@@ -1723,11 +1737,20 @@ function Runewords({
       </div>
 
       {runewords.length === 0 ? (
-        <div className="faint text-sm">
-          No runeword in the pack lists this base&apos;s slot — <code>RuneWord.canApplyOnItem</code>{" "}
-          matches the base&apos;s <code>gear_slot</code> against the runeword&apos;s own{" "}
-          <code>slots</code>.
-        </div>
+        <>
+        <Plain>
+          <div className="faint text-sm">
+            No runeword in the pack supports this item base's gear slot.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="faint text-sm">
+            No runeword in the pack lists this base&apos;s slot — <code>RuneWord.canApplyOnItem</code>{" "}
+            matches the base&apos;s <code>gear_slot</code> against the runeword&apos;s own{" "}
+            <code>slots</code>.
+          </div>
+        </Tech>
+        </>
       ) : (
         <div className="row wrap gap-2 mb-3">
           {runewords.map((view) => {

@@ -79,6 +79,7 @@ import { ImportDialog } from "./ImportDialog.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { OmenEditor, omenWord } from "./OmenEditor.js";
 import { JewelList } from "./JewelList.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * One row of the paperdoll.
@@ -462,12 +463,21 @@ export function GearPanel(): ReactNode {
         {placement.unplaced.length > 0 && (
           <>
             <div className="section-title">Not in any slot</div>
-            <div className="notice">
-              These items name a gear slot with no row above it: <code>head</code> is a
-              pack-added slot matching no block in{" "}
-              <code>CharacterEquipment.CURIO_BLOCKS</code>, so how many of it a character may
-              wear is genuinely unanswered. Nothing is enforced and the engine still sums them.
-            </div>
+            <>
+            <Plain>
+              <div className="notice">
+                These items list a gear slot with no row above: head is a custom pack slot not tracked in standard equipment blocks, so how many a character can wear is undefined. Nothing is restricted, and all stats on these items are still summed normally.
+              </div>
+            </Plain>
+            <Tech>
+              <div className="notice">
+                These items name a gear slot with no row above it: <code>head</code> is a
+                pack-added slot matching no block in{" "}
+                <code>CharacterEquipment.CURIO_BLOCKS</code>, so how many of it a character may
+                wear is genuinely unanswered. Nothing is enforced and the engine still sums them.
+              </div>
+            </Tech>
+            </>
             {placement.unplaced.map((index) => (
               <ItemRow
                 key={index}

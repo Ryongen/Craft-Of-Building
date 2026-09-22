@@ -62,6 +62,9 @@ import { exactModSummary, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
 import { useJewelTooltip } from "../../ui/ItemTooltip.js";
+import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
+import { GEAR_COPY } from "../../ui/copy/gear.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 
 /** One `StatsWhileUnderAuraData` — an Abyssal Eye's conditional line, as the document holds it. */
 type AuraStatRoll = NonNullable<Jewel["auraStats"]>[number];
@@ -190,19 +193,37 @@ export function JewelList(): ReactNode {
         <span className={jewels.length > sockets ? "badge bad" : "badge"}>
           {jewels.length} of {sockets} socket{sockets === 1 ? "" : "s"}
         </span>
-        <span className="faint text-sm">
-          <code>jewel_socket</code> off your sheet — 18 talents grant one each, and Bubonic Trail
-          and Hungering Vessel grant more.
-        </span>
+        <>
+        <Plain>
+          <span className="faint text-sm">
+            Jewel sockets on your character sheet - 18 talents grant one each, while items like Bubonic Trail and Hungering Vessel grant additional sockets.
+          </span>
+        </Plain>
+        <Tech>
+          <span className="faint text-sm">
+            <code>jewel_socket</code> off your sheet — 18 talents grant one each, and Bubonic Trail
+            and Hungering Vessel grant more.
+          </span>
+        </Tech>
+        </>
       </div>
 
       {sockets === 0 && (
-        <div className="notice">
-          No <code>jewel_socket</code> allocated, so a jewel here would grant{" "}
-          <strong>nothing</strong>. <code>JewelInvHelper.checkRemoveJewels</code> unequips every
-          jewel past the socket count, and the engine drops them the same way. Take a{" "}
-          <code>jewel_socket</code> talent on the tree first.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            No jewel socket allocated, so socketing a jewel here grants no stats. The game automatically unequips jewels beyond your available socket count. Allocate a jewel socket on the talent tree first.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            No <code>jewel_socket</code> allocated, so a jewel here would grant{" "}
+            <strong>nothing</strong>. <code>JewelInvHelper.checkRemoveJewels</code> unequips every
+            jewel past the socket count, and the engine drops them the same way. Take a{" "}
+            <code>jewel_socket</code> talent on the tree first.
+          </div>
+        </Tech>
+        </>
       )}
 
       {jewels.length === 0 && (
@@ -288,6 +309,7 @@ function JewelCard({
   onChange: (jewel: Jewel) => void;
   onRemove: () => void;
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   const { snapshot } = world;
   const rarity = world.rarity(jewel.rarity);
@@ -435,7 +457,7 @@ function JewelCard({
         <RarityBadge rarity={jewel.rarity} />
         <span className="badge">ilvl {jewel.itemLevel}</span>
         {unsocketed && (
-          <span className="badge bad" title="Past the jewel_socket count — the game unequips it">
+          <span className="badge bad" title={resolveHint(GEAR_COPY.overSocketCount, technical)}>
             no socket
           </span>
         )}
@@ -482,10 +504,19 @@ function JewelCard({
       {!open ? null : (
       <div className="collapsible-body">
       {unsocketed && (
-        <div className="notice">
-          No socket for this one — it grants <strong>nothing</strong>. The game unequips every
-          jewel past the <code>jewel_socket</code> count and the engine drops it the same way.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            No socket available for this jewel, so it grants no stats. The game automatically unequips any jewel beyond your total socket count.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            No socket for this one — it grants <strong>nothing</strong>. The game unequips every
+            jewel past the <code>jewel_socket</code> count and the engine drops it the same way.
+          </div>
+        </Tech>
+        </>
       )}
       <div className="row wrap mb-3">
         <select
@@ -584,14 +615,23 @@ function JewelCard({
             : `${liveAuraStats} of ${auraStats.length} firing`
         }
       >
-        <div className="notice">
-          An <strong>Abyssal Eye</strong> carries one to three lines that each fire only while a
-          particular Augment is socketed — <code>StatsWhileUnderAuraData</code>, gated by the
-          affix's own <code>eye_aura_req</code>. Which Augment is a property of the line you pick
-          here, so the picker names it first. The game drops them off uber bosses as
-          unique-rarity Stardust (<code>int</code>) jewels with one line per boss tier, and each
-          line rolls anywhere in 0-100 with no tier and no rarity band.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            An Abyssal Eye carries one to three stats that activate only while a specific Augment is socketed. Which Augment is required depends on the selected stat line, so the selector lists the Augment first. They drop from uber bosses as unique Stardust jewels with one line per boss tier, rolling randomly from 0 to 100 without tiers or rarity bands.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            An <strong>Abyssal Eye</strong> carries one to three lines that each fire only while a
+            particular Augment is socketed — <code>StatsWhileUnderAuraData</code>, gated by the
+            affix's own <code>eye_aura_req</code>. Which Augment is a property of the line you pick
+            here, so the picker names it first. The game drops them off uber bosses as
+            unique-rarity Stardust (<code>int</code>) jewels with one line per boss tier, and each
+            line rolls anywhere in 0-100 with no tier and no rarity band.
+          </div>
+        </Tech>
+        </>
 
         {auraStats.map((line, index) => (
           <JewelAuraRow
@@ -637,12 +677,21 @@ function JewelCard({
         `spirit_cost` live, and both Abyssal Eyes in the fixtures carry one.
       */}
       <Accordion title="Corruptions" count={corruptions.length}>
-        <div className="notice">
-          An Orb of Mesmerizing Chaos rolls one, or two on a 1-in-10, and only on a jewel that
-          has none — <code>JewelItemData.corrupt</code>. They resolve alongside the rolled
-          affixes and are drawn from the <code>jewel_corruption</code> pool, which the play style
-          does not narrow.
-        </div>
+        <>
+        <Plain>
+          <div className="notice">
+            An Orb of Mesmerizing Chaos adds one corruption affix (or two on a 1-in-10 chance) to an uncorrupted jewel. Corruption affixes apply alongside normal stats and are drawn from the general jewel corruption pool.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="notice">
+            An Orb of Mesmerizing Chaos rolls one, or two on a 1-in-10, and only on a jewel that
+            has none — <code>JewelItemData.corrupt</code>. They resolve alongside the rolled
+            affixes and are drawn from the <code>jewel_corruption</code> pool, which the play style
+            does not narrow.
+          </div>
+        </Tech>
+        </>
 
         {corruptions.map((roll, index) => (
           <JewelAffixRow

@@ -22,6 +22,8 @@ import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
+import { useTechnical } from "./ui/detail-mode.js";
+import { resolveHint, type Hint } from "./ui/copy/hint.js";
 
 /*
  * The panels load on first visit rather than at boot.
@@ -39,12 +41,23 @@ import { RecentBuilds } from "./ui/RecentBuilds.js";
  */
 const LEVEL_STOPS = [1, "max"] as const;
 
-const EPILOGUE_TITLE =
-  "Tick when the campaign's epilogue is done. `PlayerPointsType.getFreePoints` adds " +
-  "`getBonusPoints` — quest and item rewards — on top of what levelling grants, and no document " +
-  "can derive it: at level 100 that is 54 passive points rather than 50, and 110 spell points " +
-  "rather than 100. A build imported from the game carries the game's own totals and ignores " +
-  "this.";
+const EPILOGUE_TITLE = {
+  plain:
+    "Tick when the campaign's epilogue is done. Quest and item rewards come on top of what " +
+    "levelling grants, and no document can work them out: at level 100 that is 54 passive " +
+    "points rather than 50, and 110 spell points rather than 100. A build imported from the " +
+    "game carries the game's own totals and ignores this.",
+  tech:
+    "Tick when the campaign's epilogue is done. `PlayerPointsType.getFreePoints` adds " +
+    "`getBonusPoints` — quest and item rewards — on top of what levelling grants, and no document " +
+    "can derive it: at level 100 that is 54 passive points rather than 50, and 110 spell points " +
+    "rather than 100. A build imported from the game carries the game's own totals and ignores " +
+    "this.",
+} satisfies Hint;
+
+const TECHNICAL_TITLE =
+  "Hover text names the stat behind each figure instead of describing it - the wording to "
+  + "read a number with, not to plan with. Off by default.";
 
 const CalcsPanel = lazy(() => import("./panels/stats/CalcsPanel.js").then((m) => ({ default: m.CalcsPanel })));
 const ConfigPanel = lazy(() => import("./panels/config/ConfigPanel.js").then((m) => ({ default: m.ConfigPanel })));
@@ -132,6 +145,7 @@ export function App(): ReactNode {
   // somebody who made room to read one breakdown wants the same room for the next.
   const [breakdownHeight, setBreakdownHeight] = useState(320);
   const [sheetOpen, setSheetOpen] = useState(true);
+  const [technical, setTechnical] = useTechnical();
   const world = useWorld();
   const derived = useDerived();
 
@@ -363,7 +377,7 @@ export function App(): ReactNode {
           points short of any finished character — see `EPILOGUE_BONUS_POINTS`. It sits beside the
           level because it is the same question asked twice: what has this character done.
         */}
-        <label className="field" title={EPILOGUE_TITLE}>
+        <label className="field" title={resolveHint(EPILOGUE_TITLE, technical)}>
           <input
             type="checkbox"
             checked={doc.character.questsComplete === true}
@@ -496,6 +510,24 @@ export function App(): ReactNode {
                 </select>
               </div>
             )}
+
+            {/*
+              Whether the hover text explains the number or explains where it came from.
+
+              Most of this app's hints were written during the port and name the stat they read
+              rather than the thing it means. That wording is how you audit a figure and noise
+              when you are building a character, so both exist and this picks - see
+              `ui/detail-mode.ts`. Beside Stage because it is the same rank of question: not what
+              am I looking at, but how much of it do I want said.
+            */}
+            <label className="tab-stage" title={TECHNICAL_TITLE}>
+              <input
+                type="checkbox"
+                checked={technical}
+                onChange={(event) => setTechnical(event.target.checked)}
+              />
+              <span>Technical</span>
+            </label>
           </div>
 
           {/*

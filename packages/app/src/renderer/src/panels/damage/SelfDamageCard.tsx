@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { useDerived } from "../../state/derived.js";
 import { num, smart } from "../../ui/fields.js";
 import { TraceBlock } from "./Trace.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * What pressing the button costs you, for the ten spells that charge for themselves.
@@ -96,14 +97,23 @@ export function SelfDamageCard({ dps }: { dps: DpsResult }): ReactNode {
         </tbody>
       </table>
 
-      <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-        Resolved against <strong>your</strong> sheet, not the enemy&apos;s: the layers below are
-        your <code>dmg_received</code>, your armour and your resists. You take none of your own
-        offence — <code>no_attacker_stats_on_selfdmg</code> turns the attacker half of the hit off,
-        which is why there is no crit and no <code>[Source]</code> row — and avoidance is skipped
-        entirely, so dodge and block do nothing here. &quot;Casts to empty&quot; ignores
-        regeneration and leech; the badge above is the one that accounts for them.
-      </div>
+      <>
+      <Plain>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          Resolved against your character sheet, not the enemy's: incoming damage relies on your damage taken modifiers, armour, and resistances. Self-damage carries none of your offensive stats, so it cannot critical strike, and avoidance is bypassed entirely so dodge and block do nothing here. 'Casts to empty' ignores regeneration and leech; the table above accounts for them.
+        </div>
+      </Plain>
+      <Tech>
+        <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
+          Resolved against <strong>your</strong> sheet, not the enemy&apos;s: the layers below are
+          your <code>dmg_received</code>, your armour and your resists. You take none of your own
+          offence — <code>no_attacker_stats_on_selfdmg</code> turns the attacker half of the hit off,
+          which is why there is no crit and no <code>[Source]</code> row — and avoidance is skipped
+          entirely, so dodge and block do nothing here. &quot;Casts to empty&quot; ignores
+          regeneration and leech; the badge above is the one that accounts for them.
+        </div>
+      </Tech>
+      </>
 
       {self.sources.map((source) =>
         source.hit.hit.trace === undefined ? null : (

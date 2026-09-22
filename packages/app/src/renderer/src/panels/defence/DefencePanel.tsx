@@ -26,7 +26,10 @@ import { layerLabel } from "../../ui/trace-format.js";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
+import { useTechnical } from "../../ui/detail-mode.js";
 import { useWorld } from "../../state/snapshot.js";
+import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
+import { DEFENCE_COPY } from "../../ui/copy/defence.js";
 import { NumberField, num, smart } from "../../ui/fields.js";
 import { Figure } from "../../ui/Figure.js";
 import { Panel, setAllPanels } from "../../ui/Panel.js";
@@ -199,6 +202,7 @@ function SelfDamageSustain({
   onSelect: (focus: SheetFocus) => void;
 }): ReactNode {
   const { snapshot } = useWorld();
+  const [technical] = useTechnical();
 
   return (
     <>
@@ -208,10 +212,10 @@ function SelfDamageSustain({
             ? `covered, ${smart(sustain.drainPerSecond)}/s`
             : `−${smart(sustain.netLossPerSecond)}/s net`}
         </span>
-        <span className="badge mono" title="DamageEvent.canAvoidHit() is source != target">
+        <span className="badge mono" title={resolveHint(DEFENCE_COPY.selfDamageUnavoidable, technical)}>
           no dodge or block
         </span>
-        <span className="badge mono" title="no_attacker_stats_on_selfdmg disables the attacker half of the sweep">
+        <span className="badge mono" title={resolveHint(DEFENCE_COPY.selfDamageCannotCrit, technical)}>
           cannot crit
         </span>
       </div>
@@ -228,10 +232,19 @@ function SelfDamageSustain({
           <tr>
             <td>Your mitigation takes</td>
             <td className="num">{num(self.mitigated * 100, 1)}%</td>
-            <td className="faint text-sm">
-              Armour, resists and <code>dmg_received</code>. Increases to damage and crit do not
-              apply to a hit you inflict on yourself; mitigation does.
-            </td>
+            <>
+            <Plain>
+              <td className="faint text-sm">
+                Armour, resistances, and reduced damage taken. Increases to damage and critical strikes do not apply to hits you inflict on yourself, but your mitigation stats still protect you.
+              </td>
+            </Plain>
+            <Tech>
+              <td className="faint text-sm">
+                Armour, resists and <code>dmg_received</code>. Increases to damage and crit do not
+                apply to a hit you inflict on yourself; mitigation does.
+              </td>
+            </Tech>
+            </>
           </tr>
           <tr>
             <td>
@@ -304,6 +317,7 @@ function SelfDamageSustain({
  * than a cosmetic one.
  */
 function RegenTable({ resources }: { resources: Resources }): ReactNode {
+  const [technical] = useTechnical();
   const fights = resources.byResource.some(
     (entry) => Math.abs(entry.inCombatPerSecond - entry.perSecond) > 1e-6,
   );
@@ -318,7 +332,7 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
           one tick a second
         </span>
         {resources.bloodMage && (
-          <span className="badge warn" title="`blood_user` is on: every mana cost is paid from blood">
+          <span className="badge warn" title={resolveHint(DEFENCE_COPY.bloodMage, technical)}>
             blood magic
           </span>
         )}
@@ -367,9 +381,16 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
       </table>
 
       <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
-        <code>in_combat</code> is a ten-second cooldown that every hit you land or take
-        re-stamps, so a rotation never leaves it — the in-combat column is the one that has to pay
-        for your casts, and it is the one the Damage tab&apos;s Sustain card uses.{" "}
+        <Plain>
+          You count as in combat for ten seconds after every hit you land or take, so a rotation
+          never leaves it — the in-combat column is the one that has to pay for your casts, and it
+          is the one the Damage tab&apos;s Sustain card uses.{" "}
+        </Plain>
+        <Tech>
+          <code>in_combat</code> is a ten-second cooldown that every hit you land or take
+          re-stamps, so a rotation never leaves it — the in-combat column is the one that has to pay
+          for your casts, and it is the one the Damage tab&apos;s Sustain card uses.{" "}
+        </Tech>
         {fights ? (
           <>
             The two differ here because{" "}
@@ -377,18 +398,32 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
               <>something in this build is gated on the combat state</>
             ) : (
               <>
-                <code>in_combat_regen_multi</code> is{" "}
-                <code>{resources.inCombatRegenMulti}</code> (Config &rarr; Server), energy exempt
+                <Plain>
+                  the in-combat regeneration multiplier is {resources.inCombatRegenMulti} (Config
+                  &rarr; Server), and energy is exempt from it
+                </Plain>
+                <Tech>
+                  <code>in_combat_regen_multi</code> is{" "}
+                  <code>{resources.inCombatRegenMulti}</code> (Config &rarr; Server), energy exempt
+                </Tech>
               </>
             )}
             .
           </>
         ) : (
           <>
-            They agree here: <code>in_combat_regen_multi</code> is{" "}
-            <code>{resources.inCombatRegenMulti}</code>, which is what this pack ships (the mod&apos;s
-            own default is 0.5 — Config &rarr; Server if your server changed it), and nothing in
-            this build is gated on being out of combat.
+            <Plain>
+              They agree here: the in-combat regeneration multiplier is{" "}
+              {resources.inCombatRegenMulti}, which is what this pack ships (the mod&apos;s own
+              default is 0.5 — Config &rarr; Server if your server changed it), and nothing in this
+              build needs you to be out of combat.
+            </Plain>
+            <Tech>
+              They agree here: <code>in_combat_regen_multi</code> is{" "}
+              <code>{resources.inCombatRegenMulti}</code>, which is what this pack ships (the mod&apos;s
+              own default is 0.5 — Config &rarr; Server if your server changed it), and nothing in
+              this build is gated on being out of combat.
+            </Tech>
           </>
         )}
       </div>
@@ -432,7 +467,7 @@ function PoolsCard({
             size="lg"
             label="Magic shield"
             value={smart(pools.magicShield)}
-            hint="Absorbs before health. Half of a chaos hit walks past it unless chaos_doesnt_bypass_magic_shield is on"
+            hint={DEFENCE_COPY.magicShield}
           />
         )}
         {/*
@@ -580,15 +615,24 @@ function ElementTable({
         carrying more than 5% of your mitigation, because none of it applies to a single hit.
       </div>
       {converts && (
-        <div className="muted text-sm mt-3 prose">
-          <strong>A row is named for what the attacker swings, not for what lands.</strong>{" "}
-          Conversion happens after the hit leaves the mob, so an affix like <code>fire_lord</code>{" "}
-          &mdash; <code>phys_to_fire 75</code> and <code>plus_phys_to_fire 50</code> &mdash; makes a
-          raw <em>physical</em> hit arrive mostly as fire. That is why it moves the Physical row and
-          leaves the Fire row exactly where it was: a hit that started as fire is not something
-          <code> phys_to_fire</code> has anything to say about. The Arrives as column is which of
-          your resists is doing the work in each row.
-        </div>
+        <>
+        <Plain>
+          <div className="muted text-sm mt-3 prose">
+            Each row is named for what the attacker swings, not what actually lands. Damage conversion happens after a hit leaves the mob, so an affix like Fire Lord (converting 75% physical to fire and adding 50% extra physical as fire)causes a raw physical hit to arrive mostly as fire. That shifts the Physical row while leaving the Fire row unchanged, as damage starting as fire is unaffected by physical conversion. The Arrives As column shows which of your resistances mitigates damage in each row.
+          </div>
+        </Plain>
+        <Tech>
+          <div className="muted text-sm mt-3 prose">
+            <strong>A row is named for what the attacker swings, not for what lands.</strong>{" "}
+            Conversion happens after the hit leaves the mob, so an affix like <code>fire_lord</code>{" "}
+            &mdash; <code>phys_to_fire 75</code> and <code>plus_phys_to_fire 50</code> &mdash; makes a
+            raw <em>physical</em> hit arrive mostly as fire. That is why it moves the Physical row and
+            leaves the Fire row exactly where it was: a hit that started as fire is not something
+            <code> phys_to_fire</code> has anything to say about. The Arrives as column is which of
+            your resists is doing the work in each row.
+          </div>
+        </Tech>
+        </>
       )}
       <AttackerNote defence={defence} />
     </div>
@@ -665,6 +709,7 @@ function Breakdown({
   /** Either sweep's rows: the averaged one, or the one with avoidance switched off. */
   steps: readonly LayerStep[];
 }): ReactNode {
+  const [technical] = useTechnical();
   const world = useWorld();
   if (steps.length === 0) {
     return (
@@ -700,7 +745,12 @@ function Breakdown({
               {/* Named rather than comma-joined ids: "Armour +120, Physical Resist +15" is a
                   sentence a player can check against their gear, and `armor +120` is not. The
                   ids stay on the hover for when a name is ambiguous. */}
-              <td className="faint" title={step.contributions.map((c) => c.statId).join(", ")}>
+              <td
+                className="faint"
+                title={
+                  technical ? step.contributions.map((c) => c.statId).join(", ") : undefined
+                }
+              >
                 {step.contributions
                   .map(
                     (c) =>

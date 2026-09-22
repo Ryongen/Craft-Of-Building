@@ -19,6 +19,8 @@
 
 import type { ReactNode } from "react";
 
+import { useHint, type Hint } from "./copy/hint.js";
+
 /**
  * The delta, or nothing at all.
  *
@@ -54,7 +56,8 @@ export function Figure({
 }: {
   label: string;
   value: string;
-  hint?: string;
+  /** One wording, or a plain one and a technical one — see `ui/copy/hint.tsx`. */
+  hint?: Hint;
   size?: FigureSize;
   /**
    * How this figure has moved, where something is measuring it.
@@ -67,11 +70,13 @@ export function Figure({
   /** Opens where the number came from, where the caller can show that. */
   onClick?: () => void;
 }): ReactNode {
+  const text = useHint(hint);
+
   if (size === "sm") {
     return (
       <div
         className={`field${onClick ? " pick" : ""}`}
-        title={hint}
+        title={text}
         onClick={onClick}
         style={{ display: "flex", flexDirection: "column", gap: 0, lineHeight: 1.15 }}
       >
@@ -88,7 +93,7 @@ export function Figure({
   // inline instead. That difference is as-found, not a decision made here.
   const large = size === "lg";
   return (
-    <div title={hint}>
+    <div title={text}>
       <div className="faint text-sm">
         {label}
       </div>

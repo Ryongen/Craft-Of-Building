@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { Fact } from "../../ui/Fact.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
+import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
  * The rate.
@@ -96,11 +97,20 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
 
       {calc.castSpeedPercent !== 0 && (
         <div className="row wrap gap-5 mt-4 text-sm">
-          <span className="faint" style={{ maxWidth: 680 }}>
-            Cast speed stats total {num(calc.castSpeedPercent, 1)}%, which divides both the cast
-            and the global cooldown arm by {num(calc.speedMulti, 3)}. All 40 of the pack&apos;s
-            <code> *_cast_time </code> stats and <code>skill_speed</code> land in the same number.
-          </span>
+          <>
+          <Plain>
+            <span className="faint" style={{ maxWidth: 680 }}>
+              Your cast speed stats total {num(calc.castSpeedPercent, 1)}%, which speeds up both spell casting and global cooldowns by a factor of {num(calc.speedMulti, 3)}. Every school-specific cast speed stat and general skill speed feed into this single value.
+            </span>
+          </Plain>
+          <Tech>
+            <span className="faint" style={{ maxWidth: 680 }}>
+              Cast speed stats total {num(calc.castSpeedPercent, 1)}%, which divides both the cast
+              and the global cooldown arm by {num(calc.speedMulti, 3)}. All 40 of the pack&apos;s
+              <code> *_cast_time </code> stats and <code>skill_speed</code> land in the same number.
+            </span>
+          </Tech>
+          </>
         </div>
       )}
 
