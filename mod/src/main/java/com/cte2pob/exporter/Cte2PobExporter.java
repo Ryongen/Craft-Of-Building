@@ -203,7 +203,7 @@ public class Cte2PobExporter {
             Exporter.export(mc, player, packVersion, raw);
         } catch (Throwable e) {
             // A failed export must never take the client with it.
-            player.sendSystemMessage(Component.literal("§c[PoB] Export failed: " + e));
+            player.sendSystemMessage(Component.literal("§c[CoB] Export failed: " + e));
             org.slf4j.LoggerFactory.getLogger(MODID).error("Export failed", e);
         }
     }

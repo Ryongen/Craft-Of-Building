@@ -68,6 +68,7 @@ import type { BuildDoc, Diagnostic } from "@cte2/schema";
 import { CATEGORY, entry } from "@cte2/schema";
 
 import type { ProcHit } from "./ctx.js";
+import type { EffectSupply } from "./effect-supply.js";
 import type { EffectState } from "./effect-state.js";
 import { DEFAULT_PROC_COOLDOWN_TICKS, TICKS_PER_SECOND } from "./spell-calc.js";
 
@@ -114,6 +115,13 @@ export type ProcLimit =
   | "wrong-skill"
   /** The procced spell produced no damage of its own. */
   | "no-damage"
+  /**
+   * It spends a debuff on the target and nothing on the bar puts that debuff there.
+   *
+   * Cryogenic Rupture removes a Snow-Tracked stack each time it fires, so without Tailwind Sweep,
+   * Glacial Dash or another applier it has nothing to consume. See `effect-supply.ts`.
+   */
+  | "no-supply"
   /** Its conditions did not hold for this hit, for a reason not worth its own name. */
   | "cannot-trigger";
 
@@ -127,8 +135,29 @@ export type Proc = {
   cooldownTicks: number;
   /** Triggering events per second before the chance and the cooldown are applied. */
   triggersPerSecond: number;
-  /** What it actually fires at: `min(triggers × chance, 1 / cooldown)`. */
+  /**
+   * What it actually fires at: `min(triggers × chance, 1 / cooldown)`, and for a proc that spends
+   * a debuff, no faster than the build puts that debuff back — see {@link consumes}.
+   */
   perSecond: number;
+  /** Which of those ceilings set {@link perSecond}, when it fires at all. */
+  boundBy?: "trigger" | "cooldown" | "supply";
+  /**
+   * The debuff this proc takes off the target each time it fires, and how fast it comes back.
+   *
+   * Set only for a block carrying a `remove_exile_effect` aimed at the target *and* a caller that
+   * could say what the supply is.
+   */
+  consumes?: { effectId: string; stacksPerProc: number; supply: EffectSupply };
+  /**
+   * A debuff this proc needs on the target that another proc on the same trigger spends.
+   *
+   * Whiteout Sovereign's storm needs a Snow-Tracked target and Cryogenic Rupture takes the stack
+   * away, so the storm only rolls on the swings that land while a stack is there — which, once
+   * Rupture is supply-bound, is one swing per stack delivered. Both blocks are assumed to see the
+   * same hit, since they sit at the same `order` and nothing states which runs first.
+   */
+  competes?: { effectId: string; spentBy: string };
   /** Damage one proc puts on the target. */
   damagePerProc: number;
   /** `damagePerProc × perSecond`. */
@@ -171,8 +200,24 @@ export type ProcInput = {
    * the player had turned off.
    */
   disabledSpells?: ReadonlySet<string>;
-  /** Resolves a procced spell's damage per cast. Injected to keep this file free of `dps.ts`. */
-  damageOf: (spellId: string) => number;
+  /**
+   * Resolves a procced spell's damage per cast. Injected to keep this file free of `dps.ts`.
+   *
+   * `position` is the `proc_spell` effect's `pos`. `ProcSpellEffect.activate` builds the cast's
+   * context as `SpellCtx.onCast(source, calc)`, then `setPositionSource(pos)` and
+   * `ctx.target = <the struck entity>` — so a `TARGET` proc resolves its whole cast at the enemy
+   * it was triggered on. Cryogenic Rupture's 0.5-block burst lands on that enemy; resolved from
+   * where you stand, it reached nothing.
+   */
+  damageOf: (spellId: string, position: "CASTER" | "TARGET") => number;
+  /**
+   * Stacks per second of a debuff the build puts on the target, for a proc that spends one.
+   *
+   * Omitted, a consuming proc is rated as if the debuff were always there — which is how every
+   * figure read before `effect-supply.ts` existed, and too high whenever the applier is slower
+   * than the trigger. Asked lazily, and only for an effect some proc on the sheet consumes.
+   */
+  supplyOf?: (effectId: string) => EffectSupply;
   diagnostics: Diagnostic[];
 };
 
@@ -189,19 +234,58 @@ export function resolveProcs(input: ProcInput): Proc[] {
   // answer wins wherever the two overlap: it is the ported condition pass, this is a scan.
   for (const candidate of candidates(input.snapshot, input.sheet)) {
     const key = `${candidate.statId}:${candidate.spellId}`;
-    if (!blended.has(key)) blended.set(key, { ...candidate, chance: 0 });
+    const reached = blended.get(key);
+    if (reached === undefined) blended.set(key, { ...candidate, chance: 0 });
+    // The sweep reports a chance and nothing else, so what the block *spends* is read off the
+    // scan even for a proc the sweep reached. Only that: the scan's `ifs` would change which
+    // limit a reached proc reports, and the sweep's answer is the one that wins there.
+    else {
+      if (candidate.consumes !== undefined) reached.consumes = candidate.consumes;
+      if (candidate.targetNeeds !== undefined) reached.targetNeeds = candidate.targetNeeds;
+    }
   }
 
-  const out: Proc[] = [];
+  // One answer per debuff, however many procs spend it: two procs sharing one supply are not
+  // each given the whole of it, but splitting it between them is a question about which fires
+  // first, and nothing in the pack has two consumers of the same debuff on one sheet.
+  const supplies = new Map<string, EffectSupply>();
+  const supplyFor = (effectId: string): EffectSupply | undefined => {
+    if (input.supplyOf === undefined) return undefined;
+    let supply = supplies.get(effectId);
+    if (supply === undefined) {
+      supply = input.supplyOf(effectId);
+      supplies.set(effectId, supply);
+    }
+    return supply;
+  };
 
-  for (const hit of [...blended.values()].sort((a, b) => b.chance - a.chance).slice(0, MAX_PROCS)) {
+  const out: Proc[] = [];
+  const hits = [...blended.values()].sort((a, b) => b.chance - a.chance).slice(0, MAX_PROCS);
+
+  for (const hit of hits) {
     const cooldownTicks = procCooldownOf(input.snapshot, hit.spellId);
     const capPerSecond = TICKS_PER_SECOND / Math.max(1, cooldownTicks);
-    const limit = limitOf(hit, input.spellTags, input.disabledSpells ?? EMPTY, input.incomingPerSecond);
+    let limit = limitOf(hit, input.spellTags, input.disabledSpells ?? EMPTY, input.incomingPerSecond);
+
+    const supply = hit.consumes === undefined ? undefined : supplyFor(hit.consumes.effectId);
+    const supplyCap =
+      supply === undefined || hit.consumes === undefined
+        ? Number.POSITIVE_INFINITY
+        : supply.stacksPerSecond / hit.consumes.stacks;
+    if (limit === undefined && supply !== undefined && supply.basis === "none") limit = "no-supply";
 
     const triggersPerSecond = limit === undefined ? triggerRateOf(hit, input) : 0;
-    const perSecond = Math.min(triggersPerSecond * hit.chance, capPerSecond);
-    const damagePerProc = perSecond > 0 ? input.damageOf(hit.spellId) : 0;
+    const triggered = triggersPerSecond * hit.chance;
+    const perSecond = Math.min(triggered, capPerSecond, supplyCap);
+    const boundBy =
+      perSecond <= 0
+        ? undefined
+        : perSecond === supplyCap && supplyCap < triggered
+          ? ("supply" as const)
+          : perSecond === capPerSecond && capPerSecond < triggered
+            ? ("cooldown" as const)
+            : ("trigger" as const);
+    const damagePerProc = perSecond > 0 ? input.damageOf(hit.spellId, hit.position) : 0;
 
     out.push({
       statId: hit.statId,
@@ -210,6 +294,10 @@ export function resolveProcs(input: ProcInput): Proc[] {
       cooldownTicks,
       triggersPerSecond,
       perSecond,
+      ...(boundBy === undefined ? {} : { boundBy }),
+      ...(supply === undefined || hit.consumes === undefined
+        ? {}
+        : { consumes: { effectId: hit.consumes.effectId, stacksPerProc: hit.consumes.stacks, supply } }),
       damagePerProc,
       dps: damagePerProc * perSecond,
       ...(limit === undefined
@@ -220,6 +308,34 @@ export function resolveProcs(input: ProcInput): Proc[] {
       ...(limit === "wrong-skill" && hit.needsTag !== undefined ? { needsTag: hit.needsTag } : {}),
     });
   }
+
+  // A debuff one proc spends is up for another only on the triggers that land before it is spent.
+  // `out` is still parallel to `hits` here.
+  out.forEach((proc, i) => {
+    const hit = hits[i]!;
+    if (hit.targetNeeds === undefined || hit.consumes !== undefined || proc.perSecond <= 0) return;
+    for (const effectId of hit.targetNeeds) {
+      const spender = out.find(
+        (o) => o.consumes?.effectId === effectId && o.boundBy === "supply" && o.chance > 0,
+      );
+      if (spender === undefined) continue;
+      // Each firing of the spender is one trigger that found the debuff; at a chance below 1,
+      // the triggers that found it and rolled nothing leave it for the next.
+      const finding = spender.perSecond / spender.chance;
+      const current = out[i]!;
+      if (finding >= current.triggersPerSecond) continue;
+      const capPerSecond = TICKS_PER_SECOND / Math.max(1, current.cooldownTicks);
+      const triggered = finding * current.chance;
+      const perSecond = Math.min(triggered, capPerSecond);
+      out[i] = {
+        ...current,
+        perSecond,
+        boundBy: perSecond < triggered ? "cooldown" : "supply",
+        dps: current.damagePerProc * perSecond,
+        competes: { effectId, spentBy: spender.statId },
+      };
+    }
+  });
 
   out.sort((a, b) => b.dps - a.dps);
   for (const proc of out) {
@@ -294,6 +410,7 @@ export function rotationProcs(
     damagePerProc: number;
     limits: (ProcLimit | undefined)[];
     needsTag?: string;
+    consumes?: Proc["consumes"];
   };
 
   const merged = new Map<string, Acc>();
@@ -323,6 +440,7 @@ export function rotationProcs(
       // that could not trigger it report 0 and must not drag the figure down.
       acc.damagePerProc = Math.max(acc.damagePerProc, proc.damagePerProc);
       acc.limits.push(proc.limit);
+      if (acc.consumes === undefined && proc.consumes !== undefined) acc.consumes = proc.consumes;
       if (acc.needsTag === undefined && proc.needsTag !== undefined) acc.needsTag = proc.needsTag;
     }
   }
@@ -332,7 +450,12 @@ export function rotationProcs(
     const triggersPerSecond = rotationSeconds > 0 ? acc.triggersPerPass / rotationSeconds : 0;
     const chance = acc.triggersPerPass > 0 ? acc.weighted / acc.triggersPerPass : acc.bestChance;
     const capPerSecond = TICKS_PER_SECOND / Math.max(1, acc.cooldownTicks);
-    const perSecond = Math.min(triggersPerSecond * chance, capPerSecond);
+    // The supply is one ceiling over the build for the same reason the cooldown is.
+    const supplyCap =
+      acc.consumes === undefined
+        ? Number.POSITIVE_INFINITY
+        : acc.consumes.supply.stacksPerSecond / acc.consumes.stacksPerProc;
+    const perSecond = Math.min(triggersPerSecond * chance, capPerSecond, supplyCap);
     const limit = acc.limits.some((l) => l === undefined) ? undefined : worstLimit(acc.limits);
 
     out.push({
@@ -342,6 +465,7 @@ export function rotationProcs(
       cooldownTicks: acc.cooldownTicks,
       triggersPerSecond,
       perSecond: limit === undefined ? perSecond : 0,
+      ...(acc.consumes === undefined ? {} : { consumes: acc.consumes }),
       damagePerProc: acc.damagePerProc,
       dps: limit === undefined ? acc.damagePerProc * perSecond : 0,
       ...(limit === undefined ? {} : { limit }),
@@ -366,6 +490,7 @@ const LIMIT_ORDER: ProcLimit[] = [
   "spell-only",
   "when-hit",
   "on-kill",
+  "no-supply",
   "no-damage",
   "cannot-trigger",
 ];
@@ -386,12 +511,18 @@ type Blended = {
   spellId: string;
   /** `Source` is "when you hit", `Target` "when you are hit". */
   side: string;
+  /** The `proc_spell` effect's `pos`: where the procced spell is cast from. */
+  position: "CASTER" | "TARGET";
   /** `on_damage`, `on_mob_kill`, `on_death`. */
   events: readonly string[];
   /** The condition ids on the block, for naming what stopped it. */
   ifs: readonly string[];
   /** A positive `spell_has_tag_<tag>` gate, when the block has one. */
   needsTag?: string;
+  /** A `remove_exile_effect` on the target that runs with the proc — what each firing spends. */
+  consumes?: { effectId: string; stacks: number };
+  /** Effects an `is_under_exile_effect` gate needs the *target* to be holding. */
+  targetNeeds?: string[];
   chance: number;
 };
 
@@ -418,6 +549,7 @@ function blend(
           statId: hit.statId,
           spellId: hit.spellId,
           side: hit.side,
+          position: hit.position === "TARGET" ? "TARGET" : "CASTER",
           events: [],
           ifs: [],
           chance: hit.chance * weight,
@@ -559,6 +691,8 @@ function candidates(
       // positive form restricts the proc to a skill.
       const tagGate = ifs.find((i) => i.startsWith("spell_has_tag_") && !i.includes("_not_") && !i.endsWith("_is_false"));
       const needsTag = tagGate === undefined ? undefined : tagFor(snapshot, tagGate);
+      const consumes = consumedBy(effects, ids);
+      const targetNeeds = targetGatesOf(snapshot, ifs);
 
       for (const id of ids) {
         if (typeof id !== "string") continue;
@@ -570,14 +704,53 @@ function candidates(
           statId,
           spellId,
           side: typeof block["side"] === "string" ? (block["side"] as string) : "Source",
+          position: data["pos"] === "TARGET" ? "TARGET" : "CASTER",
           events,
           ifs,
           ...(needsTag === undefined ? {} : { needsTag }),
+          ...(consumes === undefined ? {} : { consumes }),
+          ...(targetNeeds.length === 0 ? {} : { targetNeeds }),
         });
       }
     }
   }
   return out;
+}
+
+/** The effects a block's `is_under_exile_effect` gates need the target to hold. Negated ones don't count. */
+function targetGatesOf(snapshot: Snapshot, ifs: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const id of ifs) {
+    const data = entry(snapshot, CATEGORY.statCondition, id)?.data as Record<string, unknown> | undefined;
+    if (data?.["ser"] !== "is_under_exile_effect" || data["side"] !== "Target") continue;
+    if (data["is"] === false) continue;
+    const effect = data["effect"];
+    if (typeof effect === "string" && !out.includes(effect)) out.push(effect);
+  }
+  return out;
+}
+
+/**
+ * The debuff a proc block takes off the target when it fires, if it takes one.
+ *
+ * `RemoveExileEffect` with `remove_from: Target` sits in the same `effects` list as the
+ * `proc_spell`, so it runs on exactly the hits the proc does. Only the target side is read: a
+ * block that removes something from *you* is not spending a resource another skill supplies.
+ */
+function consumedBy(
+  effects: Record<string, { data?: Record<string, unknown> } | undefined>,
+  ids: readonly unknown[],
+): { effectId: string; stacks: number } | undefined {
+  for (const id of ids) {
+    if (typeof id !== "string") continue;
+    const data = effects[id]?.data;
+    if (data?.["ser"] !== "remove_exile_effect" || data["remove_from"] !== "Target") continue;
+    const effectId = data["effect"];
+    if (typeof effectId !== "string") continue;
+    const stacks = typeof data["stacks"] === "number" && data["stacks"] > 0 ? data["stacks"] : 1;
+    return { effectId, stacks };
+  }
+  return undefined;
 }
 
 /** The tag a `spell_has_tag` condition tests for — an object field, not the id's suffix. */

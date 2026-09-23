@@ -133,6 +133,7 @@ export function SkillsPanel(): ReactNode {
   // `GemInventoryHelper.MAX_SKILL_GEMS` — the skill-gem inventory is sized from it and
   // `getHotbarGem(i)` indexes straight into it, so it is the length of the hotbar.
   const active = activeSkillCount(skills);
+  const [technical] = useTechnical();
   const full = active >= MAX_ACTIVE_SKILLS;
 
   const ranking = useSkillRanking(sortByDps);
@@ -151,10 +152,13 @@ export function SkillsPanel(): ReactNode {
 
   // The engine's own answer, not a second copy of its rule — see `mainSkillIndex`.
   const mainIndex = mainSkillIndex(derived);
+  const swingIsMain = doc.config?.mainIsBasicAttack === true;
+  const basicRank = useBasicRanking(sortByDps);
 
   // A skill removed from under the selection leaves it pointing past the end.
   const chosen: Selection =
-    selection ?? (skills.length > 0 ? { kind: "skill", index: mainIndex } : { kind: "basic" });
+    selection ??
+    (skills.length > 0 && !swingIsMain ? { kind: "skill", index: mainIndex } : { kind: "basic" });
   const selected: Selection =
     chosen.kind === "skill" && skills[chosen.index] === undefined
       ? skills.length > 0
@@ -172,12 +176,14 @@ export function SkillsPanel(): ReactNode {
           <span className={active > MAX_ACTIVE_SKILLS ? "badge bad" : "badge"}>
             {active} of {MAX_ACTIVE_SKILLS} on the hotbar
           </span>
-          <span
-            className="faint text-sm"
-            title="GemInventoryHelper.MAX_SKILL_GEMS. A disabled Skill takes no slot, so keep the setup you are comparing against and switch between them."
-          >
-            <code>MAX_SKILL_GEMS</code>
-          </span>
+          {technical && (
+            <span
+              className="faint text-sm"
+              title="GemInventoryHelper.MAX_SKILL_GEMS. A disabled Skill takes no slot, so keep the setup you are comparing against and switch between them."
+            >
+              <code>MAX_SKILL_GEMS</code>
+            </span>
+          )}
         </div>
 
         {skills.length === 0 && (
@@ -191,7 +197,7 @@ export function SkillsPanel(): ReactNode {
           <SkillListRow
             key={`${skills[index]?.spellId}-${index}`}
             skill={skills[index]!}
-            isMain={index === mainIndex}
+            isMain={!swingIsMain && index === mainIndex}
             dps={ranking?.get(index)}
             selected={selected.kind === "skill" && selected.index === index}
             onSelect={() => setSelection({ kind: "skill", index })}
@@ -208,9 +214,15 @@ export function SkillsPanel(): ReactNode {
           onClick={() => setSelection({ kind: "basic" })}
         >
           <span className="ellipsis grow">Basic attack</span>
+          {swingIsMain && (
+            <span className="badge good" title="Damage is reported for the weapon swing">
+              main
+            </span>
+          )}
           <span className="badge" title="Always available — this is not a Skill and takes no hotbar slot">
             weapon
           </span>
+          {basicRank !== undefined && <span className="num text-sm">{smart(Math.round(basicRank))}</span>}
         </div>
 
         <div className="row wrap mt-3 mb-4" style={{ gap: 4 }}>
@@ -354,6 +366,18 @@ function useSkillRanking(enabled: boolean): Map<number, number> | undefined {
 }
 
 /**
+ * The swing's figure for the ranked list: the hit and what it procs, on its own clock.
+ *
+ * Already computed for the open document, so it costs nothing, and it is the same number the
+ * Basic attack card shows. The procs are in it because for a Cryolancer they are most of it.
+ */
+function useBasicRanking(enabled: boolean): number | undefined {
+  const derived = useDerived();
+  if (!enabled || derived.basic === undefined) return undefined;
+  return derived.basic.dps + derived.basic.procDps;
+}
+
+/**
  * What this build turns the spell's declared numbers into.
  *
  * Two facts, and the pack's JSON answers neither of them:
@@ -395,9 +419,34 @@ function ResolvedFacts({ index }: { index: number }): ReactNode {
 
   const rate = result.rate;
   const buff = result.buff;
+  // What the buff this press puts on you casts for you. Ice-Tipped Blade's whole value is here.
+  const granted = result.granted.filter((p) => p.dps > 0);
 
   return (
     <div className="row wrap gap-7 mb-4">
+      {granted.map((proc) => (
+        <span
+          key={`${proc.statId}:${proc.spellId}`}
+          title={
+            `${proc.perSecond.toFixed(2)} a second at ${smart(proc.damagePerProc)} each` +
+            (proc.boundBy === "supply" && proc.consumes !== undefined
+              ? `, paced by ${exileEffectName(snapshot, proc.consumes.effectId)} arriving at ` +
+                `${proc.consumes.supply.stacksPerSecond.toFixed(2)}/s`
+              : proc.boundBy === "supply" && proc.competes !== undefined
+                ? `, only on the swings that find ${exileEffectName(snapshot, proc.competes.effectId)} still up`
+                : proc.boundBy === "cooldown"
+                  ? ", held back by its proc cooldown"
+                  : "") +
+            `. Already counted in the swing's figure; shown here because it is what this skill buys.`
+          }
+        >
+          <Fact
+            layout="block"
+            label={`grants ${spellName(snapshot, proc.spellId)}`}
+            value={`${smart(proc.dps)}/s`}
+          />
+        </span>
+      ))}
       <Fact
         layout="block"
         label="your cooldown"
@@ -775,7 +824,8 @@ function SkillCard({
         <label className="field" title="Damage is reported for this skill">
           <input
             type="radio"
-            checked={skill.main === true}
+            // The swing being the main figure outranks any Skill's own flag.
+            checked={skill.main === true && doc.config?.mainIsBasicAttack !== true}
             onChange={() => setMainSkill(index)}
             disabled={!enabled}
           />

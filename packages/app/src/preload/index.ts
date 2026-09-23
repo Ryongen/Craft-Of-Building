@@ -17,6 +17,7 @@ import {
   type MenuCommand,
   type PinnedBaseline,
   type SnapshotPayload,
+  type UpdateStatus,
 } from "@shared/ipc";
 
 /**
@@ -69,6 +70,22 @@ const api: Cte2Api = {
     ipcRenderer.on(CHANNEL.menuCommand, listener);
     return () => ipcRenderer.removeListener(CHANNEL.menuCommand, listener);
   },
+
+  onUpdateStatus(handler) {
+    // Subscribe first, then ask: a status pushed in between is newer than the one fetched, so
+    // the fetched one is only applied if nothing has arrived yet.
+    let heard = false;
+    const listener = (_event: unknown, status: UpdateStatus): void => {
+      heard = true;
+      handler(status);
+    };
+    ipcRenderer.on(CHANNEL.updateStatus, listener);
+    void (ipcRenderer.invoke(CHANNEL.getUpdateStatus) as Promise<UpdateStatus>).then((status) => {
+      if (!heard) handler(status);
+    });
+    return () => ipcRenderer.removeListener(CHANNEL.updateStatus, listener);
+  },
+  installUpdate: () => ipcRenderer.invoke(CHANNEL.installUpdate),
 
   assetUrl(resourcePath: string) {
     // Falls back to the mod's own placeholder, because 51 perk icons in this pack name a

@@ -33,7 +33,11 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
           <Figure
             label="Ailment DPS"
             value={smart(dps.ailmentDps - dps.ailmentProcDps)}
-            hint="Bleed, ignite and poison tick on their own clock, so this is beside the hit rate rather than part of it"
+            hint={
+              "Bleed, burn and poison at full stacks — every landing hit adds one that runs its own duration. " +
+              dps.ailmentStacks.map((s) => `${s.ailment}: ${num(s.stacks, 1)} stacks`).join(", ") +
+              ". Beside the hit rate rather than part of it: they tick on their own clock."
+            }
           />
         )}
         {dps.ailmentProcDps > 0 && (

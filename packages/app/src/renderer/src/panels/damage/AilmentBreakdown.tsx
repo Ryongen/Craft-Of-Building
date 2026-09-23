@@ -18,7 +18,7 @@
  *
  * ## Two shapes, not one
  *
- * A DoT is a rate that is either up or it is not, so its headline is per-second and its life is
+ * A DoT stacks once per landing hit, so its headline is one stack's rate and its life is
  * the note under it. Freeze and Electrify deal nothing when they land: they fill a pool that a
  * later hit carrying Shatter or Shock releases in one spike, so their headline is the pool and
  * the note is what tips it. Printing "0/s" for the second kind was technically true and told a
@@ -32,7 +32,7 @@
  * stacked its own header. The selection therefore lives in the panel rather than in here.
  */
 
-import { type AilmentResult, type DamageResult } from "@cte2/engine";
+import { type AilmentResult, type AilmentStacks, type DamageResult } from "@cte2/engine";
 import { type ReactNode } from "react";
 
 import { num, smart } from "../../ui/fields.js";
@@ -101,8 +101,15 @@ export function AilmentButtons({
 export function AilmentSummary({
   ailment,
   elsewhere,
+  stacks,
 }: {
   ailment: AilmentResult | undefined;
+  /**
+   * The rotation's stacks of every DoT, from the average hit. The headline above is one
+   * application; these rows are what the rate card counts, because bleeds, burns and poisons do
+   * not refresh — each hit adds another that runs its own full duration.
+   */
+  stacks?: readonly AilmentStacks[] | undefined;
   /**
    * Other acts of this cast that do inflict something, when the selected one does not.
    *
@@ -140,6 +147,7 @@ export function AilmentSummary({
 
   const colour = COLOURS[ailment.element] ?? "var(--text)";
   const dot = ailment.damagePerSecond > 0;
+  const stack = dot ? stacks?.find((s) => s.ailment === ailment.ailment) : undefined;
 
   return (
     <>
@@ -149,7 +157,7 @@ export function AilmentSummary({
       <div className="faint text-sm">
         {dot ? (
           <>
-            for {num(ailment.durationSeconds, 1)}s — {smart(ailment.totalDamage)} over its life
+            each, for {num(ailment.durationSeconds, 1)}s — {smart(ailment.totalDamage)} over its life
           </>
         ) : ailment.procChance > 0 ? (
           // The pool is only worth something if something tips it. Naming the proc and its chance
@@ -194,6 +202,26 @@ export function AilmentSummary({
           <span className="faint">Its event made</span>
           <span className="num">{smart(ailment.eventDamage)}</span>
         </div>
+        {stack !== undefined && (
+          <>
+            <div
+              className="ele-row"
+              title={`Landing hits per second times the chance each one inflicts it — ${num(stack.applicationsPerSecond, 1)} a second, each lasting ${num(stack.durationSeconds, 1)}s. They stack without limit.`}
+            >
+              <span className="faint">Stacks up at once</span>
+              <span className="num">{num(stack.stacks, 1)}</span>
+            </div>
+            <div
+              className="ele-row"
+              title={`Every stack ticking together, from the average hit. Takes ${num(stack.durationSeconds, 1)}s of casting to build up.`}
+            >
+              <span className="faint">At full stacks</span>
+              <span className="num" style={{ color: colour }}>
+                {smart(stack.dps)}/s
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </>
   );

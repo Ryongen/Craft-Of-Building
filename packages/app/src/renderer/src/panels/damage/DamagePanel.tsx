@@ -45,6 +45,7 @@ import { EffectsCard } from "./EffectsCard.js";
 import { ModelGaps } from "./ModelGaps.js";
 import { SummonTable } from "./SummonTable.js";
 import { ProcTable } from "./ProcTable.js";
+import { BasicAttackDamage } from "./BasicAttackDamage.js";
 import { TargetCard } from "./TargetCard.js";
 import { FullDpsCard } from "./FullDpsCard.js";
 import { SustainCard, sustainVerdict } from "./SustainCard.js";
@@ -57,12 +58,71 @@ import { DAMAGE_COPY } from "../../ui/copy/damage.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 import { resolveHint } from "../../ui/copy/hint.js";
 
+/**
+ * The tab, choosing between the two things a main figure can be.
+ *
+ * Two components rather than a branch inside one: the skill view holds a dozen hooks and the
+ * swing view a few, and switching between them inside one component would change the hook count
+ * between renders.
+ */
 export function DamagePanel(): ReactNode {
-  const [technical] = useTechnical();
+  const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
+  return swingIsMain ? <BasicAttackDamage header={<MainSelect />} /> : <SkillDamagePanel />;
+}
+
+/**
+ * Which figure the tab is about: one of the Skills, or the weapon swing.
+ *
+ * The swing is listed after the Skills because it is not one — it is not on the hotbar and has
+ * no `SkillSetup` — but it is chosen from the same place, since "what am I judged on" is one
+ * question whichever the answer is.
+ */
+function MainSelect(): ReactNode {
   const world = useWorld();
+  const skills = useBuild((s) => s.doc.skills ?? []);
+  const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
+  const setMainSkill = useBuild((s) => s.setMainSkill);
+  const setMainBasicAttack = useBuild((s) => s.setMainBasicAttack);
+  const derived = useDerived();
+
+  const mainIndex = Math.max(
+    0,
+    skills.findIndex((s) => s.main === true),
+  );
+  const BASIC = -1;
+
+  return (
+    <div className="row wrap mb-5">
+      <label className="muted">Skill</label>
+      <select
+        value={swingIsMain ? BASIC : mainIndex}
+        onChange={(event) => {
+          const value = Number(event.target.value);
+          if (value === BASIC) setMainBasicAttack(true);
+          else setMainSkill(value);
+        }}
+      >
+        {skills.map((skill, index) => (
+          <option key={`${skill.spellId}-${index}`} value={index}>
+            {spellName(world.snapshot, skill.spellId)}
+          </option>
+        ))}
+        <option value={BASIC} disabled={derived.basic === undefined}>
+          Basic attack
+        </option>
+      </select>
+      <span className="badge mono">{swingIsMain ? "basic attack" : (derived.dps?.spellId ?? "")}</span>
+      <div className="grow" />
+      <button onClick={() => setAllPanels(DAMAGE_PANELS, false)}>Collapse all</button>
+      <button onClick={() => setAllPanels(DAMAGE_PANELS, true)}>Expand all</button>
+    </div>
+  );
+}
+
+function SkillDamagePanel(): ReactNode {
+  const [technical] = useTechnical();
   const derived = useDerived();
   const doc = useBuild((s) => s.doc);
-  const setMainSkill = useBuild((s) => s.setMainSkill);
   const setIncludeInFullDps = useBuild((s) => s.setIncludeInFullDps);
   const setTargetPlacement = useBuild((s) => s.setTargetPlacement);
   const setPackSize = useBuild((s) => s.setPackSize);
@@ -113,10 +173,6 @@ export function DamagePanel(): ReactNode {
     );
   }
 
-  const mainIndex = Math.max(
-    0,
-    skills.findIndex((s) => s.main === true),
-  );
   /**
    * The source the breakdown is showing.
    *
@@ -189,20 +245,7 @@ export function DamagePanel(): ReactNode {
   return (
     <div className="panel damage-panel">
       <div className="calcs-body">
-        <div className="row wrap mb-5">
-          <label className="muted">Skill</label>
-          <select value={mainIndex} onChange={(event) => setMainSkill(Number(event.target.value))}>
-            {skills.map((skill, index) => (
-              <option key={`${skill.spellId}-${index}`} value={index}>
-                {spellName(world.snapshot, skill.spellId)}
-              </option>
-            ))}
-          </select>
-          <span className="badge mono">{damage.spellId}</span>
-          <div className="grow" />
-          <button onClick={() => setAllPanels(DAMAGE_PANELS, false)}>Collapse all</button>
-          <button onClick={() => setAllPanels(DAMAGE_PANELS, true)}>Expand all</button>
-        </div>
+        <MainSelect />
 
         {/*
           The breakdown, first, because it is what the tab is for.
@@ -225,13 +268,17 @@ export function DamagePanel(): ReactNode {
           summary={
             <>
               <span className="muted">
-                {ELEMENTS[shownHit.element]?.displayName || shownHit.element} · the rows the
-                mod&apos;s own damage log prints, expandable into their sources
+                {ELEMENTS[shownHit.element]?.displayName || shownHit.element} damage
               </span>
               {ailments.length > 0 && (
-                <span className="badge">{ailments.map((a) => a.ailment).join(" · ")}</span>
+                <span className="badge" title="Ailments this hit can inflict">
+                  inflicts {ailments.map((a) => a.ailment).join(" · ")}
+                </span>
               )}
-              <span className="mono">{smart(shownHit.average.total)}</span>
+              <span title="Average damage per hit, with crits weighted in">
+                <span className="muted">average hit </span>
+                <span className="mono">{smart(shownHit.average.total)}</span>
+              </span>
             </>
           }
         >
@@ -386,7 +433,7 @@ export function DamagePanel(): ReactNode {
             </div>
 
             <div className="bd-cell bd-right bd-band-3">
-              <AilmentSummary ailment={ailment} elsewhere={elsewhere} />
+              <AilmentSummary ailment={ailment} elsewhere={elsewhere} stacks={dps.ailmentStacks} />
             </div>
 
             <div className="bd-cell bd-right bd-band-4">
@@ -509,6 +556,28 @@ export function DamagePanel(): ReactNode {
                 total={dps.procDps}
                 hint="While this skill is the only one you press. Not part of the DPS above — the Full DPS card does count them."
                 rotation={derived.fullDps?.procs}
+              />
+            </Panel>
+          )}
+
+          {/*
+            What this skill's own buff casts for you, on whichever clock fires it.
+
+            Ice-Tipped Blade's whole value is here — its DPS above is 0 and correctly so — and
+            Whiteout Sovereign's storms are half of its. Open by default for exactly that reason:
+            a buff whose card said "0 DPS" and hid the number that describes it was the complaint.
+          */}
+          {dps.granted.length > 0 && (
+            <Panel
+              id="damage.granted"
+              title="Granted by this skill"
+              summary={`${smart(dps.grantedDps)}/s`}
+              defaultOpen={dps.dps <= 0}
+            >
+              <ProcTable
+                procs={dps.granted}
+                total={dps.grantedDps}
+                hint="Spells this skill's buff lets you cast — most on your swings. Already counted in Total DPS where they fire (the swing, or the skill you press); shown here because it is what this skill buys, and what its support gems are ranked on."
               />
             </Panel>
           )}
@@ -678,6 +747,7 @@ const DAMAGE_PANELS = [
   "damage.sources",
   "damage.summons",
   "damage.procs",
+  "damage.granted",
   "damage.full",
   "damage.rotation-procs",
   "damage.stats",

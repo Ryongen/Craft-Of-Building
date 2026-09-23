@@ -372,6 +372,30 @@ export type DamageSource = {
   disableKnockback: boolean;
 };
 
+/**
+ * One `exile_effect` act that puts stacks of something on the **enemy**.
+ *
+ * Counted with the same walk and the same firing arithmetic as a damage source, because the
+ * question is the same one: how many times per cast does this act run where the target is.
+ * `tailwind_sweep` applies one `snow_tracked` per press; `glacial_dash` applies three on every
+ * tick its dash projectile lives; `banner_of_the_hunt` one every 30 ticks for the banner's life.
+ *
+ * What reads it is `effect-supply.ts`, for the procs that *spend* a debuff — Cryogenic Rupture
+ * removes one `snow_tracked` every time it fires, so it can fire no faster than something puts
+ * them back.
+ */
+export type EffectApplication = {
+  effectId: string;
+  /** `count` on the act: stacks one firing gives. */
+  stacks: number;
+  trigger: Trigger;
+  carrier: Carrier;
+  firesPerCarrier: number;
+  carriersPerCast: number;
+  /** The same share of a `times_to_cast` press {@link DamageSource.castShare} is. */
+  castShare: number;
+};
+
 export type SkillModel = {
   spellId: string;
   sources: DamageSource[];
@@ -410,6 +434,8 @@ export type SkillModel = {
    * say so rather than look like a modelling failure.
    */
   unmodelledSummons: string[];
+  /** Stacks this cast puts on enemies, act by act. See {@link EffectApplication}. */
+  applications: EffectApplication[];
 };
 
 // ---------------------------------------------------------------------------
@@ -483,6 +509,7 @@ export function skillModel(
   const unmodelled = new Set<string>();
   const summons = new Set<string>();
   const blocked = new Map<string, BlockedGate>();
+  const applications: EffectApplication[] = [];
 
   /**
    * One frame of the walk: the carrier whose component group is being read, the spawn chain
@@ -532,9 +559,32 @@ export function skillModel(
       // own selector, and anything it spawns — resolves at the mob that was touched rather than
       // at the projectile that touched it.
       const atTarget = trigger.kind === "on_hit";
+      const onEnemy = selectsEnemies(part);
 
       /** Follows one act: a `damage` to a source, a spawn to another frame, a jump to a group. */
-      const run = (act: RawAct, from: SpawnFrom, resolvesAtTarget: boolean, hits: SourceTarget): void => {
+      const run = (
+        act: RawAct,
+        from: SpawnFrom,
+        resolvesAtTarget: boolean,
+        hits: SourceTarget,
+        enemy: boolean,
+      ): void => {
+        if (act.type === "exile_effect") {
+          const effectId = str(act.map["exile_potion_id"]);
+          const action = str(act.map["potion_action"]) ?? "GIVE_STACKS";
+          if (enemy && effectId !== undefined && action === "GIVE_STACKS") {
+            applications.push({
+              effectId,
+              stacks: Math.max(1, Math.trunc(num(act.map["count"]) ?? 1)),
+              trigger,
+              carrier: frame.carrier,
+              firesPerCarrier,
+              carriersPerCast: frame.carriersPerCast,
+              castShare,
+            });
+          }
+          return;
+        }
         if (act.type === "damage") {
           sources.push({
             id: `${groupName}#${index}`,
@@ -607,7 +657,7 @@ export function skillModel(
       };
 
       const ownFrom: SpawnFrom = atTarget ? { kind: "target", gate: target } : { kind: "parent" };
-      for (const act of part.acts) run(act, ownFrom, atTarget, target);
+      for (const act of part.acts) run(act, ownFrom, atTarget, target, onEnemy);
 
       // `ComponentPart.tryActivate` finishes by re-running every `per_entity_hit` part once per
       // entity the selector above picked, through `SpellCtx.onEntityHit` — a `TARGET` context
@@ -617,7 +667,7 @@ export function skillModel(
       if (part.perEntityHit.length > 0 && target.kind !== "none" && target.kind !== "self") {
         const hitFrom: SpawnFrom = { kind: "target", gate: target };
         for (const inner of part.perEntityHit) {
-          for (const act of inner.acts) run(act, hitFrom, true, target);
+          for (const act of inner.acts) run(act, hitFrom, true, target, onEnemy);
         }
       }
     });
@@ -638,7 +688,26 @@ export function skillModel(
     unreachableGroups: [...groups.keys()].filter((g) => g !== "on_cast" && !reached.has(g)),
     unmodelledActs: [...unmodelled].sort(),
     unmodelledSummons: [...summons].sort(),
+    applications,
   };
+}
+
+/**
+ * Whether a part's selector lands on enemies — the same rule `effect-state.ts` uses to decide who
+ * holds a granted effect: `self` is the caster, and so is an area searching allies, summons or
+ * pets. A part with no selector reaches nobody.
+ */
+function selectsEnemies(part: Part): boolean {
+  if (part.targets.length === 0) return false;
+  return part.targets.every((target) => {
+    if (target.type === "self") return false;
+    const predicate = str(target.map["en_predicate"]);
+    return !(
+      predicate === "allies" ||
+      predicate === "casters_summons" ||
+      predicate === "pets"
+    );
+  });
 }
 
 /**

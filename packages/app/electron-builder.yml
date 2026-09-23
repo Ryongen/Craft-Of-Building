@@ -7,7 +7,10 @@
 #
 # `electronVersion` is pinned for the same reason — electron is hoisted to the repo root, and
 # electron-builder cannot always compute the version from packages/app on its own.
-appId: com.ryongen.cte2pob
+#
+# `appId` is how Windows and the auto-updater recognise an existing install. Changing it after a
+# release makes the next installer sit beside the old one instead of replacing it — leave it be.
+appId: com.ryongen.cob
 productName: Craft of Building
 electronVersion: 43.4.0
 
@@ -20,6 +23,16 @@ files:
   - package.json
 
 asar: true
+
+# Where installed copies look for updates (see src/main/updater.ts). This also makes `dist` write
+# `latest.yml` beside the installer; a release needs it, the installer and its .blockmap, or no
+# installed copy will ever see it. `npm run release` builds and uploads all three, as a draft,
+# with a GH_TOKEN in the environment; publish the draft on GitHub to ship it.
+publish:
+  provider: github
+  owner: Ryongen
+  repo: cte2-pob
+  releaseType: draft
 
 win:
   # `build/icon.ico` — seven sizes from 16 to 256, generated from the repo-root CTE2COB.jpg.
@@ -36,10 +49,14 @@ win:
     - target: portable
       arch: [x64]
 
+# No spaces in either name. `latest.yml` records the installer's name with dashes, while a file
+# uploaded to a release by hand has its spaces turned into dots — so a spaced name only works
+# when electron-builder does the upload, and the updater 404s otherwise.
 nsis:
+  artifactName: Craft-of-Building-Setup-${version}.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
 
 portable:
-  artifactName: ${productName}-${version}-portable.exe
+  artifactName: Craft-of-Building-${version}-portable.${ext}

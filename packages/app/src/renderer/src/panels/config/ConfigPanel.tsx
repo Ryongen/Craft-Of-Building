@@ -178,8 +178,9 @@ function EnemySection(): ReactNode {
         enemy.offence,
         enemy.level ?? doc.character.level,
         ORIGINAL_MODE,
+        targetPreset(preset ?? "")?.rarityId,
       ),
-    [world.snapshot, enemy.offence, enemy.level, doc.character.level],
+    [world.snapshot, enemy.offence, enemy.level, doc.character.level, preset],
   );
 
   const affixes = useMemo(
@@ -384,7 +385,10 @@ function EnemySection(): ReactNode {
             />
           </div>
           {incomingHit !== undefined && (
-            <div className="field">
+            <div
+              className="field"
+              title={`Base damage ${Math.round(incomingHit.base)} × level exponent ${incomingHit.levelExponentMulti.toFixed(2)} × rarity ${incomingHit.rarityMulti.toFixed(2)}, before your mitigation`}
+            >
               <label>Raw per hit</label>
               <div className="mono" style={{ paddingTop: 4 }}>
                 {Math.round(incomingHit.raw).toLocaleString()}
@@ -396,8 +400,9 @@ function EnemySection(): ReactNode {
         <Plain>
           <div className="faint text-sm mt-3">
             This is the mob's Minecraft attack damage, before the game scales it. Craft to Exile 2
-            multiplies it heavily with level — at level 100 a hit is about 26 times what it looks
-            like here — so the raw number beside it is the one your defences actually face.
+            multiplies it heavily with level and again by the mob's rarity — a level 100 common mob
+            hits for about 170 times what it looks like here, a Mythic for 1.75 times that again — so
+            the raw number beside it is the one your defences actually face.
             Leaving both blank is fine; the Defence tab then tells you the size of a single hit
             you survive, and stays quiet about how long you last.
           </div>
@@ -418,7 +423,9 @@ function EnemySection(): ReactNode {
             </code>
             , then <code>StatScaling.MOB_DAMAGE.scale(num, level)</code>{" "}
             <em>last</em> — {"1 + 0.25 * (lvl - 1)"} on this pack's <code>original_balance</code>,
-            so x25.75 at level 100. Only <code>getAmount()</code> is typed here: it is the vanilla{" "}
+            so x25.75 at level 100. That is the event's base; <code>DamageEvent.addMobDamageMultipliers</code>{" "}
+            then adds <code>MOB_DMG_POWER_SCALING_BASE * MOB_DMG_POWER_SCALING^lvl</code> (x6.66 at
+            level 100) and the rarity's <code>dmg_multi</code>, taken from the target preset. Only <code>getAmount()</code> is typed here: it is the vanilla{" "}
             <code>generic.attack_damage</code>, and no file in the install names it.{" "}
             <code>BASIC_ATTACK_COOLDOWN_ID</code> is 5 ticks, so the rate caps at{" "}
             {MAX_BASIC_ATTACKS_PER_SECOND}/s. Read from{" "}

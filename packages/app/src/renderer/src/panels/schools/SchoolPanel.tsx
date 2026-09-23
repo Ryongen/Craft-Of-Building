@@ -60,13 +60,15 @@ import {
   unknownSchoolPerks,
   type SpellSchoolView,
 } from "@cte2/schema";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
+import { useWhatIf } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
 import { GemWindow, SpellWindow } from "../../ui/SpellTooltip.js";
 import { useHoverCard, type At } from "../../ui/HoverCard.js";
 import { perkCard, spellCard } from "../../ui/spell-stats.js";
+import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** `SpellSchool.MAX_X_ROWS` / `MAX_Y_ROWS` — the grid the screen draws into. */
@@ -582,6 +584,7 @@ function PerkCell({
       perkLevel={perkLevel}
       maxLevels={maxLevels}
       characterLevel={level}
+      canAdd={canAdd}
       note={note}
       at={at}
     />
@@ -661,6 +664,7 @@ function CellCard({
   perkLevel,
   maxLevels,
   characterLevel,
+  canAdd,
   note,
   at,
 }: {
@@ -669,6 +673,8 @@ function CellCard({
   perkLevel: number;
   maxLevels: number;
   characterLevel: number;
+  /** Whether a click would take another rank; when not, the card prices the right-click instead. */
+  canAdd: boolean;
   /** The planner's own remark — what this click would do — at the foot of either card. */
   note: string;
   at: At;
@@ -687,5 +693,135 @@ function CellCard({
   }
 
   const card = perkCard(snapshot, perkId, { perkLevel: shown, characterLevel });
-  return card === undefined ? null : <GemWindow card={{ ...card, note }} floating at={at} />;
+  if (card === undefined) return null;
+  return (
+    <GemWindow card={{ ...card, note }} floating at={at}>
+      <PassivePrice perkId={perkId} perkLevel={perkLevel} maxLevels={maxLevels} canAdd={canAdd} />
+    </GemWindow>
+  );
+}
+
+/**
+ * What one more rank of a passive does to the build — or, where no more can be taken, what
+ * giving one back costs. Holding Alt shows the other direction.
+ *
+ * The card above already lists the perk's own lines, but `+3% Spell Damage` is not a number you
+ * can plan with; how far it moves your DPS, life and the rest of the sheet is. Priced the way a
+ * tree node is, by recomputing the build with the change, so conversions, exile effects and
+ * everything downstream are in it.
+ *
+ * One direction at a time rather than both stacked: two comparison blocks do not fit on a
+ * screen, and for a flat perk the second is the first with its signs flipped. Alt is for the
+ * perks where it is not — a rank that pushes armour up its curve or a resist into its cap.
+ *
+ * "Up" with Alt is allowed past what a click could buy — out of points, or under the row's
+ * level — because what the next rank would do is exactly what someone saving for it wants to
+ * know. Only `max_lvls` stops it.
+ *
+ * Spell perks are left out: taking one also puts the skill on the bar, and the spell card is
+ * already about that skill.
+ */
+function PassivePrice({
+  perkId,
+  perkLevel,
+  maxLevels,
+  canAdd,
+}: {
+  perkId: string;
+  perkLevel: number;
+  maxLevels: number;
+  canAdd: boolean;
+}): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const alt = useAltHeld();
+
+  const naturalUp = canAdd || perkLevel === 0;
+  const up = alt ? !naturalUp : naturalUp;
+  const target = up
+    ? perkLevel < maxLevels
+      ? perkLevel + 1
+      : undefined
+    : perkLevel > 0
+      ? perkLevel - 1
+      : undefined;
+
+  // Memoised on the document and the target rank, so the pointer moving across the cell does not
+  // restart `useWhatIf`'s timer on every frame.
+  const candidate = useMemo(() => {
+    if (target === undefined) return undefined;
+    const schools = { ...(doc.character.schools ?? {}) };
+    if (target <= 0) delete schools[perkId];
+    else schools[perkId] = target;
+    return { ...doc, character: { ...doc.character, schools } };
+  }, [doc, perkId, target]);
+
+  const whatIf = useWhatIf(candidate);
+
+  const title = up
+    ? canAdd
+      ? "Taking the next rank"
+      : "The next rank, if you could take it"
+    : "Refunding a rank (right-click)";
+  const other = up
+    ? perkLevel > 0 && "Hold Alt for refunding a rank"
+    : perkLevel < maxLevels && "Hold Alt for the next rank";
+
+  return (
+    <>
+      <div className="tt-divider" />
+      <div className="delta-section-title">
+        {target === undefined ? (up ? "Already at max rank" : "No rank to refund") : title}
+        {target !== undefined && whatIf === undefined && " · measuring…"}
+      </div>
+      {target === undefined ? null : whatIf === undefined ? (
+        <div className="faint text-sm" style={{ minHeight: 34 }}>
+          Recomputing the build with this change…
+        </div>
+      ) : (
+        <ComparisonBlock
+          comparison={whatIf.click.comparison}
+          emptyNote={
+            up ? "Moves no number this planner reports." : "Costs no number this planner reports."
+          }
+        />
+      )}
+      {(alt || other) && (
+        <div className="faint text-xs mt-2">{alt ? "Release Alt to flip back" : other}</div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Whether Alt is held, for as long as the component using it is mounted.
+ *
+ * `preventDefault` on the Alt keydown is what stops Windows from handing focus to the menu bar
+ * when the key goes back up — Electron only routes a keystroke to the menu when the page left it
+ * unhandled. Scoped to the tooltip's lifetime so Alt reaches the menu everywhere else. Cleared on
+ * blur, because an Alt-Tab away never delivers the keyup.
+ */
+function useAltHeld(): boolean {
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    const down = (event: KeyboardEvent): void => {
+      if (event.key !== "Alt") return;
+      event.preventDefault();
+      setHeld(true);
+    };
+    const up = (event: KeyboardEvent): void => {
+      if (event.key !== "Alt") return;
+      event.preventDefault();
+      setHeld(false);
+    };
+    const reset = (): void => setHeld(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
+  return held;
 }

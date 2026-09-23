@@ -137,12 +137,21 @@ test("a projectile that expires on contact stops pulsing when it reaches the tar
     trigger: { kind: "tick", rate: 4, firstTick: 0 },
   });
 
-  // Standing on it — inside `hitbox + 0.3`, so 0.6 for a 0.3-wide mob — deletes it on tick 1,
-  // three ticks before its first pulse would have gone out.
-  assert.equal(coverageOf(expiring, { ...DEFAULT_PLACEMENT, distance: 0.5 }).hitsPerCast, 0);
-  // A step further out nothing touches it, so all fifteen pulses are delivered — and the target
-  // is still inside the radius-2 area they resolve in.
+  // A still projectile never touches anything, even one standing on it: the hit test is
+  // `ProjectileUtil.getEntityHitResult` → `aabb.inflate(0.3).clip(from, to)`, and `clip` only
+  // reports a face the movement *enters* through. So all fifteen pulses go out, and the target is
+  // inside the radius-2 area they resolve in — whether it stands inside the hitbox or beside it.
+  assert.equal(coverageOf(expiring, { ...DEFAULT_PLACEMENT, distance: 0.5 }).hitsPerCast, 15);
   assert.equal(coverageOf(expiring, { ...DEFAULT_PLACEMENT, distance: 0.7 }).hitsPerCast, 15);
+
+  // One that flies into it from outside is deleted on contact: at 0.5 a tick it reaches the
+  // target 1.5 away on tick 2, two ticks before its first pulse would have gone out.
+  const flying = source({
+    carrier: { ...base, motion: motion({ speed: 0.5, expiresOnEntityHit: true }) },
+    firesPerCarrier: 15,
+    trigger: { kind: "tick", rate: 4, firstTick: 0 },
+  });
+  assert.equal(coverageOf(flying, { ...DEFAULT_PLACEMENT, distance: 1.5 }).hitsPerCast, 0);
 });
 
 test("a nova spreads projectiles evenly, so a single target catches a fraction of them", () => {
@@ -394,19 +403,25 @@ test("a hit that never happens spawns nothing at the target", () => {
     lifeTicks: 6,
     motion: motion({ speed: 0.5, nova: true, expiresOnEntityHit: false }),
   };
-  const s = chained(
-    [
-      step(bolt),
-      step(shard, {
-        spawnedOn: { kind: "on_hit" },
-        from: { kind: "target", gate: { kind: "aoe", radius: 1, selectionChance: 1 } },
-      }),
-    ],
-    { trigger: { kind: "on_hit" } },
-  );
+  const chain = [
+    step(bolt),
+    step(shard, {
+      spawnedOn: { kind: "on_hit" as const },
+      from: { kind: "target" as const, gate: { kind: "aoe" as const, radius: 1, selectionChance: 1 } },
+    }),
+  ];
+  // The shards' damage is an area where each one dies, three blocks out — wide enough to reach
+  // back to the mob they were born in.
+  const s = chained(chain, { trigger: { kind: "expire" }, target: { kind: "aoe", radius: 4, selectionChance: 1 } });
 
-  // Within the three blocks the bolt travels, the shards go out and come back on their targets.
+  // Within the three blocks the bolt travels, it hits, the shards spawn and their areas land.
   assert.ok(coverageOf(s, { ...DEFAULT_PLACEMENT, distance: 2 }).hitsPerCast > 0);
   // Beyond it nothing was ever hit, so nothing was ever spawned.
   assert.equal(coverageOf(s, { ...DEFAULT_PLACEMENT, distance: 9 }).hitsPerCast, 0);
+
+  // A shard's own *hit*, by contrast, never lands on the mob it was born in: every movement
+  // starts inside that mob's box, and `clip` finds no face to enter through. Cryogenic Rupture's
+  // shards are for the enemies around the one that burst, which a single target does not have.
+  const onHit = chained(chain, { trigger: { kind: "on_hit" } });
+  assert.equal(coverageOf(onHit, { ...DEFAULT_PLACEMENT, distance: 2 }).hitsPerCast, 0);
 });

@@ -599,7 +599,11 @@ function hitTick(
   for (let i = 0; i < site.path.length; i++) {
     const to = site.path[i];
     if (to === undefined) break;
-    if (gapToSegment(target, from, to) <= reach) {
+    // `AABB.clip` only reports the face a ray *enters* through, so a movement that starts inside
+    // the inflated box finds no hit on it. A projectile spawned inside a mob — Cryogenic
+    // Rupture's shards, cast from the enemy that was struck — flies out of it untouched; only a
+    // movement that begins outside and reaches in counts.
+    if (horizontalGap(from, target) > reach && gapToSegment(target, from, to) <= reach) {
       return { tick: i + 1, at: approachPoint(from, to, target, reach) };
     }
     from = to;

@@ -675,6 +675,17 @@ export type ExileEffectSetup = {
  *     per distinct id.
  */
 export type BuildConfig = {
+  /**
+   * The damage figures are about the weapon swing rather than any Skill.
+   *
+   * A build can be played by basic attacking: `attack_speed`, `basic_atk_dmg` and the
+   * `*_on_basic_hit` procs are all built around it, and Ice-Tipped Blade or Whiteout Sovereign
+   * turn every swing into a spell. The swing is not a `SkillSetup` and must not become one — the
+   * hotbar has no slot for it and it would count against `MAX_SKILL_GEMS` — so it is chosen here.
+   * While set, no Skill is the main one: `simulateDps` without an explicit skill returns nothing,
+   * and every Skill's `main` flag is ignored.
+   */
+  mainIsBasicAttack?: boolean;
   /** Shorthand for `enemy.level`. `enemy.level` wins when both are set. */
   enemyLevel?: number;
   mapTier?: number;

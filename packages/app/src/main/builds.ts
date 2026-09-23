@@ -11,7 +11,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
 import type { BuildDoc } from "@cte2/schema";
 import { dialog, type BrowserWindow } from "electron";
@@ -25,16 +25,32 @@ import {
 } from "@shared/build-file";
 import type { AutosaveSession, OpenResult, PinnedBaseline, SaveResult } from "@shared/ipc";
 
-import { autosavePath, rememberBuild } from "./settings.js";
+import { autosavePath, readSettings, rememberBuild } from "./settings.js";
 
 const FILTERS = [
   { name: "CTE2 build", extensions: ["json"] },
   { name: "All files", extensions: ["*"] },
 ];
 
+/**
+ * Where the open dialog starts: the mod's export folder when there is one, else the game folder
+ * the snapshot was extracted from, else wherever the OS would have started anyway.
+ *
+ * `cob-exports` is the folder the in-game exporter writes to (`Exporter.java`), beside `mods/`
+ * under the same game directory that extraction records as `installPath`.
+ */
+function openDefaultPath(): string | undefined {
+  const installPath = readSettings().installPath;
+  if (installPath === null || !existsSync(installPath)) return undefined;
+  const exports = join(installPath, "cob-exports");
+  return existsSync(exports) ? exports : installPath;
+}
+
 export async function openBuild(window: BrowserWindow | null): Promise<OpenResult> {
+  const defaultPath = openDefaultPath();
   const result = await dialog.showOpenDialog(window ?? undefined!, {
     title: "Open build",
+    ...(defaultPath === undefined ? {} : { defaultPath }),
     filters: FILTERS,
     properties: ["openFile"],
   });

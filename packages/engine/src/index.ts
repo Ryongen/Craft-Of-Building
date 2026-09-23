@@ -124,6 +124,7 @@ export type {
   Origin,
   ProjectileMotion,
   SkillModel,
+  EffectApplication,
   SourceRequirement,
   SourceTarget,
   SpawnFrom,
@@ -142,6 +143,9 @@ export {
 } from "./damage/effect-state.js";
 export { procDps, resolveProcs, rotationProcs } from "./damage/procs.js";
 export type { Proc, ProcLimit, RotationPresses } from "./damage/procs.js";
+export { effectSupply, stacksPerCast } from "./damage/effect-supply.js";
+export type { EffectSupply, SupplyBasis, SupplySource } from "./damage/effect-supply.js";
+export { grantedProcStats, grantedProcs } from "./damage/granted.js";
 export { resolveSummons, summonDps } from "./damage/summons.js";
 export type { SummonOutput, SummonSpellCast } from "./damage/summons.js";
 export type {
@@ -169,8 +173,8 @@ export type {
   WriteKind,
 } from "./damage/breakdown.js";
 
-export { AILMENTS } from "./damage/ailments.js";
-export type { Ailment, AilmentResult } from "./damage/ailments.js";
+export { AILMENTS, stackAilments } from "./damage/ailments.js";
+export type { Ailment, AilmentFeed, AilmentResult, AilmentStacks } from "./damage/ailments.js";
 
 export { LAYER, LAYER_ACTIONS, LayerData, isLayerAction, layerIndex } from "./damage/layers.js";
 export type { LayerAction, LayerIndex, StatLayer } from "./damage/layers.js";

@@ -44,6 +44,9 @@ export function collectSpellContexts(
   skill: SkillSetup,
   path: string,
   equipped: readonly SkillSetup[] = [],
+  /** Another spell's rank, for the Skill a borrowing spell takes its innate stats from. */
+  levelOf: (spellId: string) => number | undefined = (id) =>
+    equipped.find((other) => other.spellId === id)?.level,
 ): StatContext[] {
   const out: StatContext[] = [];
   const spell = entry(env.snapshot, CATEGORY.spell, skill.spellId)?.data;
@@ -57,7 +60,7 @@ export function collectSpellContexts(
     const at = sockets.borrowedFrom === undefined ? path : `${path}.supportsFrom(${sockets.borrowedFrom})`;
     out.push(...collectSupportGems(env, sockets.skill, at));
   }
-  out.push(...collectInnateStats(env, skill, spell, path));
+  out.push(...collectInnateStats(env, skill, spell, path, levelOf));
   return out;
 }
 
@@ -172,12 +175,19 @@ function collectSupportGems(env: Env, skill: SkillSetup, path: string): StatCont
  *
  * Note what that does *not* do: it takes the other spell's innate stats, but the other
  * spell's own level, since `getStats` is called on `other`. 21 spells in this pack do it.
+ *
+ * That level is the player's real rank in the other spell, not its `default_lvl`. Reading the
+ * floor instead cost every pet basic attack most of its Skill's `summon_damage`: a rank 20
+ * `summon_spirit_wolf` grants +147.8%, and `wolf_basic` was getting the rank 0 figure of +20%.
+ * The game's damage log shows the difference as `Additive Damage: x3.26` against the x1.98
+ * the engine had.
  */
 function collectInnateStats(
   env: Env,
   skill: SkillSetup,
   spell: Record<string, unknown>,
   path: string,
+  levelOf: (spellId: string) => number | undefined,
 ): StatContext[] {
   const out: StatContext[] = [];
 
@@ -196,9 +206,9 @@ function collectInnateStats(
         `\`${skill.spellId}\` declares \`use_support_gems_from: "${borrowed}"\`, which is not a ${CATEGORY.spell} entry.`,
       );
     } else {
-      // The borrowed spell is at *its* own level, which the document does not record, so it
-      // takes its `default_lvl` — the same floor `Spell.getLevelOf` applies to an unlearned spell.
-      const borrowedStats = innateOf(env, borrowed, other, undefined);
+      // The borrowed spell is at *its* own level. When nothing ranks it, it takes its
+      // `default_lvl` — the same floor `Spell.getLevelOf` applies to an unlearned spell.
+      const borrowedStats = innateOf(env, borrowed, other, levelOf(borrowed));
       if (borrowedStats.length > 0) out.push(context("INNATE_SPELL", borrowed, path, borrowedStats));
     }
   }

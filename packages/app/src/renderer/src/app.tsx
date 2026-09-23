@@ -10,6 +10,8 @@ import { EPILOGUE_BONUS_POINTS, maxLevel, type BuildDoc, type Observation } from
 import { ATTACK_SPEED_ATTRIBUTE, baseAttackSpeedFrom } from "@cte2/engine";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 
+import type { UpdateStatus } from "@shared/ipc";
+
 import { SheetDetail, type SheetFocus } from "./panels/stats/SheetDetail.js";
 import { Splitter } from "./ui/Splitter.js";
 import { VitalsBlock } from "./panels/stats/VitalsBlock.js";
@@ -611,6 +613,7 @@ export function App(): ReactNode {
           {errors} error{errors === 1 ? "" : "s"}, {warnings} warning{warnings === 1 ? "" : "s"}
         </span>
         <span className="spacer" />
+        <UpdateNotice />
         {/*
           The single most important thing to say about a number, said where it cannot be missed.
           It used to be a fixed string reading "unverified — no fixture pins a number yet", which
@@ -672,6 +675,74 @@ function CaptureStatus({ onOpenCapture }: { onOpenCapture: () => void }): ReactN
         : `${matched} stats match the game`}
     </span>
   );
+}
+
+/**
+ * The updater, in one line of the status bar.
+ *
+ * Silent unless there is something to act on — a download, an update ready to install, a release
+ * the portable build should go and fetch — or the user asked from Help > Check for Updates, in
+ * which case "up to date" or the error is owed to them. Those answers clear themselves after a
+ * few seconds; the actionable ones stay until acted on.
+ */
+function UpdateNotice(): ReactNode {
+  const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
+
+  useEffect(() => window.cte2.onUpdateStatus?.(setStatus), []);
+
+  const transient =
+    (status.kind === "current" || status.kind === "error" || status.kind === "unsupported") &&
+    status.manual;
+  useEffect(() => {
+    if (!transient) return;
+    const timer = setTimeout(() => setStatus({ kind: "idle" }), 8000);
+    return () => clearTimeout(timer);
+  }, [status, transient]);
+
+  switch (status.kind) {
+    case "checking":
+      return status.manual ? <span className="faint">checking for updates…</span> : null;
+    case "current":
+      return status.manual ? <span className="faint">up to date</span> : null;
+    case "unsupported":
+      return status.manual ? <span className="faint">updates are checked in release builds only</span> : null;
+    case "error":
+      return status.manual ? (
+        <span style={{ color: "var(--bad)" }} title={status.message}>
+          update check failed
+        </span>
+      ) : null;
+    case "downloading":
+      return (
+        <span className="faint">
+          downloading {status.version}… {Math.floor(status.percent)}%
+        </span>
+      );
+    case "ready":
+      return (
+        <span
+          className="link-ish"
+          style={{ color: "var(--good)" }}
+          onClick={() => void window.cte2.installUpdate?.()}
+          title="Restart now to install it. Otherwise it installs the next time you close the app."
+        >
+          {status.version} ready — restart to update
+        </span>
+      );
+    case "available":
+      return (
+        <span
+          className="link-ish"
+          style={{ color: "var(--good)" }}
+          onClick={() => window.open(status.url)}
+          title="The portable build cannot update itself. This opens the release page."
+        >
+          {status.version} available — download
+        </span>
+      );
+    case "idle":
+      return null;
+  }
 }
 
 function shortPath(path: string): string {

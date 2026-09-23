@@ -375,9 +375,10 @@ test("the second hit is not answered until a document states one", () => {
 });
 
 test("a stated attacker gives the drain, the sustain and the hits survived", () => {
-  // A zombie's 3.0 at level 1 is `(3 * 0.33 / 100) + 6 = 6.0099` raw, and the curve is the
-  // identity at level 1. With no armour and no resists the whole of it arrives, so the
-  // arithmetic on screen is the arithmetic here.
+  // A zombie's 3.0 at level 1 is `(3 * 0.33 / 100) + 6 = 6.0099`, and the level curve is the
+  // identity at level 1. The event's level exponent is not: `2.2 * 1.01114^1`. Common rarity is
+  // x1. With no armour and no resists the whole of it arrives.
+  const hit = 6.0099 * 2.2 * 1.01114;
   const result = character(
     { health: 1000 },
     {
@@ -390,18 +391,18 @@ test("a stated attacker gives the drain, the sustain and the hits survived", () 
   const over = result.overTime;
   assert.ok(over !== undefined, "both halves stated, so there is an answer");
   closeTo(over.ratePerSecond, 1);
-  closeTo(over.rawPerHit, 6.0099);
+  closeTo(over.rawPerHit, hit);
 
   const physical = over.byElement.find((e) => e.element === "Physical")!;
-  closeTo(physical.perHit, 6.0099, "nothing mitigates it on a bare sheet");
-  closeTo(physical.perSecond, 6.0099, "one swing a second");
+  closeTo(physical.perHit, hit, "nothing mitigates it on a bare sheet");
+  closeTo(physical.perSecond, hit, "one swing a second");
 
   // No regeneration on this sheet, so the net loss is the whole drain and the pool is the 1000
   // health. `selfSustain` does this walk; this pins that the two are wired together rather than
   // that it works, which `self-sustain.test.ts` already covers.
-  closeTo(physical.sustain.netLossPerSecond, 6.0099);
-  closeTo(physical.sustain.secondsToDeath, 1000 / 6.0099);
-  closeTo(physical.hitsSurvived, 1000 / 6.0099, "at one swing a second the two are the same number");
+  closeTo(physical.sustain.netLossPerSecond, hit);
+  closeTo(physical.sustain.secondsToDeath, 1000 / hit);
+  closeTo(physical.hitsSurvived, 1000 / hit, "at one swing a second the two are the same number");
 });
 
 test("the rate multiplies the drain but not the hit, and mitigation applies to both", () => {

@@ -31,14 +31,35 @@ import { num, smart } from "../../ui/format.js";
 import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
 import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";
+import { ProcTable } from "../damage/ProcTable.js";
 
 export function BasicAttackCard(): ReactNode {
   const derived = useDerived();
   const basic = derived.basic;
+  const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
+  const setMainBasicAttack = useBuild((s) => s.setMainBasicAttack);
 
   return (
     <div className="card">
-      <div className="section-title mt-0">Basic attack</div>
+      <div className="row wrap mb-3">
+        <div className="section-title mt-0 grow">Basic attack</div>
+        {/*
+          The same control a Skill card has, so choosing to be judged on your swing is where you
+          would look for it. It is not a `SkillSetup.main`: the swing is not on the hotbar.
+        */}
+        <label
+          className="field"
+          title="Report the damage figures for your weapon swing and what it procs, instead of for a Skill"
+        >
+          <input
+            type="radio"
+            checked={swingIsMain}
+            onChange={() => setMainBasicAttack(true)}
+            disabled={basic === undefined}
+          />
+          main skill
+        </label>
+      </div>
 
       {basic === undefined ? (
         <>
@@ -99,8 +120,13 @@ export function BasicAttackCard(): ReactNode {
           ) : null}
           <div className="faint text-sm mb-4">
             On its own clock, like ailments and summons: pressing a Skill does not stop you
-            swinging. It is already inside the topbar&apos;s Total DPS.
+            swinging. It is already inside the topbar&apos;s Total DPS, and so is everything below.
           </div>
+          <ProcTable
+            procs={basic.procs}
+            total={basic.procDps}
+            hint="Spells your swings cast: gear procs, and the ones a buff hands you — Ice-Tipped Blade's Cryogenic Rupture, Whiteout Sovereign's storms. A proc that spends a debuff fires no faster than your skills put it back."
+          />
         </>
       )}
 

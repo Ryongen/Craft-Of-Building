@@ -46,7 +46,7 @@ import type { Compat } from "../compat.js";
 import { ORIGINAL_MODE } from "../compat.js";
 import type { StatIndex } from "../stat-def.js";
 import { statIndex } from "../stat-def.js";
-import type { AilmentResult } from "./ailments.js";
+import { stackAilments, type AilmentFeed, type AilmentResult, type AilmentStacks } from "./ailments.js";
 import { auraCutoffShare, auraSources } from "./auras.js";
 import type { Sheet } from "./ctx.js";
 import { effectDurationTicks } from "./effect-duration.js";
@@ -104,6 +104,7 @@ import {
   type Proc,
 } from "./procs.js";
 import { simulateHit, type DamageOptions, type DamageResult } from "./simulate.js";
+import { grantedProcs } from "./granted.js";
 
 export type DpsOptions = DamageOptions & {
   /** Where the enemy stands. Defaults to `DEFAULT_PLACEMENT` — melee range, dead ahead. */
@@ -130,6 +131,11 @@ export type DpsOptions = DamageOptions & {
    * not followed — otherwise a build with a proc on every stat would multiply out.
    */
   procs?: boolean;
+  /**
+   * Resolve the procs this skill's own buff grants — see `granted.ts`. On by default, off
+   * whenever `procs` is; a nested call that only wants a cast rate turns it off too.
+   */
+  granted?: boolean;
   /**
    * The component group the model walks from, when it is not `on_cast`.
    *
@@ -424,6 +430,18 @@ export type DpsResult = {
   /** `sum(procs.dps)`, kept separate from `dps` because it is a different spell's damage. */
   procDps: number;
   /**
+   * The procs this skill's own buff puts on your sheet, rated on the clock that fires them.
+   *
+   * Ice-Tipped Blade's whole value is Cryogenic Rupture on your swings; Whiteout Sovereign's
+   * storm is its slam plus the smaller storms its buff lets a swing call down. Empty for every
+   * skill whose buff grants no proc. **Attribution only** — these procs are already counted
+   * wherever they fire (the swing, or the skill you are pressing), so nothing sums this into a
+   * total. It is the figure a buff's row and its support gem ranking are about.
+   */
+  granted: Proc[];
+  /** `sum(granted.dps)`. */
+  grantedDps: number;
+  /**
    * The pets this skill puts out, and what each one's swing is worth.
    *
    * Empty for everything that summons nothing. A summon skill's own `dps` is usually zero — it
@@ -436,14 +454,30 @@ export type DpsResult = {
   overlap: Overlap;
   /** `dps` against `packSize` enemies. */
   packDps: number;
-  /** Ailment damage per second, summed. Not part of `dps` — it lands on its own clock. */
+  /**
+   * Ailment damage per second at full stacks, summed. Not part of `dps` — it lands on its own
+   * clock.
+   *
+   * Every landing hit of every source rolls its own bleed, burn or poison, and they stack without
+   * limit, so this is {@link ailmentStacks}' total plus the Shatter/Shock share — not the rate of
+   * one application, which is what it used to be and which read four-arrow Barrage as one arrow.
+   */
   ailmentDps: number;
+  /** The DoT ailments, one row each: how many stack up and what they tick for together. */
+  ailmentStacks: AilmentStacks[];
+  /**
+   * The DoT damage one cast's hits inflict over the ailments' whole durations, and the share of
+   * it the skill's permanent auras account for. {@link simulateFullDps} re-paces the first by the
+   * rotation, exactly as it does `damagePerCast`, and leaves the aura share on its own clock.
+   */
+  ailmentDamagePerCast: number;
+  auraAilmentDamagePerCast: number;
   /**
    * The share of {@link ailmentDps} that is a Shatter or a Shock rather than a tick.
    *
    * Inside `ailmentDps`, not beside it: adding the two would double-count. It is broken out
    * because the two halves behave nothing alike and a player choosing between them needs to see
-   * which is which. A bleed is a rate that is either up or it is not; a Shatter is a pool that
+   * which is which. A bleed is a rate that stacks with every hit; a Shatter is a pool that
    * fills off every freeze you land and empties in one spike, so the stats that move it are
    * `freeze_chance` and `freeze_proc_chance` rather than `dot_speed` and `bleed_duration`.
    */
@@ -661,6 +695,8 @@ export function simulateDps(
   // A disabled skill keeps its support gems and its place in the list and contributes nothing,
   // so it is never what a document meant by "the main skill" — but an explicit `options.skill`
   // still wins, because a caller asking for one by name has already decided.
+  // The swing is the main figure, so no Skill is — a caller that wants one names it.
+  if (options.skill === undefined && build.config?.mainIsBasicAttack === true) return undefined;
   const live = (build.skills ?? []).filter(isSkillEnabled);
   const stated = options.skill ?? live.find((s) => s.main);
   // With none stated, the first skill that can actually hit something. Taking `live[0]` outright
@@ -1327,7 +1363,7 @@ export function simulateDps(
           ),
           // The procced spell is resolved as its own cast, with its procs off so a chain cannot
           // recurse, and at the same placement — it lands where you are fighting.
-          damageOf: (spellId) => {
+          damageOf: (spellId, position) => {
             const entryData = snapshot.registries["mmorpg_spells"]?.[spellId]?.data;
             if (!entryData) return 0;
             const procSkill: SkillSetup = (build.skills ?? []).find((s) => s.spellId === spellId) ?? {
@@ -1337,16 +1373,33 @@ export function simulateDps(
               ...options,
               skill: procSkill,
               procs: false,
-              placement,
+              placement: procPlacement(placement, position),
             });
             return result?.damagePerCast ?? 0;
           },
           diagnostics,
         });
 
+  const granted =
+    options.procs === false || options.granted === false
+      ? []
+      : grantedProcs({
+          build,
+          snapshot,
+          spellId: skill.spellId,
+          characterRun,
+          ...pickOptions,
+        });
+
   // A pet's swing is its own spell on vanilla's clock, so it is resolved the way a proc is: a
   // nested `simulateDps` of the basic attack, entered at the group the pet's hit actually drives
   // rather than at `on_cast`, with its own summons and procs off so nothing can recurse.
+  //
+  // The bite's own hit is kept as well. A summon skill declares no damage act, so the hit above
+  // is a synthetic one of the summoning spell — base 0, the summon skill's tags rather than the
+  // pet's, so no `melee` — and a breakdown of it described nothing the game ever logs. The game's
+  // log for a wolf is `Spell: Wolf Attack`, and that is the hit a summon skill should show.
+  let petHit: DamageResult | undefined;
   const summons =
     options.summons === false
       ? []
@@ -1367,8 +1420,10 @@ export function simulateDps(
               procs: false,
               summons: false,
               entryGroup: PET_ATTACK_GROUP,
+              summonAttack: true,
               placement,
             });
+            petHit ??= result?.hit;
             return result?.damagePerCast ?? 0;
           },
           // A pet's extra spell is cast *as you* from the pet's feet, so it is an ordinary cast
@@ -1409,6 +1464,43 @@ export function simulateDps(
   // of three is the kind of thing nothing notices.
   const ailmentsLand = sources.length === 0 || headlineLands;
 
+  // Every hit that lands rolls its own ailments, and the DoTs among them stack, so the rate is
+  // per landing hit and per source — not the headline's one application. A spell with no damage
+  // act of its own is one synthetic hit a cast, as it always was.
+  const isAura = (s: SourceResult): boolean =>
+    s.source.carrier.kind === "effect" && s.source.carrier.permanent;
+  const ailmentFeeds = (only?: (s: SourceResult) => boolean): (AilmentFeed & { perCast: number })[] =>
+    !ailmentsLand
+      ? []
+      : sources.length === 0
+        ? [{ ailments: hit.average.ailments, hitsPerSecond: castsPerSecond, perCast: 1 }]
+        : landing
+            .filter((s) => only === undefined || only(s))
+            .map((s) => ({
+              ailments: s.hit.average.ailments,
+              perCast: s.coverage.hitsPerCast * s.sustained,
+              hitsPerSecond: s.coverage.hitsPerCast * s.sustained * castsPerSecond,
+            }));
+  const ailmentStacks = stackAilments(ailmentFeeds());
+  const dotPerCast = (feeds: (AilmentFeed & { perCast: number })[]): number =>
+    feeds.reduce(
+      (sum, f) =>
+        sum +
+        f.perCast *
+          f.ailments.reduce((s, a) => (a.durationSeconds > 0 ? s + a.totalDamage * a.chance : s), 0),
+      0,
+    );
+  const ailmentDamagePerCast = dotPerCast(ailmentFeeds());
+  const auraAilmentDamagePerCast = dotPerCast(ailmentFeeds(isAura));
+  // The pool ailments ride the headline: one pool on the target, filled and tipped by its hits.
+  const headlineHitsPerSecond =
+    !ailmentsLand
+      ? 0
+      : headline === undefined || sources.length === 0
+        ? castsPerSecond
+        : headline.coverage.hitsPerCast * headline.sustained * castsPerSecond;
+  const procAilments = ailmentsLand ? hit.average.ailments : [];
+
   // The spell sheet, deliberately: `ExileEffectAction` attaches the casting spell to the event,
   // so the duration is resolved off the per-spell unit and a linked Effect Duration gem reaches
   // it. See `effect-duration.ts`, which has the two lines of 6.4.13 that say so.
@@ -1435,7 +1527,9 @@ export function simulateDps(
 
   return {
     spellId: skill.spellId,
-    hit,
+    // Only when the skill has no damage of its own. The ailment figures below stay on `hit`: they
+    // are paced by this skill's casts, and a pet's poison is on the pet's clock.
+    hit: headline === undefined && petHit !== undefined ? petHit : hit,
     ...(headline === undefined ? {} : { headlineSourceId: headline.source.id }),
     sources,
     overlap,
@@ -1473,23 +1567,20 @@ export function simulateDps(
     persistentDps: perSecond(persistentPerCast),
     procs,
     procDps: procDps(procs),
+    granted,
+    grantedDps: procDps(granted),
     summons,
     summonDps: summonDps(summons),
     packDps: perSecond(sustainedPerCast) * packSize,
-    // Ailments are already a rate — they tick on their own clock, not the cast's — so they are
-    // reported beside the hit rather than folded into it.
-    ailmentDps: ailmentsLand
-      ? hit.average.ailments.reduce(
-          (sum, a) => sum + a.damagePerSecond + procPerSecond(a, castsPerSecond),
-          0,
-        )
-      : 0,
-    ailmentProcDps: ailmentsLand
-      ? hit.average.ailments.reduce((sum, a) => sum + procPerSecond(a, castsPerSecond), 0)
-      : 0,
-    ailmentHit: ailmentsLand
-      ? hit.average.ailments.reduce((sum, a) => sum + procPool(a, castsPerSecond), 0)
-      : 0,
+    // Reported beside the hit rather than folded into it: ailments tick on their own clock.
+    ailmentDps:
+      ailmentStacks.reduce((sum, s) => sum + s.dps, 0) +
+      procAilments.reduce((sum, a) => sum + procPerSecond(a, headlineHitsPerSecond), 0),
+    ailmentStacks,
+    ailmentDamagePerCast,
+    auraAilmentDamagePerCast,
+    ailmentProcDps: procAilments.reduce((sum, a) => sum + procPerSecond(a, headlineHitsPerSecond), 0),
+    ailmentHit: procAilments.reduce((sum, a) => sum + procPool(a, headlineHitsPerSecond), 0),
     ...(buff === undefined ? {} : { buff }),
     ...(debuff === undefined ? {} : { debuff }),
     requires: [...requires],
@@ -1563,6 +1654,20 @@ function buffDurationOf(
     declaredSeconds: upkeep.durationTicks / TICKS_PER_SECOND,
     infinite: false,
   };
+}
+
+/**
+ * Where a procced spell's target stands, relative to where the spell is cast from.
+ *
+ * A `TARGET` proc is cast from the enemy it was triggered on (`ProcSpellEffect.activate` sets
+ * the context's position source to `TARGET` and its target to the struck entity), so the enemy
+ * is at the origin rather than wherever you are standing. A `CASTER` proc is an ordinary cast.
+ */
+export function procPlacement(
+  placement: TargetPlacement,
+  position: "CASTER" | "TARGET",
+): TargetPlacement {
+  return position === "TARGET" ? { ...placement, distance: 0 } : placement;
 }
 
 /** How finely, and how far out, `reachOf` looks for a distance this skill does land at. */
@@ -1982,10 +2087,31 @@ export function simulateFullDps(
   const skillDps =
     (rotationSeconds > 0 ? damagePerRotation / rotationSeconds : 0) + auraPerSecond;
 
-  // An aura's ailments are on the aura's clock too: Holy Fire ignites at two pulses a second for
-  // as long as it is up, and weighting that by presses-per-pass — zero, for a toggle — dropped
-  // the whole burning half of a Holy Fire build.
-  const ailmentWeight = (e: Entry): number => (e.role === "aura" ? 1 : pressesOf(e));
+  // A skill's DoT stacks scale with how often its hits land, so the rotation re-paces them the
+  // way it re-paces `damagePerCast`. An aura's ailments are on the aura's clock instead: Holy
+  // Fire ignites at two pulses a second for as long as it is up, and pacing that by presses —
+  // zero, for a toggle — dropped the whole burning half of a Holy Fire build.
+  const castAilmentDamage = (e: Entry): number =>
+    e.result.ailmentDamagePerCast - e.result.auraAilmentDamagePerCast;
+  const auraAilmentDps = (e: Entry): number =>
+    e.role === "aura"
+      ? e.result.ailmentDps - e.result.ailmentProcDps
+      : e.result.rate.cycleSeconds > 0
+        ? (e.result.auraAilmentDamagePerCast * e.result.rate.castsPerCycle) / e.result.rate.cycleSeconds
+        : 0;
+  const castAilmentDps = (e: Entry): number =>
+    e.role === "aura" || rotationSeconds <= 0
+      ? 0
+      : (castAilmentDamage(e) * e.result.rate.castsPerCycle * pressesOf(e)) / rotationSeconds;
+  // The Shatter/Shock pool is not linear in the hit rate, so scaling it by the rotation's share
+  // of the skill's own pace is an approximation — but a closer one than counting presses.
+  const procWeight = (e: Entry): number =>
+    e.role === "aura"
+      ? 1
+      : rotationSeconds > 0
+        ? (pressesOf(e) * e.result.rate.cycleSeconds) / rotationSeconds
+        : 0;
+  const ailmentProcDps = entries.reduce((sum, e) => sum + e.result.ailmentProcDps * procWeight(e), 0);
 
   return {
     skills: entries,
@@ -1999,10 +2125,9 @@ export function simulateFullDps(
     critDps:
       (rotationSeconds > 0 ? critPerRotation / rotationSeconds : 0) + auraCritPerSecond,
     packDps: (skillDps + procsPerSecond) * packSize,
-    // Ailments run on their own clock and do not queue behind a cast, so they add rather than
-    // divide.
-    ailmentDps: entries.reduce((sum, e) => sum + e.result.ailmentDps * ailmentWeight(e), 0),
-    ailmentProcDps: entries.reduce((sum, e) => sum + e.result.ailmentProcDps * ailmentWeight(e), 0),
+    ailmentDps:
+      entries.reduce((sum, e) => sum + castAilmentDps(e) + auraAilmentDps(e), 0) + ailmentProcDps,
+    ailmentProcDps,
     diagnostics: [...diagnostics, ...entries.flatMap((e) => e.result.diagnostics)],
   };
 }
@@ -2110,17 +2235,11 @@ export type { ElementName };
  * everything you put in eventually comes out. In between, the decay is what a point of proc
  * chance is buying.
  *
- * `chance` is applied here where the DoT branch does not apply it, and the difference is real: a
- * refreshed DoT is either up or not and is reported as its rate while up, whereas every inflicted
- * freeze adds to the same pool, so a 40% freeze chance really does fill it at 40% of the rate.
- *
- * The rate used is casts per second rather than hits. A multi-hit cast fills the pool faster
- * *and* tips it more often, and those pull in opposite directions in the ratio above, so the
- * error is second-order — but it is an under-count for a multi-hit spell, and saying so is
- * cheaper than implying a precision this does not have.
+ * `r` is the headline source's landing hits per second, not casts: every arrow of a barrage adds
+ * to the pool and rolls the proc on its own.
  */
-function procPerSecond(ailment: AilmentResult, castsPerSecond: number): number {
-  return procPool(ailment, castsPerSecond) * ailment.procChance * castsPerSecond;
+function procPerSecond(ailment: AilmentResult, hitsPerSecond: number): number {
+  return procPool(ailment, hitsPerSecond) * ailment.procChance * hitsPerSecond;
 }
 
 /**
@@ -2144,11 +2263,11 @@ function procPerSecond(ailment: AilmentResult, castsPerSecond: number): number {
  * pulls it below that. So a slow rotation has a *smaller* spike as well as a rarer one, because
  * 10% a second leaks off a pool that is kept waiting.
  */
-function procPool(ailment: AilmentResult, castsPerSecond: number): number {
-  if (ailment.procChance <= 0 || ailment.accumulated <= 0 || castsPerSecond <= 0) return 0;
-  const procRate = ailment.procChance * castsPerSecond;
+function procPool(ailment: AilmentResult, hitsPerSecond: number): number {
+  if (ailment.procChance <= 0 || ailment.accumulated <= 0 || hitsPerSecond <= 0) return 0;
+  const procRate = ailment.procChance * hitsPerSecond;
   return (
-    (ailment.accumulated * ailment.chance * castsPerSecond) /
+    (ailment.accumulated * ailment.chance * hitsPerSecond) /
     (procRate + ailment.poolDecayPerSecond)
   );
 }

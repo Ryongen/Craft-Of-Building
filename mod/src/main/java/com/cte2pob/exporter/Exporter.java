@@ -112,7 +112,7 @@ public final class Exporter {
     private static void report(LocalPlayer player, Path file, Path rawFile, JsonObject observed, Warnings warn) {
         int stats = observed.getAsJsonArray("stats").size();
 
-        player.sendSystemMessage(Component.literal("[PoB] Exported " + stats + " stats + your build")
+        player.sendSystemMessage(Component.literal("[CoB] Exported " + stats + " stats + your build")
                 .withStyle(ChatFormatting.GREEN));
         player.sendSystemMessage(Component.literal("      " + file).withStyle(ChatFormatting.GRAY));
         player.sendSystemMessage(Component.literal("      copied to clipboard").withStyle(ChatFormatting.GRAY));

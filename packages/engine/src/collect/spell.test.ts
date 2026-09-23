@@ -214,3 +214,43 @@ test("a borrowing spell whose lender is off the bar gets no support gems at all"
   assert.equal(stats.get("crit_chance")?.value ?? 0, 0);
   assert.equal(stats.get("melee_damage")?.value ?? 0, 0);
 });
+
+test("a borrowing spell takes the lender's innate stats at the lender's rank", () => {
+  // `other.getStats(p)` reads the player's rank in `other`. Taking `default_lvl` instead left
+  // `wolf_basic` with a rank 0 `summon_spirit_wolf`'s +20% summon damage against the +147.8% a
+  // rank 20 one grants — the whole of a 1.28 gap in the game's `Additive Damage` line.
+  const snapshot = engineSnapshot({
+    mmorpg_stat: { summon_damage: statEntry("summon_damage") },
+    mmorpg_spells: {
+      summon_wolf: {
+        id: "summon_wolf",
+        min_lvl: 1,
+        max_lvl: 20,
+        default_lvl: 0,
+        statsForSkillGem: [{ type: "FLAT", min: 20, max: 200, stat: "summon_damage" }],
+      },
+      wolf_bite: {
+        id: "wolf_bite",
+        min_lvl: 1,
+        max_lvl: 1,
+        default_lvl: 1,
+        config: { use_support_gems_from: "summon_wolf" },
+      },
+    },
+    mmorpg_base_stats: { original_mode_player: baseStats("original_mode_player", []) },
+    mmorpg_gear_rarity: RARITIES,
+  });
+  const doc: BuildDoc = {
+    schemaVersion: 1,
+    character: { level: 100 },
+    skills: [{ spellId: "summon_wolf", level: 20, main: true }],
+  };
+  const lender = calculate(doc, snapshot, { skill: doc.skills![0]! }).stats.get("summon_damage")?.value;
+  const bite = calculate(doc, snapshot, { skill: { spellId: "wolf_bite" } }).stats.get("summon_damage")?.value;
+  const floor = calculate({ ...doc, skills: [{ spellId: "summon_wolf", main: true }] }, snapshot, {
+    skill: { spellId: "wolf_bite" },
+  }).stats.get("summon_damage")?.value;
+
+  assert.ok((lender ?? 0) > (floor ?? 0), "rank 20 grants more than the unranked floor");
+  closeTo(bite ?? 0, lender ?? 0, "the pet's bite carries the Skill's figure, not the floor's");
+});

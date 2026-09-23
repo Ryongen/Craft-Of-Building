@@ -42,6 +42,8 @@ import {
   type FullDpsResult,
 } from "@cte2/engine";
 import {
+  CATEGORY,
+  entry,
   fillTemplate,
   statDisplay,
   statNameRaw,
@@ -62,8 +64,17 @@ import { useWorld } from "./snapshot.js";
  * commonest trade on a tree and a panel that only showed one half would recommend it.
  */
 export type Vitals = {
-  /** The main skill, on its own button. */
+  /**
+   * The main skill, on its own button — plus the procs its own buff grants.
+   *
+   * Ice-Tipped Blade deals nothing itself and its whole value is Cryogenic Rupture on your
+   * swings, so without {@link grantedDps} in it every support gem on that skill ranked as
+   * "no effect" and the skill ranked last. Those procs are counted once, in the swing's own
+   * figure, which is why this row is the skill's and {@link totalDps} does not add it again.
+   */
   dps: number;
+  /** The part of {@link dps} that is granted procs rather than the skill's own hits. */
+  grantedDps: number;
   critDps: number;
   /**
    * The rotation across every skill ticked into Full DPS — procs and ailments included.
@@ -88,6 +99,8 @@ export type Vitals = {
   ailmentDps: number;
   /** The weapon swing, which has its own clock too — see `damage/basic-attack.ts`. */
   basicDps: number;
+  /** Spells the swing casts: Cryogenic Rupture, Whiteout Sovereign's storms, on-hit gear. */
+  basicProcDps: number;
   /**
    * What the pets are doing, which for nineteen of this pack's skills is the entire output.
    *
@@ -223,6 +236,7 @@ export const HEADLINE: {
   // alone now, and this is the whole clock, Shatter and Shock included.
   { key: "ailmentDps", label: "Ailments", good: "up", kind: "number" },
   { key: "basicDps", label: "Basic attack DPS", good: "up", kind: "number" },
+  { key: "basicProcDps", label: "Basic attack procs", good: "up", kind: "number" },
   { key: "summonDps", label: "Summon DPS", good: "up", kind: "number" },
   { key: "critChance", label: "Crit chance", good: "up", kind: "ratio" },
   // The two figures a buff skill is actually read on. Both are about the skill being asked
@@ -330,6 +344,11 @@ export type DamageRates = {
   summonDps: number;
   /** The weapon swing, on its own clock too. 0 where nobody computed one. */
   basicDps: number;
+  /**
+   * What the swing procs. On the swing's clock, so in the total whichever skill is main — the
+   * same reason the swing itself is. It is where Ice-Tipped Blade's Cryogenic Rupture is counted.
+   */
+  basicProcDps: number;
   /** The sum. What every surface in this app means by "Total DPS". */
   total: number;
 };
@@ -345,6 +364,8 @@ export function damageRates(parts: {
    * caller that omits it gets a total without the swing rather than a wrong one.
    */
   basicDps?: number;
+  /** The swing's procs, where the caller has the swing. */
+  basicProcDps?: number;
 }): DamageRates {
   const rotationDps = parts.fullDps?.dps ?? 0;
   const inRotation = rotationDps > 0;
@@ -357,6 +378,7 @@ export function damageRates(parts: {
   // be wrong in, and one the engine would have to grow a field to fix.
   const summonDps = parts.dps?.summonDps ?? 0;
   const basicDps = parts.basicDps ?? 0;
+  const basicProcDps = parts.basicProcDps ?? 0;
 
   return {
     inRotation,
@@ -365,7 +387,9 @@ export function damageRates(parts: {
     ailmentDps,
     summonDps,
     basicDps,
-    total: primaryDps + (inRotation ? 0 : procDps) + ailmentDps + summonDps + basicDps,
+    basicProcDps,
+    total:
+      primaryDps + (inRotation ? 0 : procDps) + ailmentDps + summonDps + basicDps + basicProcDps,
   };
 }
 
@@ -394,8 +418,23 @@ export function vitalsOf(doc: BuildDoc, snapshot: Snapshot, options: VitalsOptio
       // when nothing is ticked into the rotation, which is the common case.
       full = simulateFullDps(doc, snapshot);
     }
+    // The invariant's swing is stale in one case: a spell the swing procs borrows its support
+    // gems from the skill whose gems are changing. Cryogenic Rupture uses Ice-Tipped Blade's
+    // sockets, so every gem ranked on Ice-Tipped Blade changes what a swing is worth.
+    const lender =
+      options.skillIndex === undefined ? undefined : (doc.skills ?? [])[options.skillIndex]?.spellId;
+    if (swing !== undefined && lender !== undefined && swingBorrowsFrom(snapshot, swing, lender)) {
+      swing = undefined;
+    }
     if (swing === undefined) {
-      swing = basicAttack(doc, snapshot, { sheets: { character: sheet, spell: sheet } });
+      swing = basicAttack(doc, snapshot, {
+        sheets: { character: sheet, spell: sheet },
+        supply: {
+          // `dps` is the main skill only when nobody asked about a different one.
+          ...(dps === undefined || options.skillIndex !== undefined ? {} : { main: dps }),
+          ...(full === undefined || full.skills.length === 0 ? {} : { rotation: full }),
+        },
+      });
     }
   } catch {
     // Left undefined; every figure below reads 0.
@@ -408,8 +447,22 @@ export function vitalsOf(doc: BuildDoc, snapshot: Snapshot, options: VitalsOptio
     dps,
     fullDps: full,
     basicDps: swing?.dps ?? 0,
+    basicProcDps: swing?.procDps ?? 0,
     defence: def,
     elapsedMs: performance.now() - started,
+  });
+}
+
+/** Whether any spell the swing actually procs takes its support gems from `lenderId`. */
+function swingBorrowsFrom(snapshot: Snapshot, swing: BasicAttack, lenderId: string): boolean {
+  return swing.procs.some((proc) => {
+    if (proc.perSecond <= 0) return false;
+    const config = entry(snapshot, CATEGORY.spell, proc.spellId)?.data?.["config"];
+    return (
+      config !== null &&
+      typeof config === "object" &&
+      (config as Record<string, unknown>)["use_support_gems_from"] === lenderId
+    );
   });
 }
 
@@ -428,11 +481,17 @@ function assembleVitals(parts: {
   dps: DpsResult | undefined;
   fullDps: FullDpsResult | undefined;
   basicDps: number;
+  basicProcDps: number;
   defence: Defence;
   elapsedMs: number;
 }): Vitals {
   const { dps, fullDps, defence: def } = parts;
-  const rates = damageRates({ dps, fullDps, basicDps: parts.basicDps });
+  const rates = damageRates({
+    dps,
+    fullDps,
+    basicDps: parts.basicDps,
+    basicProcDps: parts.basicProcDps,
+  });
 
   const stats = new Map<string, number>();
   const usable = new Map<string, number>();
@@ -450,12 +509,14 @@ function assembleVitals(parts: {
   return {
     // `dps` is deliberately the asked-about skill's own figure and not `rates.primaryDps`: the
     // Skill DPS row means that skill, and the rotation has its own row beneath it.
-    dps: dps?.dps ?? 0,
+    dps: (dps?.dps ?? 0) + (dps?.grantedDps ?? 0),
+    grantedDps: dps?.grantedDps ?? 0,
     critDps: dps?.critDps ?? 0,
     fullDps: fullDps === undefined ? 0 : fullDps.dps + fullDps.ailmentDps,
     procDps: rates.procDps,
     ailmentDps: rates.ailmentDps,
     basicDps: rates.basicDps,
+    basicProcDps: rates.basicProcDps,
     summonDps: rates.summonDps,
     totalDps: rates.total,
     critChance: dps?.hit.critChance ?? 0,
@@ -496,6 +557,7 @@ export function vitalsFromDerived(derived: DerivedBuild): Vitals {
     dps: derived.dps,
     fullDps: derived.fullDps,
     basicDps: derived.basic?.dps ?? 0,
+    basicProcDps: derived.basic?.procDps ?? 0,
     defence: derived.defence,
     elapsedMs: derived.elapsedMs,
   });

@@ -53,6 +53,13 @@ export type Balance = {
   /** `GameBalanceConfig.MANA_COST_SCALING`, which scales a spell's mana and energy cost by level. */
   manaCostScaling: LevelScaling;
   /**
+   * `MOB_DMG_POWER_SCALING` and `MOB_DMG_POWER_SCALING_BASE` — the exponential curve on a mob's
+   * damage, applied on top of `MOB_DAMAGE_SCALING`. See `mobLevelExponentMulti` in
+   * `damage/incoming.ts`. Jar initialisers are 1.003 and 1; `original_balance` sets 1.01114 and 2.2.
+   */
+  mobDmgPowerScaling: number;
+  mobDmgPowerScalingBase: number;
+  /**
    * The multiplier a `FLAT` modifier of this scaling gets at this level.
    *
    *     public float getMultiFor(float lvl) {
@@ -151,6 +158,8 @@ function buildBalance(snapshot: Snapshot, balanceId: string): Balance {
     globalCooldownTicks: numberAt(data, "GLOBAL_COOLDOWN_TICKS") ?? 3,
     channelSpeedTransfer: numberAt(data, "CHANNEL_GENERAL_SPEED_TRANSFER") ?? 1,
     manaCostScaling: readCurve(data["MANA_COST_SCALING"]) ?? MANA_COST_FALLBACK,
+    mobDmgPowerScaling: numberAt(data, "MOB_DMG_POWER_SCALING") ?? 1.003,
+    mobDmgPowerScalingBase: numberAt(data, "MOB_DMG_POWER_SCALING_BASE") ?? 1,
     multiFor(scaling, level) {
       const key = CONFIG_KEY[scaling];
       if (key === null) return 1;

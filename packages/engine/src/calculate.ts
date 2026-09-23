@@ -381,6 +381,8 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
           // The whole bar, because a spell that borrows its support gems needs the Skill it
           // borrows them from — and that Skill is somewhere else in the document.
           build.skills ?? [],
+          // And that Skill's rank, resolved the same way as the chosen skill's own.
+          (spellId) => withLearnedRank(snapshot, build, { spellId }, options.spellRanks).level,
         )
       : []),
     ...collectBaseStats(env, options.baseStatsId ?? DEFAULT_PLAYER_BASE_STATS_ID),

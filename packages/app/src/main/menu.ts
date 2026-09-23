@@ -18,6 +18,7 @@ import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from
 import { CHANNEL, type MenuCommand } from "@shared/ipc";
 
 import { liveRecentBuilds } from "./settings.js";
+import { checkForUpdates } from "./updater.js";
 
 /** The tabs, mirrored from the renderer's own list so View can select them. */
 const TABS: { id: string; label: string }[] = [
@@ -130,6 +131,9 @@ export function installMenu(window: BrowserWindow | null): void {
         label: "Project on GitHub",
         click: () => void shell.openExternal("https://github.com/Ryongen/cte2-pob"),
       },
+      // Main's own job rather than a renderer command: the updater lives here. The answer
+      // arrives in the status bar.
+      { label: "Check for Updates", click: () => void checkForUpdates(true) },
       { label: `Version ${app.getVersion()}`, enabled: false },
     ],
   };

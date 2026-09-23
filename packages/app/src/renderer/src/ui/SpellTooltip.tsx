@@ -28,6 +28,7 @@ import { useTechnical } from "./detail-mode.js";
 /** Assumed sizes for the edge flip. A skill's card is the taller of the two by some way. */
 const SPELL_CARD = { width: 340, height: 420 };
 const GEM_CARD = { width: 320, height: 200 };
+const GEM_CARD_PRICED = { width: 360, height: 480 };
 
 /**
  * Where the pack keeps a spell's icon, and the two generic gem plates.
@@ -214,10 +215,17 @@ export function GemWindow({
   card,
   floating = false,
   at,
+  children,
 }: {
   card: GemCard;
   floating?: boolean;
   at?: At;
+  /**
+   * Anything the caller adds below the card's own facts — the Classes tab's what-taking-it-does
+   * comparison. The card is assumed taller when there is some, so it still flips off the bottom
+   * edge in time.
+   */
+  children?: ReactNode;
 }): ReactNode {
   const world = useWorld();
   const look = GEM_LOOK[card.kind] ?? { css: "tt-gem", icon: GEM_ICON };
@@ -235,7 +243,11 @@ export function GemWindow({
   return (
     <div
       className={`item-window ${look.css}${floating ? " floating" : ""}`}
-      style={floating && at !== undefined ? floatingStyle(at, GEM_CARD) : undefined}
+      style={
+        floating && at !== undefined
+          ? floatingStyle(at, children === undefined ? GEM_CARD : GEM_CARD_PRICED)
+          : undefined
+      }
     >
       <div className="tt-header">
         <div className="tt-icon-frame">
@@ -269,6 +281,8 @@ export function GemWindow({
           </div>
         </>
       )}
+
+      {children}
 
       {card.note !== undefined && (
         <>

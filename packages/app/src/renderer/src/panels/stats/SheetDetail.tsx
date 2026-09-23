@@ -856,7 +856,9 @@ function TotalDpsDetail({
     dps: derived.dps,
     fullDps: derived.fullDps,
     basicDps: derived.basic?.dps ?? 0,
+    basicProcDps: derived.basic?.procDps ?? 0,
   });
+  const swingIsMain = derived.doc.config?.mainIsBasicAttack === true;
 
   return (
     <Detail
@@ -868,16 +870,19 @@ function TotalDpsDetail({
       }
     >
       <div className="steps">
-        <Term
-          label={rates.inRotation ? "Rotation" : "Main skill"}
-          value={smart(rates.primaryDps)}
-          hint={
-            rates.inRotation
-              ? "Every skill ticked into Full DPS, paced by the global cooldowns they arm. Its own procs are already inside it."
-              : "The single skill the damage figures are about."
-          }
-          onSelect={() => onFocus({ kind: "figure", id: "hit-dps" })}
-        />
+        {/* With the swing as the main figure and nothing ticked, there is no Skill term at all. */}
+        {(rates.inRotation || !swingIsMain) && (
+          <Term
+            label={rates.inRotation ? "Rotation" : "Main skill"}
+            value={smart(rates.primaryDps)}
+            hint={
+              rates.inRotation
+                ? "Every skill ticked into Full DPS, paced by the global cooldowns they arm. Its own procs are already inside it."
+                : "The single skill the damage figures are about."
+            }
+            onSelect={() => onFocus({ kind: "figure", id: "hit-dps" })}
+          />
+        )}
         {!rates.inRotation && rates.procDps > 0 && (
           <Term
             label="Procs"
@@ -911,6 +916,13 @@ function TotalDpsDetail({
           value={smart(rates.basicDps)}
           hint="Its own clock, and in this figure whether or not you ever press a skill. The Skills tab's basic attack is where its two inputs live."
         />
+        {rates.basicProcDps > 0 && (
+          <Term
+            label="Swing procs"
+            value={smart(rates.basicProcDps)}
+            hint="Spells your swings cast: Cryogenic Rupture, Whiteout Sovereign's storms, on-hit gear. A proc that spends a debuff is paced by whatever re-applies it."
+          />
+        )}
         <Term label="Total DPS" value={smart(rates.total)} strong />
       </div>
       <div className="faint text-sm mt-4 prose">

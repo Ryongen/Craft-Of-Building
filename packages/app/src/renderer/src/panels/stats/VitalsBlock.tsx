@@ -112,6 +112,9 @@ function SkillVitals({
 }): ReactNode {
   const { snapshot } = useWorld();
   const { dps, damage, fullDps } = derived;
+  if (derived.doc.config?.mainIsBasicAttack === true && derived.basic !== undefined) {
+    return <SwingVitals derived={derived} />;
+  }
   if (dps === undefined || damage === undefined) {
     return (
       <div className="vitals-group">
@@ -662,6 +665,54 @@ function StatRowOf({
       active={same(focus, { kind: "stat", statId })}
       onSelect={pick({ kind: "stat", statId })}
     />
+  );
+}
+
+/**
+ * The main figure when it is the weapon swing: the same questions, answered for a swing.
+ *
+ * No row opens a detail: the details behind the skill rows read the main Skill's run, and with
+ * the swing as main there is none. The Damage tab has the swing's own breakdown.
+ */
+function SwingVitals({ derived }: { derived: DerivedBuild }): ReactNode {
+  const basic = derived.basic!;
+  const hit = basic.hit;
+  const critMulti = hit.hit.total > 0 ? hit.crit.total / hit.hit.total : 0;
+
+  return (
+    <div className="vitals-group">
+      <div className="vitals-title">Main skill — basic attack</div>
+      <Row
+        label="Hit"
+        statId="total_damage"
+        value={smart(hit.average.total)}
+        hint={`Average of ${smart(hit.hit.total)} non-crit and ${smart(hit.crit.total)} crit, weighted by crit chance.`}
+      />
+      <Row
+        label="Swing rate"
+        statId="attack_speed"
+        value={basic.swingsPerSecond === undefined ? "—" : `${num(basic.swingsPerSecond, 2)}/s`}
+        hint={
+          basic.frozen
+            ? "The captured attribute, frozen: it will not move when you change gear until the weapon's own speed is set on the Skills tab."
+            : "The weapon's own speed times your attack speed."
+        }
+      />
+      <Row label="Crit chance" statId="critical_hit" value={`${num(hit.critChance * 100, 2)}%`} />
+      <Row label="Crit multiplier" statId="critical_damage" value={`${num(critMulti, 2)}×`} />
+      <Row label="Chance to hit" statId="accuracy" value={`${num(hit.hitChance * 100, 2)}%`} />
+      <Row label="Swing DPS" statId="total_damage" value={smart(basic.dps)} />
+      <Row
+        label="Proc DPS"
+        statId="total_damage"
+        value={smart(basic.procDps)}
+        hint="What your swings cast — Cryogenic Rupture, Whiteout Sovereign's storms, on-hit gear."
+      />
+      {basic.ailmentDps > 0 && (
+        <Row label="Ailment DPS" statId="ailment_damage" value={smart(basic.ailmentDps)} />
+      )}
+      <Row label="Combined DPS" value={smart(basic.dps + basic.procDps + basic.ailmentDps)} strong />
+    </div>
   );
 }
 

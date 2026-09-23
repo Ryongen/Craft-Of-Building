@@ -111,6 +111,13 @@ export type DamageOptions = {
    * and it is visible in the game's log as a block with `[Target]` lines and no `[Source]` ones.
    */
   selfHit?: boolean;
+  /**
+   * A pet's bite rather than your own cast — `DamageAction` sets `IS_SUMMON_ATTACK` when the
+   * spell's source entity is a summon, and `buildBonusElementEvent` copies it onto every bonus
+   * event. Stats gate on it both ways: the golem buffs need it, and `proc_target` and the
+   * `*_on_basic_hit` resource stats refuse it.
+   */
+  summonAttack?: boolean;
 };
 
 /** One resolved outcome — a whole pass of the pipeline. */
@@ -299,6 +306,7 @@ export function simulateHit(
     effects,
     breakdown: options.breakdown === true,
     basicAttack: false,
+    summonAttack: options.summonAttack === true,
     // `ofSpellDamage` takes the style from `spell.getConfig().getStyle()`, not from the weapon:
     // a caster swinging a dagger is still casting an `int` spell. Unset, `style_is_int_is_false`
     // read true for every hit, which handed thirteen attack-only stats — `attack_damage`,
@@ -366,6 +374,8 @@ type Shared = {
    * fourteen layers, the same sweep — so this is carried on `Shared` rather than forked.
    */
   basicAttack: boolean;
+  /** A pet's hit — see {@link DamageOptions.summonAttack}. Copied onto every bonus event. */
+  summonAttack: boolean;
   /** `PlayStyle.id` — `str`, `dex` or `int`, off the mainhand's base gear type. */
   style: string;
   /** The caster is the thing being hit — see {@link DamageOptions.selfHit}. */
@@ -463,6 +473,7 @@ function runEvent(
   // element is `bonus_dmg`, which `BonusAttackDamage` refuses alongside the flag.
   if (shared.style.length > 0) event.data.setString(EVENT.STYLE, shared.style);
   if (shared.basicAttack) event.data.setBoolean(EVENT.IS_BASIC_ATTACK, true);
+  if (shared.summonAttack) event.data.setBoolean(EVENT.IS_SUMMON_ATTACK, true);
   if (depth > 0) event.data.setBoolean(EVENT.IS_BONUS_ELEMENT_DAMAGE, true);
 
   // The weapon's own basic-attack multiplier, which `initBeforeActivating` registers before any
@@ -1422,6 +1433,7 @@ export function simulateBasicAttack(
     effects,
     breakdown: options.breakdown === true,
     basicAttack: true,
+    summonAttack: false,
     style: playStyle(snapshot, build),
     // A swing always lands on something else; nothing in the pack makes you hit yourself with one.
     selfHit: false,

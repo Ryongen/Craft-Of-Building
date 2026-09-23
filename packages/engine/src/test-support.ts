@@ -42,6 +42,8 @@ export const SCALING_CURVES: Record<string, unknown> = {
   SLOW_STAT_SCALING: { base_scaling: 1, per_level_scaling: 0.01, cap_to_max_lvl: true },
   STAT_REQ_SCALING: { base_scaling: 2, per_level_scaling: 2, cap_to_max_lvl: true },
   MOB_DAMAGE_SCALING: { base_scaling: 1, per_level_scaling: 0.25, cap_to_max_lvl: false },
+  MOB_DMG_POWER_SCALING: 1.01114,
+  MOB_DMG_POWER_SCALING_BASE: 2.2,
 };
 
 export const ENGINE_BALANCE: Record<string, unknown> = {

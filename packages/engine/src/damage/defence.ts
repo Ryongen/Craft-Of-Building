@@ -67,7 +67,14 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, ElementName, MobOffence, Severity } from "@cte2/schema";
-import { SINGLE_ELEMENTS, baseGearType, isDualWielding, isTwoHanded, wornItems } from "@cte2/schema";
+import {
+  SINGLE_ELEMENTS,
+  baseGearType,
+  isDualWielding,
+  isTwoHanded,
+  targetPreset,
+  wornItems,
+} from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { resolveEffects, type EngineOptions, type EngineResult } from "../calculate.js";
@@ -541,7 +548,13 @@ function overTimeFor(input: {
 }): OverTime | undefined {
   const { build, snapshot, offence, attackerLevel, byElement, pools, diagnostics } = input;
 
-  const hit = mobHitSize(snapshot, offence, attackerLevel, input.options.compat ?? ORIGINAL_MODE);
+  const hit = mobHitSize(
+    snapshot,
+    offence,
+    attackerLevel,
+    input.options.compat ?? ORIGINAL_MODE,
+    targetPreset(build.config?.targetPreset ?? "")?.rarityId,
+  );
   const ratePerSecond = mobAttackRate(offence);
   if (hit === undefined || ratePerSecond === undefined) {
     // Said once, at the point it matters, rather than left as a blank card. Both halves are

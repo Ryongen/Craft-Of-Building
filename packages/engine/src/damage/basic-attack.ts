@@ -46,9 +46,18 @@ import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, Diagnostic, SkillSetup } from "@cte2/schema";
 
 import { resolveEffects, type EngineResult } from "../calculate.js";
-import { simulateDps } from "./dps.js";
+import {
+  procPlacement,
+  simulateDps,
+  simulateFullDps,
+  type DpsResult,
+  type FullDpsResult,
+} from "./dps.js";
+import { stackAilments, type AilmentStacks } from "./ailments.js";
+import { DEFAULT_PLACEMENT } from "./geometry.js";
 import type { Sheet } from "./ctx.js";
 import type { EffectState } from "./effect-state.js";
+import { effectSupply, type EffectSupply } from "./effect-supply.js";
 import { resolveProcs, type Proc } from "./procs.js";
 import { simulateBasicAttack, type DamageOptions, type DamageResult } from "./simulate.js";
 
@@ -58,6 +67,15 @@ export const ATTACK_SPEED_ATTRIBUTE = "minecraft:generic.attack_speed";
 export type BasicAttackOptions = DamageOptions & {
   /** Resolve what a swing procs. On by default; a nested call turns it off. */
   procs?: boolean;
+  /**
+   * What the rest of the build is pressing while you swing, for the procs that spend a debuff.
+   *
+   * Cryogenic Rupture fires on a swing but only against a Snow-Tracked target, and removes a
+   * stack each time, so its rate is whichever is slower: your swings, or whatever keeps putting
+   * Snow-Tracked back. Pass the figures already in hand; anything missing is resolved here, and
+   * only when some proc on the sheet actually spends a debuff. See `effect-supply.ts`.
+   */
+  supply?: { main?: DpsResult; rotation?: FullDpsResult };
 };
 
 export type BasicAttack = {
@@ -94,8 +112,10 @@ export type BasicAttack = {
   /** Spells a swing casts for you. A `*_on_basic_hit` proc has a rate here and nowhere else. */
   procs: Proc[];
   procDps: number;
-  /** Ailment damage a swing inflicts, per second. Not part of `dps`. */
+  /** Ailment damage per second at full stacks from swinging. Not part of `dps`. */
   ailmentDps: number;
+  /** The DoTs that sum to {@link ailmentDps}, one row each. */
+  ailmentStacks: AilmentStacks[];
   diagnostics: Diagnostic[];
 };
 
@@ -169,6 +189,7 @@ export function basicAttack(
   }
 
   const dps = hit.average.total * (swings ?? 0);
+  const ailmentStacks = stackAilments([{ ailments: hit.average.ailments, hitsPerSecond: swings ?? 0 }]);
   const critDps = hit.crit.total * (swings ?? 0);
 
   const procs =
@@ -185,7 +206,7 @@ export function basicAttack(
           sheet: characterRun.stats,
           // A swing carries no spell, so every `spell_has_tag` gate on a proc correctly fails.
           spellTags: new Set<string>(),
-          damageOf: (spellId) => {
+          damageOf: (spellId, position) => {
             const entryData = snapshot.registries["mmorpg_spells"]?.[spellId]?.data;
             if (!entryData) return 0;
             const procSkill: SkillSetup = (build.skills ?? []).find((s) => s.spellId === spellId) ?? {
@@ -195,9 +216,13 @@ export function basicAttack(
               ...options,
               skill: procSkill,
               procs: false,
+              // The same placement `simulateDps` would have read, with the enemy moved to the
+              // origin when the proc is cast from it.
+              placement: procPlacement(build.config?.target ?? DEFAULT_PLACEMENT, position),
             });
             return result?.damagePerCast ?? 0;
           },
+          supplyOf: (effectId) => supplyFor(build, snapshot, effectId, options),
           diagnostics,
         });
 
@@ -212,10 +237,41 @@ export function basicAttack(
     critDps,
     procs,
     procDps: procs.reduce((sum, p) => sum + p.dps, 0),
-    // Already a rate of its own, exactly as `simulateDps` treats it.
-    ailmentDps: hit.average.ailments.reduce((sum, a) => sum + a.damagePerSecond, 0),
+    // Every swing adds its own bleed, burn or poison to the stack, so this is the full-stacks rate.
+    ailmentDps: ailmentStacks.reduce((sum, s) => sum + s.dps, 0),
+    ailmentStacks,
     diagnostics,
   };
+}
+
+/**
+ * The debuff supply for a swing's consuming procs, on the figures the caller had or could get.
+ *
+ * Every nested call has its own procs and grants off: the question is how fast a skill *casts*,
+ * and a skill's procs neither speed it up nor apply anything a consumer here could spend.
+ */
+function supplyFor(
+  build: BuildDoc,
+  snapshot: Snapshot,
+  effectId: string,
+  options: BasicAttackOptions,
+): EffectSupply {
+  const nested = {
+    ...(options.balanceId === undefined ? {} : { balanceId: options.balanceId }),
+    ...(options.baseStatsId === undefined ? {} : { baseStatsId: options.baseStatsId }),
+    procs: false,
+    granted: false,
+    summons: false,
+  };
+  const ticked = (build.skills ?? []).some((s) => s.includeInFullDps === true);
+  const rotation =
+    options.supply?.rotation ?? (ticked ? simulateFullDps(build, snapshot, nested) : undefined);
+  const main = options.supply?.main ?? simulateDps(build, snapshot, nested);
+  return effectSupply(build, snapshot, effectId, {
+    ...(main === undefined ? {} : { main }),
+    ...(rotation === undefined ? {} : { rotation }),
+    resolve: (skill) => simulateDps(build, snapshot, { ...nested, skill }),
+  });
 }
 
 /**

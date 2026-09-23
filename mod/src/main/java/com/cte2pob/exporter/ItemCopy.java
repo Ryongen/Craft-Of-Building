@@ -214,6 +214,6 @@ public final class ItemCopy {
     }
 
     private static void say(LocalPlayer player, String message, ChatFormatting colour) {
-        player.sendSystemMessage(Component.literal("[PoB] " + message).withStyle(colour));
+        player.sendSystemMessage(Component.literal("[CoB] " + message).withStyle(colour));
     }
 }

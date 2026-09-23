@@ -47,6 +47,29 @@
  * sum, so the flat 6 is scaled too. Applying it to `getAmount()` first would under-report every
  * hit by roughly the whole flat term.
  *
+ * ## Then the event multiplies it again
+ *
+ * `num` is only the event's base — the "Base Damage" line of the mod's damage log. When a monster
+ * hits a player, `DamageEvent.addMobDamageMultipliers` then adds MORE multipliers on the event,
+ * checked in the 6.4.13 jar:
+ *
+ *     if (balance.MOB_DMG_POWER_SCALING != 1) {
+ *         float multi = (float) (balance.MOB_DMG_POWER_SCALING_BASE
+ *                 * (float) Math.pow(balance.MOB_DMG_POWER_SCALING, sourceData.getLevel()));
+ *         this.addMoreMulti(() -> Words.LVL_EXPONENT_MOB_DMG.locName(), EventData.NUMBER, multi);
+ *     }
+ *     MobRarity rar = sourceData.getMobRarity();
+ *     this.addMoreMulti(() -> Words.MOB_RARITY_MULTI.locName(), EventData.NUMBER, rar.DamageMultiplier());
+ *
+ * On `original_balance` the first is `2.2 * 1.01114^lvl`, **×6.66 at level 100**, and the second
+ * is the rarity's `dmg_multi` — ×1.75 for Mythic. A level 100 Mythic's basic attack logged in game
+ * as Base Damage 154, "Leveled Exponent Mob DMG x6.66", "Mob Rarity Dmg Multi x1.75": leaving
+ * these two out under-reported every incoming hit by about 11.7×.
+ *
+ * Still not modelled from the same method: `HIGH_LVL_MOB_DMG_MULTI` (a mob above your level, off
+ * three `LEVEL_DISTANCE_PENALTY_*` server configs) and the map resistance-requirement multiplier.
+ * `EntityConfig.dmg_multi` is already {@link MobOffence.totalDamage}.
+ *
  * ## The vanilla attribute barely matters, and that is a real finding
  *
  * 0.33 is a *percent*, so a mob's own attack damage contributes `v * 0.0033` against a flat 6.
@@ -80,7 +103,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { MobOffence } from "@cte2/schema";
-import { serverConfigNumber } from "@cte2/schema";
+import { CATEGORY, entry, serverConfigNumber } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import type { Compat } from "../compat.js";
@@ -110,7 +133,7 @@ export const MAX_BASIC_ATTACKS_PER_SECOND = 4;
 
 /** The raw hit a mob's basic attack puts on the event, before a single mitigation layer. */
 export type MobHit = {
-  /** `num` at the end of `mobBasicAttack` — what `EventBuilder.ofDamage` is handed. */
+  /** {@link base} times the event's mob multipliers — the hit your mitigation then faces. */
   raw: number;
   /** The stated `generic.attack_damage`, for a breakdown that wants to show its working. */
   vanillaAttackDamage: number;
@@ -120,6 +143,12 @@ export type MobHit = {
   configMulti: number;
   /** `MOB_DAMAGE_SCALING.getMultiFor(level)` — ×25.75 at level 100 on this pack. */
   levelMulti: number;
+  /** `num` at the end of `mobBasicAttack`: the damage log's "Base Damage". */
+  base: number;
+  /** "Leveled Exponent Mob DMG" — ×6.66 at level 100 on this pack. */
+  levelExponentMulti: number;
+  /** "Mob Rarity Dmg Multi" — the rarity's `dmg_multi`. */
+  rarityMulti: number;
 };
 
 /**
@@ -134,6 +163,8 @@ export function mobHitSize(
   offence: MobOffence | undefined,
   level: number,
   compat: Compat,
+  /** The attacker's `mmorpg_mob_rarity` id. Unset reads as `common`. */
+  rarityId?: string,
 ): MobHit | undefined {
   const vanillaAttackDamage = offence?.vanillaAttackDamage;
   if (vanillaAttackDamage === undefined || vanillaAttackDamage <= 0) return undefined;
@@ -144,15 +175,35 @@ export function mobHitSize(
     serverConfigNumber(snapshot, VANILLA_MOB_DMG_KEY) ?? DEFAULT_VANILLA_MOB_DMG_MULTI;
   // `this should be scaled last` — the mod author's own comment, and it is load-bearing: the
   // scaling multiplies the flat term too.
-  const levelMulti = balance(snapshot).multiFor("MOB_DAMAGE", level);
+  const bal = balance(snapshot);
+  const levelMulti = bal.multiFor("MOB_DAMAGE", level);
+  const base = afterCompat * configMulti * levelMulti;
+  const levelExponentMulti = mobLevelExponentMulti(snapshot, level);
+  const rarityMulti = mobRarityDamageMulti(snapshot, rarityId ?? "common");
 
   return {
-    raw: afterCompat * configMulti * levelMulti,
+    raw: base * levelExponentMulti * rarityMulti,
     vanillaAttackDamage,
     afterCompat,
     configMulti,
     levelMulti,
+    base,
+    levelExponentMulti,
+    rarityMulti,
   };
+}
+
+/** "Leveled Exponent Mob DMG": `BASE * SCALING^level`, or 1 when `SCALING` is 1. */
+export function mobLevelExponentMulti(snapshot: Snapshot, level: number): number {
+  const bal = balance(snapshot);
+  if (bal.mobDmgPowerScaling === 1) return 1;
+  return bal.mobDmgPowerScalingBase * Math.pow(bal.mobDmgPowerScaling, level);
+}
+
+/** `MobRarity.DamageMultiplier()` — the rarity's `dmg_multi`, 1 when the pack has no such rarity. */
+export function mobRarityDamageMulti(snapshot: Snapshot, rarityId: string): number {
+  const value = entry(snapshot, CATEGORY.mobRarity, rarityId)?.data?.["dmg_multi"];
+  return typeof value === "number" ? value : 1;
 }
 
 /**

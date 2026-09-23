@@ -29,6 +29,7 @@ import {
   statEntry,
   valueCalcEntry,
 } from "../test-support.js";
+import { stackAilments, type AilmentResult } from "./ailments.js";
 import { simulateHit } from "./simulate.js";
 
 const EFFECTS = {
@@ -483,4 +484,60 @@ test("a receive chance is still gated on the element, like every other half of t
     ["bleed"],
     "only the ailment whose element the hit carries",
   );
+});
+
+// `onAilmentCausingDamage` appends a `DotData` per application and `onTick` sums every live one,
+// so a DoT's rate is applications per second times one application's total — not one
+// application's rate, which is what it used to report.
+function bleed(overrides: Partial<AilmentResult> = {}): AilmentResult {
+  return {
+    ailment: "bleed",
+    element: "Physical",
+    chance: 1,
+    damagePerSecond: 20,
+    totalDamage: 100,
+    durationSeconds: 5,
+    accumulated: 0,
+    procChance: 0,
+    poolDecayPerSecond: 0,
+    hitBase: 0,
+    eventDamage: 0,
+    ...overrides,
+  };
+}
+
+test("a DoT stacks once per landing hit, for its whole duration", () => {
+  // Four arrows a cast, two casts a second: eight bleeds a second, each lasting five.
+  const [row] = stackAilments([{ ailments: [bleed()], hitsPerSecond: 8 }]);
+  assert.ok(row);
+  closeTo(row.applicationsPerSecond, 8);
+  closeTo(row.stacks, 40);
+  closeTo(row.dpsPerStack, 20);
+  closeTo(row.dps, 800, "stacks x one bleed's rate, which is also 8/s x 100 each");
+});
+
+test("chance scales how many hits apply a stack", () => {
+  const [row] = stackAilments([{ ailments: [bleed({ chance: 0.25 })], hitsPerSecond: 8 }]);
+  assert.ok(row);
+  closeTo(row.stacks, 10);
+  closeTo(row.dps, 200);
+});
+
+test("two sources feed one stack list, and the pool ailments are not stacks", () => {
+  const rows = stackAilments([
+    { ailments: [bleed()], hitsPerSecond: 2 },
+    {
+      ailments: [
+        bleed({ damagePerSecond: 40, totalDamage: 200 }),
+        bleed({ ailment: "freeze", element: "Cold", durationSeconds: 0, damagePerSecond: 0, accumulated: 50 }),
+      ],
+      hitsPerSecond: 1,
+    },
+  ]);
+  assert.equal(rows.length, 1);
+  const [row] = rows;
+  assert.ok(row);
+  closeTo(row.stacks, 15);
+  closeTo(row.dps, 400);
+  closeTo(row.dpsPerStack, 400 / 15, "averaged over the stacks, not the sources");
 });

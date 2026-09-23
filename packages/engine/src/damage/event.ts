@@ -40,6 +40,7 @@ export const EVENT = {
   IS_DODGED: "is_dodged",
   IS_BLOCKED: "is_blocked",
   IS_BASIC_ATTACK: "is_basic_atk",
+  IS_SUMMON_ATTACK: "is_summon_attack",
   IS_BONUS_ELEMENT_DAMAGE: "is_bonus_element_damage",
   IS_AILMENT_PROC: "is_ailment_proc",
   AILMENT: "ailment",

@@ -53,6 +53,7 @@ export function Figure({
   size = "md",
   delta,
   onClick,
+  color,
 }: {
   label: string;
   value: string;
@@ -69,6 +70,8 @@ export function Figure({
   delta?: ReactNode;
   /** Opens where the number came from, where the caller can show that. */
   onClick?: () => void;
+  /** Tints the value, for a figure whose value is an element and should read as one. */
+  color?: string;
 }): ReactNode {
   const text = useHint(hint);
 
@@ -81,7 +84,7 @@ export function Figure({
         style={{ display: "flex", flexDirection: "column", gap: 0, lineHeight: 1.15 }}
       >
         <label className="text-xs" style={{ opacity: 0.65, letterSpacing: 0.3 }}>{label}</label>
-        <span style={{ fontSize: 15, fontWeight: 650, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ fontSize: 15, fontWeight: 650, fontVariantNumeric: "tabular-nums", color }}>
           {value}
           <DeltaTag delta={delta} />
         </span>
@@ -98,12 +101,12 @@ export function Figure({
         {label}
       </div>
       {large ? (
-        <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums" }}>
+        <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums", color }}>
           {value}
           <DeltaTag delta={delta} />
         </div>
       ) : (
-        <div className="num text-lg">
+        <div className="num text-lg" style={{ color }}>
           {value}
           <DeltaTag delta={delta} />
         </div>

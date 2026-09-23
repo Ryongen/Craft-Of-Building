@@ -279,6 +279,13 @@ export type BuildState = {
    */
   duplicateSkill(index: number): void;
   setMainSkill(index: number): void;
+  /**
+   * Make the weapon swing the main figure, or hand it back to the Skills.
+   *
+   * Switching it on leaves every Skill's `main` flag where it was, so switching it off again
+   * returns to the Skill you had rather than to whichever one the engine defaults to.
+   */
+  setMainBasicAttack(on: boolean): void;
 
   // -- buffs and config ---------------------------------------------------
   setAuras(auras: AuraSetup[]): void;
@@ -766,7 +773,8 @@ export const useBuild = create<BuildState>((set) => ({
   setMainSkill: (index) =>
     edit(set, (doc) =>
       prune(
-        doc,
+        // Picking a Skill is picking it over the swing, too.
+        withConfig(doc, { mainIsBasicAttack: undefined }),
         "skills",
         (doc.skills ?? []).map((skill, i) => {
           const next = { ...skill };
@@ -776,6 +784,9 @@ export const useBuild = create<BuildState>((set) => ({
         }),
       ),
     ),
+
+  setMainBasicAttack: (on) =>
+    edit(set, (doc) => withConfig(doc, { mainIsBasicAttack: on ? true : undefined })),
 
   setAuras: (auras) => edit(set, (doc) => prune(doc, "auras", auras)),
   setFoodBuffs: (buffs) => edit(set, (doc) => prune(doc, "foodBuffs", buffs)),

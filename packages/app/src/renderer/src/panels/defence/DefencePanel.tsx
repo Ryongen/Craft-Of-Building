@@ -546,6 +546,7 @@ function PoolsCard({
           size="lg"
           label="Weakest to"
           value={elementLabel(weakest.element)}
+          color={elementColour(weakest.element)}
           hint={`${num(weakest.taken * 100, 1)}% of a ${elementLabel(weakest.element)} hit reaches your pools`}
         />
         <div className="grow" />

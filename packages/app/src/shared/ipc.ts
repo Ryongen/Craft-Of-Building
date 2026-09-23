@@ -32,7 +32,36 @@ export const CHANNEL = {
    * reimplemented them would be a second way to save a file.
    */
   menuCommand: "menu:command",
+
+  /** main -> renderer: the updater moved to a new {@link UpdateStatus}. */
+  updateStatus: "update:status",
+  /** The status as it stands — the startup check can finish before the renderer subscribes. */
+  getUpdateStatus: "update:get-status",
+  /** Quit, install the downloaded update, and relaunch. */
+  installUpdate: "update:install",
 } as const;
+
+/**
+ * Where the auto-updater is.
+ *
+ * `manual` marks a check the user asked for from the Help menu. A check that runs by itself at
+ * startup stays quiet unless it finds something — an offline launch should not greet anyone with
+ * an error — but a check you asked for owes you an answer either way.
+ */
+export type UpdateStatus =
+  | { kind: "idle" }
+  | { kind: "checking"; manual: boolean }
+  | { kind: "current"; manual: boolean }
+  /**
+   * A newer version exists and this build cannot install it itself: the portable .exe, which
+   * has no installation to replace. The renderer links to the release instead.
+   */
+  | { kind: "available"; version: string; url: string }
+  | { kind: "downloading"; version: string; percent: number }
+  | { kind: "ready"; version: string }
+  | { kind: "error"; message: string; manual: boolean }
+  /** A dev run, which has no release to compare itself against. */
+  | { kind: "unsupported"; manual: boolean };
 
 /**
  * What a menu item asks the renderer to do.
@@ -278,6 +307,15 @@ export type Cte2Api = {
    * Data panel says so.
    */
   loadSnapshotFile?(): Promise<SnapshotFileResult>;
+
+  /**
+   * Updater status: the current one, then every change. Returns an unsubscribe function.
+   *
+   * Electron only — the web build is updated by deploying the site, so it has nothing to say.
+   */
+  onUpdateStatus?(handler: (status: UpdateStatus) => void): () => void;
+  /** Restart into the downloaded update. Only meaningful once the status is `ready`. */
+  installUpdate?(): Promise<void>;
 };
 
 export type SnapshotFileResult =

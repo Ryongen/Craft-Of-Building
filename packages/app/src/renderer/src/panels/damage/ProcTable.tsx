@@ -1,10 +1,11 @@
+import type { Snapshot } from "@cte2/extractor";
 import { type Proc } from "@cte2/engine";
 import { type ReactNode } from "react";
 
 import { useWorld } from "../../state/snapshot.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
-import { spellName } from "@cte2/schema";
+import { exileEffectName, spellName } from "@cte2/schema";
 
 /**
  * Spells the build casts for you while you press the buttons you press anyway.
@@ -82,15 +83,22 @@ export function ProcTable({
                   {proc.cooldownTicks / 20}s proc cooldown
                 </div>
               </td>
-              <td className="mono text-sm">
+              {/* A stat id is one long unbroken word, and in a half-width card it pushed the DPS
+                  column off the edge. */}
+              <td className="mono text-sm" style={{ overflowWrap: "anywhere" }}>
                 {proc.statId}
+                {proc.limit === undefined && paceNote(world.snapshot, proc) !== undefined && (
+                  <div className="faint text-xs" style={{ fontFamily: "inherit" }}>
+                    {paceNote(world.snapshot, proc)}
+                  </div>
+                )}
                 {proc.limit !== undefined && (
                   <div className="faint text-xs">
                     {live === undefined ? (
-                      procReason(proc)
+                      procReason(proc, world.snapshot)
                     ) : (
                       <>
-                        {procReason(proc)} &mdash;{" "}
+                        {procReason(proc, world.snapshot)} &mdash;{" "}
                         <strong>your rotation does</strong>, for {smart(live.dps)}/s
                       </>
                     )}
@@ -111,9 +119,7 @@ export function ProcTable({
 }
 
 /** Why a proc contributes nothing, in the words a player would use. */
-
-/** Why a proc contributes nothing, in the words a player would use. */
-function procReason(proc: Proc): string {
+function procReason(proc: Proc, snapshot: Snapshot): string {
   switch (proc.limit) {
     case "disabled":
       return "the skill it casts is switched off on the Skills tab";
@@ -127,9 +133,46 @@ function procReason(proc: Proc): string {
       return `only ${proc.needsTag ?? "another"} skills trigger it`;
     case "no-damage":
       return "the spell it casts deals no damage this figure covers";
+    case "no-supply":
+      return proc.consumes === undefined
+        ? "it spends a debuff nothing on your bar applies"
+        : `it spends ${exileEffectName(snapshot, proc.consumes.effectId)} and nothing on your bar applies it`;
     default:
       return "its conditions did not hold for this hit";
   }
+}
+
+/**
+ * What is holding a live proc's rate down, when it is not simply the trigger.
+ *
+ * Cryogenic Rupture is the reason this exists: it could fire on every swing and fires on far fewer,
+ * because each one spends a Snow-Tracked stack that only Tailwind Sweep puts back. A per-second
+ * figure well under the swing rate with nothing beside it reads as a bug.
+ */
+function paceNote(snapshot: Snapshot, proc: Proc): string | undefined {
+  if (proc.boundBy === "cooldown") return `held to ${num(20 / proc.cooldownTicks, 2)}/s by its cooldown`;
+  if (proc.boundBy !== "supply") return undefined;
+  if (proc.consumes !== undefined) {
+    const supply = proc.consumes.supply;
+    const from = supply.from.map((f) => spellName(snapshot, f.spellId)).join(" + ");
+    const basis =
+      supply.basis === "rotation"
+        ? "your rotation"
+        : supply.basis === "main"
+          ? "your main skill"
+          : "assuming you also cast it at its own rate";
+    return (
+      `spends ${exileEffectName(snapshot, proc.consumes.effectId)}: ` +
+      `${num(supply.stacksPerSecond, 2)}/s from ${from} (${basis})`
+    );
+  }
+  if (proc.competes !== undefined) {
+    return (
+      `needs ${exileEffectName(snapshot, proc.competes.effectId)}, which ` +
+      `${proc.competes.spentBy} spends — only the swings that find it roll`
+    );
+  }
+  return undefined;
 }
 
 /**

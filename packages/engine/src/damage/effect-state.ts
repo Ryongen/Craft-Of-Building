@@ -1021,6 +1021,23 @@ export function targetDebuffUpkeep(spell: Record<string, unknown>): BuffUpkeep |
   return upkeepOn(spell, "target");
 }
 
+/**
+ * Whether any part of this spell grants `effectId` to the enemy, read without resolving it.
+ *
+ * The cheap filter in front of `effect-supply.ts`, which needs a full `simulateDps` of every
+ * skill that can put a debuff back — and so must not pay for one on every skill that cannot.
+ */
+export function grantsToTarget(spell: Record<string, unknown>, effectId: string): boolean {
+  return effectsAppliedBy(spell).some((a) => a.id === effectId && a.holder === "target");
+}
+
+/** The effects a press puts on **you**, by id — the buffs whose stats a skill grants. */
+export function casterEffectsOf(spell: Record<string, unknown>): string[] {
+  return effectsAppliedBy(spell)
+    .filter((a) => a.holder === "caster")
+    .map((a) => a.id);
+}
+
 function upkeepOn(spell: Record<string, unknown>, holder: EffectHolder): BuffUpkeep | undefined {
   let best: BuffUpkeep | undefined;
   for (const applied of effectsAppliedBy(spell)) {

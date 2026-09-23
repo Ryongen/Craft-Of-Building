@@ -24,6 +24,7 @@ import {
   loadSnapshot,
   runExtract,
 } from "./snapshot.js";
+import { initUpdater } from "./updater.js";
 
 /**
  * The app speaks en-US, including its numbers.
@@ -227,6 +228,7 @@ void app.whenReady().then(() => {
   registerHandlers();
   createWindow();
   installMenu(mainWindow);
+  initUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

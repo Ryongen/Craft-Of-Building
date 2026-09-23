@@ -55,9 +55,12 @@ export type AilmentResult = {
   element: ElementName;
   /** Probability the hit inflicted it — `<ailment>_chance` as a fraction. */
   chance: number;
-  /** Damage per second while it ticks. Zero for the two non-DoT ailments. */
+  /**
+   * Damage per second of this **one** application while it ticks. Zero for the two non-DoT
+   * ailments. Applications stack rather than refresh — see {@link stackAilments} for the rate.
+   */
   damagePerSecond: number;
-  /** Total over its full duration, before any refresh. */
+  /** Total over its full duration. */
   totalDamage: number;
   durationSeconds: number;
   /** Accumulated pool for `freeze` and `electrify`, released by a shatter/shock proc. */
@@ -323,6 +326,73 @@ function resolve(
     eventDamage,
     ...trace,
   };
+}
+
+/**
+ * One DoT ailment at steady state: how many are ticking at once, and what they add up to.
+ *
+ * The three DoTs stack without limit. `onAilmentCausingDamage` appends a `DotData(ticks, dmg)`
+ * to a per-caster list on every application — no cap, no refresh — and `onTick` sums every entry
+ * with ticks left once a second and deals the total. So each application runs its own full
+ * duration, and once casting has gone on for one duration the number of them alive is
+ *
+ *     stacks = applicationsPerSecond × durationSeconds
+ *
+ * and the damage is `stacks × dpsPerStack`, which is the same as `applicationsPerSecond ×
+ * totalDamage`: duration only matters through the total it adds, and through how long the ramp
+ * takes.
+ */
+export type AilmentStacks = {
+  ailment: string;
+  element: ElementName;
+  /** Landing hits per second times the chance each one inflicts it. */
+  applicationsPerSecond: number;
+  /** One application's duration, and so also how long the stacks take to build up. */
+  durationSeconds: number;
+  /** How many are ticking at once, once they have built up. */
+  stacks: number;
+  /** One application's damage per second, averaged over the hits that apply it. */
+  dpsPerStack: number;
+  /** `stacks × dpsPerStack`. */
+  dps: number;
+};
+
+/** A set of hits and how often they land — one damage source of a skill, or a swing. */
+export type AilmentFeed = { ailments: readonly AilmentResult[]; hitsPerSecond: number };
+
+/**
+ * The steady-state stacks of every DoT ailment the feeds apply, merged per ailment.
+ *
+ * Merged because the list in `dotMap` is per ailment, not per source: a slam and the projectiles
+ * it throws both feed the same bleed list, and the tooltip should say how many bleeds there are
+ * rather than how many came from each.
+ */
+export function stackAilments(feeds: readonly AilmentFeed[]): AilmentStacks[] {
+  const byId = new Map<string, AilmentStacks>();
+  for (const feed of feeds) {
+    if (feed.hitsPerSecond <= 0) continue;
+    for (const a of feed.ailments) {
+      // `durationSeconds` is 0 for the two pool ailments, which never tick.
+      if (a.durationSeconds <= 0 || a.chance <= 0) continue;
+      const applications = feed.hitsPerSecond * a.chance;
+      const row = byId.get(a.ailment) ?? {
+        ailment: a.ailment,
+        element: a.element,
+        applicationsPerSecond: 0,
+        durationSeconds: a.durationSeconds,
+        stacks: 0,
+        dpsPerStack: 0,
+        dps: 0,
+      };
+      row.applicationsPerSecond += applications;
+      row.stacks += applications * a.durationSeconds;
+      row.dps += applications * a.totalDamage;
+      row.durationSeconds = Math.max(row.durationSeconds, a.durationSeconds);
+      byId.set(a.ailment, row);
+    }
+  }
+  for (const row of byId.values()) row.dpsPerStack = row.stacks > 0 ? row.dps / row.stacks : 0;
+  return [...byId.values()];
 }
 
 function clamp01(value: number): number {

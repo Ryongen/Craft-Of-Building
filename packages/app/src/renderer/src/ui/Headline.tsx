@@ -42,8 +42,14 @@ export function Headline({ onFocus }: { onFocus?: (focus: SheetFocus) => void })
   const { dps, fullDps, basic, defence } = derived;
   const against = useBaselineComparison();
 
-  const rates = damageRates({ dps, fullDps, basicDps: basic?.dps ?? 0 });
-  const { inRotation, primaryDps, procDps, ailmentDps, summonDps, basicDps } = rates;
+  const rates = damageRates({
+    dps,
+    fullDps,
+    basicDps: basic?.dps ?? 0,
+    basicProcDps: basic?.procDps ?? 0,
+  });
+  const { inRotation, primaryDps, procDps, ailmentDps, summonDps, basicDps, basicProcDps } = rates;
+  const swingIsMain = derived.doc.config?.mainIsBasicAttack === true;
   const totalDps = rates.total;
 
   const weakest = defence.weakest;
@@ -70,11 +76,16 @@ export function Headline({ onFocus }: { onFocus?: (focus: SheetFocus) => void })
           : { onClick: () => onFocus({ kind: "figure", id: "total-dps" }) })}
         hint={
           `Everything that lands on the target while you play this build: ` +
-          `${inRotation ? "the rotation" : "your main skill"} at ${compact(primaryDps)}` +
+          (inRotation
+            ? `the rotation at ${compact(primaryDps)}`
+            : swingIsMain
+              ? `your basic attack as the main skill`
+              : `your main skill at ${compact(primaryDps)}`) +
           (procDps > 0 && !inRotation ? `, procs ${compact(procDps)}` : "") +
           (ailmentDps > 0 ? `, ailments ${compact(ailmentDps)}` : "") +
           (summonDps > 0 ? `, summons ${compact(summonDps)}` : "") +
           (basicDps > 0 ? `, weapon swing ${compact(basicDps)}` : "") +
+          (basicProcDps > 0 ? `, swing procs ${compact(basicProcDps)}` : "") +
           `. Open the Damage tab for the breakdown.`
         }
       />

@@ -146,6 +146,16 @@ const REGISTRIES = {
       is_perc: true,
       effect: [effectBlock("damage_layers", ["add_additive"], ["spell_has_tag_summon"])],
     }),
+    // Gated on the event rather than the spell: the golem buffs need a pet's hit, and
+    // `proc_target` and the `*_on_basic_hit` resource stats refuse one.
+    pet_hit_damage: statEntry("pet_hit_damage", {
+      is_perc: true,
+      effect: [effectBlock("damage_layers", ["add_additive"], ["is_is_summon_attack_true"])],
+    }),
+    own_hit_damage: statEntry("own_hit_damage", {
+      is_perc: true,
+      effect: [effectBlock("damage_layers", ["add_additive"], ["is_is_summon_attack_true_is_false"])],
+    }),
   },
   mmorpg_stat_effect: {
     add_total_summons: {
@@ -176,6 +186,13 @@ const REGISTRIES = {
       string_id: "golem",
     }),
     spell_has_tag_summon: condition("spell_has_tag_summon", "spell_has_tag", { tag: { id: "summon" } }),
+    is_is_summon_attack_true: condition("is_is_summon_attack_true", "is_bool_true", {
+      bool_id: "is_summon_attack",
+    }),
+    is_is_summon_attack_true_is_false: condition("is_is_summon_attack_true_is_false", "is_bool_true", {
+      bool_id: "is_summon_attack",
+      is: false,
+    }),
   },
   mmorpg_value_calc: {
     bite: valueCalcEntry("bite", { min: 100, max: 100 }),
@@ -334,4 +351,29 @@ test("a pet's bite scales with the summoner's sheet, because the summoner casts 
     2,
     "100% increased summon damage doubles the bite, off the player's own sheet",
   );
+});
+
+test("a pet's bite is a summon attack, and stats that ask for one see it", () => {
+  // `DamageAction` sets `IS_SUMMON_ATTACK` when the spell's source entity is a summon. Left unset,
+  // the golem buffs never applied and every stat refusing a pet's hit applied to it anyway.
+  const base = run("summon_zombie").summons[0]!.damagePerAttack;
+  closeTo(
+    run("summon_zombie", [exact("pet_hit_damage", "FLAT", 100)]).summons[0]!.damagePerAttack / base,
+    2,
+    "a stat that needs a pet's hit applies to the bite",
+  );
+  closeTo(
+    run("summon_zombie", [exact("own_hit_damage", "FLAT", 100)]).summons[0]!.damagePerAttack / base,
+    1,
+    "and one that refuses a pet's hit does not",
+  );
+});
+
+test("a summon skill's hit is its pet's bite, not a cast it never makes", () => {
+  // The summoning spell has no damage act, so its own hit was a synthetic base-0 event under the
+  // summon skill's tags. The game logs the pet's basic attack, and the breakdown should too.
+  const result = run("summon_zombie");
+  assert.equal(result.hit.spellId, "zombie_basic");
+  closeTo(result.hit.baseValue, 100, "the bite's own value calculation");
+  closeTo(result.hit.average.total, result.summons[0]!.damagePerAttack);
 });

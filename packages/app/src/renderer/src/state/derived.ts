@@ -290,6 +290,8 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
   let dps: DpsResult | undefined;
   let fullDps: FullDpsResult | undefined;
   let damageDiagnostics: Diagnostic[] = [];
+  // With the swing as the main figure there is no main Skill to ask about (`simulateDps` returns
+  // nothing), but a rotation can still be ticked beside it.
   if ((doc.skills ?? []).length > 0) {
     try {
       // `breakdown` is on because the Damage tab always shows the trace; it is one array push
@@ -319,9 +321,21 @@ function computeDerived(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
   // not for a second exile-effect fixed point. It throws on the same half-built documents the
   // damage pipeline does — a weapon whose base no longer exists — and a missing swing is a figure
   // reading 0, not a panel that disappears.
+  //
+  // The main skill and the rotation go with it, because a swing proc that spends a debuff —
+  // Cryogenic Rupture taking a Snow-Tracked stack — fires no faster than those put it back, and
+  // they are already computed. With the swing as the main figure it also carries a trace, since
+  // the Damage tab then breaks the swing down instead of a Skill.
   let basic: BasicAttack | undefined;
   try {
-    basic = basicAttack(doc, snapshot, { sheets: { character: result, spell: result } });
+    basic = basicAttack(doc, snapshot, {
+      sheets: { character: result, spell: result },
+      supply: {
+        ...(dps === undefined ? {} : { main: dps }),
+        ...(fullDps === undefined || fullDps.skills.length === 0 ? {} : { rotation: fullDps }),
+      },
+      ...(doc.config?.mainIsBasicAttack === true ? { breakdown: true } : {}),
+    });
   } catch {
     basic = undefined;
   }
