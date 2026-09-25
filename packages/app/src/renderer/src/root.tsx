@@ -147,7 +147,7 @@ function Setup({ error, onChoose }: { error?: string | undefined; onChoose: () =
               <strong>read from</strong>, and the extracted data stays on this machine.
             </p>
             <p className="faint">
-              Either the Prism instance folder or the <code>minecraft</code> game directory inside
+              Either your launcher instance folder or the <code>minecraft</code> game directory inside
               it will do.
             </p>
           </>

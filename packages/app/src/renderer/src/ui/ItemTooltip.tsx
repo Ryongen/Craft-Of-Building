@@ -155,7 +155,7 @@ export function ItemWindow({
       {/* 1. Header */}
       <div className="tt-header">
         <div className="tt-icon-frame">
-          <GearIcon baseId={item.base} size={30} />
+          <GearIcon baseId={item.base} rarity={item.rarity} runeword={item.runeword} size={30} />
         </div>
         <div className="tt-title-container">
           <div className="tt-title">{name}</div>

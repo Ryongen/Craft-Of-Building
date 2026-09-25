@@ -183,7 +183,7 @@ function CapacityBar({ capacity }: { capacity: AuraCapacity }): ReactNode {
             "talents and gear take it to at most 250."
           }
         >
-          <code>spirit_cost</code> off your sheet
+          <code>Augment capacity</code> off your sheet
         </span>
       </div>
 

@@ -18,12 +18,38 @@
  * draws them.
  */
 
+import { allocatedSchools, baseGearType } from "@cte2/schema";
 import type { ReactNode } from "react";
 
+import cryoSpear from "../assets/cryo-spear.png";
+import { useBuild } from "../state/build-store.js";
 import { useWorld } from "../state/snapshot.js";
 
-export function GearIcon({ baseId, size = 20 }: { baseId: string; size?: number }): ReactNode {
-  return <Sprite url={useWorld().gearIcon(baseId)} size={size} />;
+/**
+ * Pass the item's `rarity` and `runeword`: a runeword spear on a Cryolancer is drawn with its own
+ * sprite instead of the base's. An easter egg, not a fact about the pack. The rarity counts on its
+ * own, since a fresh runeword-rarity item has no runeword picked yet.
+ */
+export function GearIcon({
+  baseId,
+  rarity,
+  runeword,
+  size = 20,
+}: {
+  baseId: string;
+  rarity?: string | undefined;
+  runeword?: string | undefined;
+  size?: number;
+}): ReactNode {
+  const world = useWorld();
+  const doc = useBuild((state) => state.doc);
+  // `character.school` is only set by an import; points spent in the app land in `schools`.
+  const cryoEgg =
+    (runeword !== undefined || rarity?.toLowerCase() === "runeword") &&
+    baseGearType(world.snapshot, baseId)?.weaponType === "spear" &&
+    (doc.character.school === "cryolancer" ||
+      allocatedSchools(world.snapshot, doc).includes("cryolancer"));
+  return <Sprite url={cryoEgg ? cryoSpear : world.gearIcon(baseId)} size={size} />;
 }
 
 /**

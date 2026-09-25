@@ -1384,7 +1384,7 @@ function PoolRow({
         onClick={onSelect}
         {...tooltip.props}
       >
-        <GearIcon baseId={entry.item.base} />
+        <GearIcon baseId={entry.item.base} rarity={entry.item.rarity} runeword={entry.item.runeword} />
         <strong className="ellipsis">{itemName(world.snapshot, entry.item)}</strong>
         <RarityBadge rarity={entry.item.rarity} />
         <span className="badge">ilvl {entry.item.itemLevel}</span>
@@ -1623,7 +1623,7 @@ function ItemRow({
         and the name are what "hover the item" means anyway.
       */}
       <span className="slot-row-item" {...tooltip.props}>
-        <GearIcon baseId={item.base} />
+        <GearIcon baseId={item.base} rarity={item.rarity} runeword={item.runeword} />
         <strong className="ellipsis">{itemName(world.snapshot, item)}</strong>
       </span>
       <RarityBadge rarity={item.rarity} />
