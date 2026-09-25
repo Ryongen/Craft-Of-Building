@@ -42,7 +42,9 @@ const push = process.argv.includes("--push");
 const setLatest = !process.argv.includes("--no-latest");
 
 function git(args, options = {}) {
-  return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", ...options }).trim();
+  // `stdio: "inherit"` hands the child our streams, so there is no captured stdout to return
+  // and execFileSync gives back null. Only the callers that read a value pass no stdio.
+  return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", ...options })?.trim() ?? "";
 }
 
 function fail(message) {
