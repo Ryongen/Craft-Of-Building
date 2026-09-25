@@ -1,4 +1,4 @@
-cte2-pob — CTE2 Build Planner
+cte2-pob — Craft of Building
 Copyright (c) 2026 Ryongen
 
 This project is unofficial fan-made software. It is not affiliated with, endorsed
@@ -20,11 +20,9 @@ It does not cover game data or art belonging to anyone else. Specifically:
     by robertx22; Craft to Exile 2 is by the CTE team.
 
   * The `site-data` branch of this repository carries a copy of that data and
-    those textures so the GitHub Pages build has something to load. Those files
-    are redistributed with the permission of the Craft to Exile 2 and Mine and
-    Slash authors, for this project's published site. That permission was given
-    to this project and is not sublicensed to you: forking the code does not
-    carry a right to redistribute the art.
+    those textures so the GitHub Pages build has something to load. They are not
+    licensed to you under LICENSE, and nothing here grants you any right in them:
+    forking the planner does not carry a right to redistribute the art.
 
   * The `main` branch contains no extracted game data at all, and the desktop
     app redistributes none — it reads from the install on the machine it runs
