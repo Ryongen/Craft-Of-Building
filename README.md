@@ -1,98 +1,79 @@
-# Craft of Building (COB)
+# Craft of Building
 
-A build planner for Craft to Exile 2 (CTE2) featuring a full stat calculation engine and real
-damage pipeline. It runs as a desktop app and as a website — the same planner either way.
+A build planner for Craft to Exile 2.
 
-## Build Planner Highlights
+Plan a character outside the game: spend your talent tree, pick a class and skills, set up
+gear and omens, and watch what it does to your stat sheet and your damage. It models the
+pack's real numbers, so what the planner shows you is what the game would show you.
 
-- **Complete Character Planning**: Allocate talents, skills, gear, omens, and class points with detailed stat breakdowns and damage models.
-- **In-Game Build Exporter Mod**: Includes a client-side Forge mod (`mod/`) that exports your active character, gear, and exact in-game stat sheet directly into the planner—no server permissions required. Ctrl+Shift+C copies a single item—gear, jewel, omen, Skill, support gem or Augment—straight into the planner's importer.
-- **Portable & Zero-Install Version**: Available as a standalone `portable.exe` that runs from anywhere (like a USB drive) and keeps all local snapshot data isolated right beside the executable.
-- **Local Asset Extraction**: The desktop app reads data directly from your local CTE2 installation on first run, so it always matches the pack you actually have installed.
-- **Runs in a browser too**: the same planner is published to GitHub Pages with prebuilt pack data, for anyone who would rather not install anything.
+**Try it in your browser: [ryongen.github.io/Craft-Of-Building](https://ryongen.github.io/Craft-Of-Building/)**
 
-## Quick Commands
+There is also a Windows desktop version on the [Releases](../../releases) page, as an
+installer or a portable `.exe` you can run from anywhere. The two are the same planner — the
+desktop one reads data straight from your own CTE2 install, so it always matches the pack
+version you actually have.
 
-- `npm run dev` — Launch the desktop app in development mode.
-- `npm run dist:app` — Build the portable `.exe` and setup installer under `packages/app/dist/`.
-- `npm run build:site` — Build the static website into `packages/app/out/web`.
-- `npm run preview:site` — Build it and serve it locally.
-- `npm run publish:site-data` — Put your local `data/` on the `site-data` branch.
+## What you can do with it
 
-## The website
+The planner is organised as tabs, roughly in the order you'd use them:
 
-The desktop app and the website are the same renderer. Every panel reaches the outside world
-through a single object, `window.cte2`, and the two builds differ only in who supplies it: an
-Electron preload script (`src/preload`) or a browser shim (`src/renderer/src/platform`). Neither
-the panels nor the engine know which host they are in.
+- **Tree** — allocate the passive tree.
+- **Classes** — your class, ascendancy and class points.
+- **Skills** — spells and abilities, with their support gems and augments.
+- **Items** — every gear slot, plus jewels and omens. You can build items by hand in the
+  editor, or paste one in from the game.
+- **Damage** — what your build actually does: hits, ailments, procs, and DPS across a full
+  rotation, broken down so you can see where each number came from.
+- **Defence** — resistances, mitigation, effective health pool, and the biggest hit you
+  could survive per element.
+- **Compare** — put two versions of a build side by side.
+- **Config** — the situation you're being measured in: buffs, charges, target, map affixes.
+- **Stats** — the whole character sheet, with a breakdown of what contributes to each line.
 
-Three things the desktop app does cannot be done by a web page, and the site says so rather than
-pretending otherwise:
+Builds are saved as you go, and you can export one to a file to back it up or share it.
+
+## Bringing your character in from the game
+
+Rather than re-entering a character by hand, you can export the one you're playing.
+
+The repository includes a small client-side Forge mod, **Craft of Building Exporter**. Drop it
+in your mods folder, and in game either press the *Export character* keybind or run:
+
+```
+/cobexport
+```
+
+That writes a `.json` file into a `cob-exports` folder inside your Minecraft instance. Open it
+in the planner and you get your character as it stands — level, allocations, gear, gems and
+auras — along with the stat sheet the game itself calculated, which the planner uses to check
+its own numbers against reality.
+
+The mod is client-side only. It reads data your client already has in order to draw your own
+character screen, so it needs no permissions, no operator level, no server-side install, and it
+sends nothing anywhere.
+
+## Browser or desktop?
+
+Mostly they're identical. The differences:
 
 | | Desktop | Website |
 | --- | --- | --- |
-| Pack data | extracted from your own install | prebuilt, shipped with the site |
-| Staleness check | compares the recorded fingerprint against your install | not possible — there is no install to compare against |
-| Open / Save | native dialogs, saves in place | saves in place in Chromium; elsewhere, opening uses a file picker and saving downloads a copy |
-| Recent builds | yes | Chromium only (it needs stored file handles) |
-| Autosaved session | a file in the app's data directory | IndexedDB, per browser |
+| Pack data | read from your own install | prebuilt, shipped with the site |
+| Tells you when your pack is newer | yes | no — there's no install to compare against |
+| Opening and saving builds | normal file dialogs, saves in place | saves in place on Chrome and Edge; elsewhere, saving downloads a copy |
+| Recent builds | yes | Chrome and Edge only |
 
-If your pack version differs from the one the site was built from, the Data tab takes a
-`snapshot.json` that the desktop app extracted and uses it instead. It is kept in your browser
-and nothing is uploaded.
-
-### Publishing the site
-
-The pack data does not live on `main`. It is ~19 MB that changes on a completely different
-schedule from the code and is regenerated wholesale rather than edited, so it lives on an orphan
-branch called `site-data`, one directory per Mine and Slash version:
-
-```
-packs/1.20.1-6.4.13/snapshot.json
-packs/1.20.1-6.4.13/assets/…
-latest.json          -> { "pack": "1.20.1-6.4.13" }
-```
-
-Be clear about what that buys: a plain `git clone` still fetches every branch, so it does not
-make cloning cheaper. What it buys is that `main`'s history stays free of snapshot churn, that CI
-fetches one shallow revision of the data, and that a bad snapshot can be rolled back by editing
-one line of `latest.json` rather than re-uploading anything.
-
-To publish new data, extract it with the desktop app as usual, then:
-
-```
-npm run publish:site-data -- --push
-```
-
-Nothing is pushed without `--push`. Pushing either branch redeploys the site; so does running the
-**Pages** workflow by hand.
-
-### What the published snapshot does and does not contain
-
-`tools/build-site.mjs` drops `meta.gameDir`, `meta.mineAndSlashJar`, `meta.libraryOfExileJar`,
-`meta.resourcePacks` and `meta.fingerprint` before publishing. Those record the absolute paths of
-the machine the data was extracted on — including a home directory and a username — and nothing
-in the renderer or the engine reads any of them. It also minifies the snapshot and stages a
-gzipped copy beside it, which is the one browsers actually fetch: 7.1 MB becomes about 600 KB.
-
-The icons and pack data published to the site are redistributed **with permission** from the
-Craft to Exile 2 and Mine and Slash authors. The desktop app still extracts from your own
-install and redistributes nothing.
-
-### First-time repository setup
-
-Once, in the repository's settings: **Settings → Pages → Build and deployment → Source →
-GitHub Actions**. The workflow in `.github/workflows/pages.yml` does the rest, and will fail with
-a clear message if `site-data` has not been published yet.
+If your pack is a different version from the one the site was built with, you can hand the site
+a `snapshot.json` exported by the desktop app on the **Data** tab and it will use that instead.
+It stays in your browser; nothing is uploaded.
 
 ## License
 
 The source code is MIT licensed — see [LICENSE](LICENSE).
 
-That covers the code only. Game data and art extracted from Craft to Exile 2 and
-Mine and Slash belong to their authors, and the copies on the `site-data` branch are
-redistributed with their permission for this project's site — not sublicensed to forks.
-[NOTICE](NOTICE) sets out exactly what falls on which side of that line.
+That covers the code only. Game data and art from Craft to Exile 2 and Mine and Slash belong to
+their authors, and are not covered by it. [NOTICE](NOTICE) sets out what falls on which side of
+that line.
 
-Unofficial fan-made software. Mine and Slash is by robertx22; Craft to Exile 2 is by
-the CTE team.
+Unofficial fan-made software, not affiliated with the Craft to Exile 2 or Mine and Slash teams.
+Mine and Slash is by robertx22; Craft to Exile 2 is by the CTE team.
