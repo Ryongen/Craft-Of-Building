@@ -67,6 +67,14 @@ If your pack is a different version from the one the site was built with, you ca
 a `snapshot.json` exported by the desktop app on the **Data** tab and it will use that instead.
 It stays in your browser; nothing is uploaded.
 
+## Thanks
+
+To LocalIdentity and everyone who keeps Path of Building going. This whole thing started as
+"I wish CTE2 had one of those", and a lot of how it works is inspired from how PoB does it.
+
+And to the testers who put up with the early versions, sent in builds that broke it, and
+told me when the numbers looked wrong. It's a much better tool because of you.
+
 ## License
 
 The source code is MIT licensed — see [LICENSE](LICENSE).

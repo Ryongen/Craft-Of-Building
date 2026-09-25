@@ -1,6 +1,6 @@
 {
   "name": "@cte2/app",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "The build planner: an Electron shell over the stat engine",
   "author": "Ryongen",
