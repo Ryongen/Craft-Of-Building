@@ -6,7 +6,14 @@
  * number is never a tab away.
  */
 
-import { EPILOGUE_BONUS_POINTS, maxLevel, type BuildDoc, type Observation } from "@cte2/schema";
+import {
+  EPILOGUE_BONUS_POINTS,
+  maxLevel,
+  packModVersion,
+  samePackVersion,
+  type BuildDoc,
+  type Observation,
+} from "@cte2/schema";
 import { ATTACK_SPEED_ATTRIBUTE, baseAttackSpeedFrom } from "@cte2/engine";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 
@@ -206,11 +213,15 @@ export function App(): ReactNode {
 
   // Version drift: a document authored against another pack version describes ids and roll
   // bands that may since have moved. `meta` records it precisely so this can be checked.
+  //
+  // Compared through `samePackVersion` because the two sides spell a version differently —
+  // a build imported from the game says `6.4.13` where the snapshot says `1.20.1-6.4.13`,
+  // and a raw `!==` made this banner fire on every import.
   const authoredAgainst = doc.meta?.mineAndSlashVersion;
   const drift =
     authoredAgainst !== undefined &&
-    authoredAgainst !== world.snapshot.meta.mineAndSlashVersion
-      ? `Mine and Slash ${authoredAgainst}`
+    !samePackVersion(authoredAgainst, world.snapshot.meta.mineAndSlashVersion)
+      ? `Mine and Slash ${packModVersion(authoredAgainst)}`
       : null;
 
   const save = useCallback(
@@ -482,8 +493,8 @@ export function App(): ReactNode {
       {drift !== null && (
         <div className="notice" style={{ margin: "8px 12px 0" }}>
           This build was authored against {drift}, and the loaded snapshot is Mine and Slash{" "}
-          {world.snapshot.meta.mineAndSlashVersion}. Ids and roll ranges move between versions,
-          so numbers here may not describe the character you saved.
+          {packModVersion(world.snapshot.meta.mineAndSlashVersion)}. Ids and roll ranges move
+          between versions, so numbers here may not describe the character you saved.
         </div>
       )}
 

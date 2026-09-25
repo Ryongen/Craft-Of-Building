@@ -15,7 +15,7 @@
  * comparing against a build that no longer exists.
  */
 
-import { statName } from "@cte2/schema";
+import { packModVersion, samePackVersion, statName } from "@cte2/schema";
 import { useState, type ReactNode } from "react";
 
 import { useCaptureCheck } from "../../state/capture.js";
@@ -63,7 +63,10 @@ export function CaptureCheck(): ReactNode {
       row.statId.toLowerCase().includes(needle) ||
       statName(snapshot, row.statId).toLowerCase().includes(needle),
   );
-  const stale = observed.mineAndSlashVersion !== snapshot.meta.mineAndSlashVersion;
+  // Through `samePackVersion`: a capture carries the mod version Forge reports (`6.4.13`)
+  // while the snapshot carries the jar filename (`1.20.1-6.4.13`), so comparing the strings
+  // directly called every capture stale.
+  const stale = !samePackVersion(observed.mineAndSlashVersion, snapshot.meta.mineAndSlashVersion);
 
   return (
     <div className="panel">
@@ -88,8 +91,9 @@ export function CaptureCheck(): ReactNode {
       {stale && (
         <div className="notice warn">
           This capture was taken on Mine and Slash{" "}
-          <strong>{observed.mineAndSlashVersion}</strong>, but the loaded snapshot is{" "}
-          <strong>{snapshot.meta.mineAndSlashVersion}</strong>. Differences may be version drift
+          <strong>{packModVersion(observed.mineAndSlashVersion)}</strong>, but the loaded
+          snapshot is <strong>{packModVersion(snapshot.meta.mineAndSlashVersion)}</strong>.
+          Differences may be version drift
           rather than engine bugs.
         </div>
       )}

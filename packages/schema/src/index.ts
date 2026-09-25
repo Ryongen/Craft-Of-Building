@@ -388,3 +388,9 @@ export {
   CODE_ONLY_STATS,
   CODE_ONLY_TRANSFERS,
 } from "./code-only-stats.generated.js";
+
+/**
+ * The extractor and the exporter mod spell the same Mine and Slash version differently, so any
+ * comparison between a document and a snapshot has to go through here. See `pack-version.ts`.
+ */
+export { packModVersion, samePackVersion } from "./pack-version.js";
