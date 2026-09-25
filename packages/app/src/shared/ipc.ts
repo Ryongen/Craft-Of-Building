@@ -23,6 +23,11 @@ export const CHANNEL = {
   autosave: "build:autosave",
   loadAutosave: "build:load-autosave",
 
+  /** A native yes/no box. See {@link Cte2Api.ask}. */
+  ask: "dialog:ask",
+  /** A native message box. See {@link Cte2Api.tell}. */
+  tell: "dialog:tell",
+
   /**
    * The only push channel in the app: main -> renderer, when a menu item is chosen.
    *
@@ -284,6 +289,16 @@ export type Cte2Api = {
   recentBuilds(): Promise<RecentBuild[]>;
   autosave(doc: BuildDoc, baseline: PinnedBaseline | null): Promise<void>;
   loadAutosave(): Promise<AutosaveSession | null>;
+
+  /**
+   * Yes/no confirmation, and a plain message. Use these instead of `confirm()` and `alert()`.
+   *
+   * On Windows, Electron's `confirm()` and `alert()` leave the page without keyboard focus when
+   * they close: every text box ignores typing until the window is clicked away from and back.
+   * The desktop build answers these with a native message box, which hands focus back.
+   */
+  ask(message: string): Promise<boolean>;
+  tell(message: string): Promise<void>;
 
   /**
    * Subscribe to menu commands. Returns an unsubscribe function.

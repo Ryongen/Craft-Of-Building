@@ -53,10 +53,11 @@ export function StageList(): ReactNode {
     }
   };
 
-  const drop = (stage: BuildStage): void => {
+  const drop = async (stage: BuildStage): Promise<void> => {
     const spent = spendOf(stage);
     const total = spent.talents + spent.ascendancy + spent.atlas;
-    if (total > 0 && !confirm(`Delete "${stage.name}"? It has ${total} points allocated.`)) return;
+    const message = `Delete "${stage.name}"? It has ${total} points allocated.`;
+    if (total > 0 && !(await window.cte2.ask(message))) return;
     removeStage(stage.id);
   };
 
@@ -135,7 +136,7 @@ export function StageList(): ReactNode {
                         className="nudge"
                         title="Delete this stage"
                         disabled={stages.length === 1}
-                        onClick={() => drop(stage)}
+                        onClick={() => void drop(stage)}
                       >
                         ✕
                       </button>

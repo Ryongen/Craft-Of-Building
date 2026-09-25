@@ -239,8 +239,7 @@ export function App(): ReactNode {
     (result: Awaited<ReturnType<typeof window.cte2.openBuild>>) => {
       if (result.ok) loadBuild(withWeaponSpeed(result.doc, result.observed), result.path, result.observed ?? null);
       else if (!result.cancelled && result.error !== undefined) {
-        // eslint-disable-next-line no-alert
-        alert(`Could not open that build:\n\n${result.error}`);
+        void window.cte2.tell(`Could not open that build:\n\n${result.error}`);
       }
     },
     [loadBuild],
@@ -257,8 +256,8 @@ export function App(): ReactNode {
     );
   }, [doc]);
 
-  const startNew = useCallback(() => {
-    if (!dirty || confirm("Discard unsaved changes?")) newBuild();
+  const startNew = useCallback(async () => {
+    if (!dirty || (await window.cte2.ask("Discard unsaved changes?"))) newBuild();
   }, [dirty, newBuild]);
 
   const openAt = useCallback(
@@ -287,7 +286,7 @@ export function App(): ReactNode {
         return;
       }
       switch (command) {
-        case "new": startNew(); return;
+        case "new": void startNew(); return;
         case "open": void open(); return;
         case "save": void save(false); return;
         case "save-as": void save(true); return;

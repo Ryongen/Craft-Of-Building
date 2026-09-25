@@ -492,6 +492,16 @@ export function createWebApi(): Cte2Api {
       return text === null ? null : parseSession(text);
     },
 
+    // A browser's own dialogs give focus back properly; only Electron's are broken.
+    async ask(message: string): Promise<boolean> {
+      // eslint-disable-next-line no-alert
+      return confirm(message);
+    },
+    async tell(message: string): Promise<void> {
+      // eslint-disable-next-line no-alert
+      alert(message);
+    },
+
     // No menu bar to issue commands. Every command the menu carried is also a button in the
     // chrome or a key handled in `app.tsx`, so nothing is lost but the menu itself.
     onMenuCommand() {

@@ -46,8 +46,7 @@ export function ComparePanel(): ReactNode {
     const result = await window.cte2.openBuild();
     if (result.ok) setBaseline(result.doc, result.doc.meta?.name ?? fileLabel(result.path));
     else if (!result.cancelled && result.error !== undefined) {
-      // eslint-disable-next-line no-alert
-      alert(`Could not open that build as a baseline:\n\n${result.error}`);
+      void window.cte2.tell(`Could not open that build as a baseline:\n\n${result.error}`);
     }
   }, [setBaseline]);
 

@@ -65,6 +65,9 @@ const api: Cte2Api = {
     ipcRenderer.invoke(CHANNEL.autosave, doc, baseline),
   loadAutosave: () => ipcRenderer.invoke(CHANNEL.loadAutosave),
 
+  ask: (message: string) => ipcRenderer.invoke(CHANNEL.ask, message),
+  tell: (message: string) => ipcRenderer.invoke(CHANNEL.tell, message),
+
   onMenuCommand(handler) {
     const listener = (_event: unknown, command: MenuCommand): void => handler(command);
     ipcRenderer.on(CHANNEL.menuCommand, listener);

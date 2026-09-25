@@ -221,6 +221,21 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNEL.recentBuilds, () => liveRecentBuilds());
   ipcMain.handle(CHANNEL.autosave, (_event, doc, baseline) => autosave(doc, baseline));
   ipcMain.handle(CHANNEL.loadAutosave, () => loadAutosave());
+
+  ipcMain.handle(CHANNEL.ask, async (_event, message: string) => {
+    const result = await dialog.showMessageBox(mainWindow ?? undefined!, {
+      type: "question",
+      message,
+      buttons: ["OK", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    return result.response === 0;
+  });
+  ipcMain.handle(CHANNEL.tell, async (_event, message: string) => {
+    await dialog.showMessageBox(mainWindow ?? undefined!, { type: "warning", message });
+  });
 }
 
 void app.whenReady().then(() => {
