@@ -44,9 +44,9 @@
  *
  * `castTicks + castSpeedTicks`, the same sum `simulateFullDps` uses: a cast occupies its own cast
  * time and then arms the shared global cooldown, and `cast_speed_ticks` is already divided by the
- * cast-speed multiplier your `attack_speed` and `skill_speed` stats produced. A skill whose own
- * cooldown is longer than that pays the cooldown instead, because you cannot come back round to
- * it before it is ready.
+ * cast-speed multiplier your `attack_speed` and `skill_speed` stats produced. A skill's own
+ * cooldown runs while the other steps are pressed, so the pass only waits for whatever of it is
+ * left when you come back round — see `passSeconds`.
  *
  * A basic attack is not a spell and has no `cast_speed_ticks`. It is paced by vanilla:
  *
@@ -72,7 +72,7 @@ import type { Sheet } from "./ctx.js";
 import { casterResourceFlow, type EffectState } from "./effect-state.js";
 import type { Compat } from "../compat.js";
 import type { LayerIndex } from "./layers.js";
-import { TICKS_PER_SECOND, calculateSpell, rateOf, spellConfig } from "./spell-calc.js";
+import { calculateSpell, rateOf, spellConfig } from "./spell-calc.js";
 
 /** One press, in the order you make it. */
 export type ComboStep = {
@@ -95,7 +95,10 @@ export type ComboStep = {
   seconds: number | undefined;
   castSeconds?: number;
   globalCooldownSeconds?: number;
-  /** Set when the step's own cooldown, not the global one, is what paces it. */
+  /**
+   * Set when this skill's own recovery — cooldown, charges, cast speed — stretches the pass past
+   * the sum of the presses. `seconds` is the press alone; the wait is in `secondsPerCast`.
+   */
   cooldownBound?: boolean;
   /** Why the step costs what it does, when that is not obvious. */
   note?: string;
@@ -120,6 +123,8 @@ export type ComboChain = {
   resources: string[];
   /** Of those, the ones standing when it fires — the branch of the truth table you land in. */
   holds: string[];
+  /** Of those, the ones `config.effects` sets by hand, which the pass takes as given. */
+  fixed: string[];
   broken: BrokenLink[];
 };
 
@@ -156,6 +161,24 @@ export type ComboInput = {
  */
 const MAX_PRESSES = 12;
 
+/** One pass `simulateDps` priced while choosing which charge state to play for. */
+export type ComboRotation = {
+  /** The resources up when the finisher fires. */
+  holds: string[];
+  /** In press order; undefined for a basic attack. */
+  presses: (string | undefined)[];
+  /** One pass, or undefined when it could not be timed or never completes. */
+  secondsPerCast: number | undefined;
+  /**
+   * The finisher's damage at this pass's rate: `comboDps`, or `dps` for a pass that is the
+   * finisher alone. Undefined when the pass has no rate.
+   */
+  dps: number | undefined;
+  broken: boolean;
+  /** The one the rest of the result describes. */
+  chosen: boolean;
+};
+
 /** One press of the pass, before anything has tried to time it. */
 export type ComboPress = {
   kind: "skill" | "basic-attack";
@@ -186,6 +209,10 @@ export type ComboPlan = {
   presses: ComboPress[];
   /** The effects this skill both gates on and spends: its combo resources. */
   resources: string[];
+  /** The resources the pass set out to deliver — all of them, unless a partial one was asked for. */
+  target: string[];
+  /** Resources `config.effects` states on or off, which the pass neither supplies nor chooses. */
+  fixed: string[];
   /** The resources up at the moment the last press lands. */
   holds: string[];
   broken: BrokenLink[];
@@ -223,20 +250,38 @@ export type ComboPlan = {
  * `beta` in one press and beats casting `zap` and `cold_snap` separately, which is the right
  * answer and is also the one a player would find. A genuinely optimal ordering is a search, and
  * a figure nobody can re-derive by hand is worse than a slightly long one they can.
+ *
+ * ## A partial pass
+ *
+ * `target` narrows what the finisher waits for — `["alpha", "beta"]` is "turbo, then fire",
+ * skipping the fusion detour and landing the alpha+beta branch. Only the finisher is narrowed:
+ * `fusion` still needs both of its charges to make `gamma`, so a gamma-only pass still pays for
+ * them. Which partial pass is worth playing is a damage question, answered in `simulateDps`
+ * over {@link comboCandidates}.
  */
 export function planCombo(
   snapshot: Snapshot,
   build: BuildDoc,
   spellId: string,
   sheet?: Sheet,
+  target?: readonly string[],
 ): ComboPlan {
   const equipped = (build.skills ?? []).filter(isSkillEnabled);
   const goal = spellData(snapshot, spellId);
   const resources = goal === undefined ? [] : consumedGates(goal);
+  const { on: fixedOn, off: fixedOff } = fixedResources(build, resources);
+  const fixed = [...fixedOn, ...fixedOff];
+  // A resource the document states is not the pass's to deliver: it is up, or it is not, and
+  // nothing is pressed to change that.
+  const wanted = (target === undefined ? resources : resources.filter((e) => target.includes(e)))
+    .filter((e) => !fixed.includes(e));
+  /** What `id` has to have up before it is pressed. */
+  const needsOf = (id: string, spell: Record<string, unknown>): string[] =>
+    id === spellId ? wanted : consumedGates(spell);
 
   const presses: ComboPress[] = [];
   const broken: BrokenLink[] = [];
-  const held = new Set<string>();
+  const held = new Set<string>(fixedOn);
   const inFlight = new Set<string>();
   /**
    * What was standing the moment the finisher was pressed.
@@ -278,7 +323,7 @@ export function planCombo(
     inFlight.add(id);
     try {
       for (;;) {
-        const missing = consumedGates(spell).filter((effect) => !held.has(effect));
+        const missing = needsOf(id, spell).filter((effect) => !held.has(effect));
         if (missing.length === 0) break;
         if (presses.length >= MAX_PRESSES) {
           broken.push({
@@ -287,14 +332,18 @@ export function planCombo(
             note:
               `Feeding \`${id}\` its ${missing.length === 1 ? "resource" : "resources"} ` +
               `(${missing.map((m) => `\`${m}\``).join(", ")}) takes more than ${MAX_PRESSES} ` +
-              `presses, which is longer than any rotation in this pack — reported rather than ` +
+              `presses, which is longer than any rotation in this pack, so it is reported rather than ` +
               `guessed at.`,
           });
           return false;
         }
 
         const want = missing[0]!;
-        const supplier = pickSupplier(snapshot, equipped, want, missing, id);
+        // What the finisher was not asked to fire holding. A supplier handing it over as well
+        // lands a different branch from the one this pass is for — `turbo` asked for alpha
+        // arrives holding alpha and beta, and "alpha only" would never be priced at all.
+        const unwanted = resources.filter((e) => !wanted.includes(e) && !fixedOn.includes(e));
+        const supplier = pickSupplier(snapshot, equipped, want, missing, id, unwanted);
         if (supplier !== undefined) {
           if (!deliver(supplier, want)) return false;
           continue;
@@ -344,15 +393,106 @@ export function planCombo(
   }
 
   const standing = atFinisher ?? held;
-  return { presses, resources, holds: resources.filter((e) => standing.has(e)), broken };
+  return {
+    presses,
+    resources,
+    target: wanted,
+    // What the document states beats what the presses did: `resolveEffectState` keeps a chosen
+    // effect as chosen, so a supplier's grant of a resource set off never reaches the damage, and
+    // the holds have to say the same or the card labels one branch and prices another.
+    holds: resources.filter((e) => fixedOn.includes(e) || (standing.has(e) && !fixedOff.includes(e))),
+    fixed,
+    broken,
+  };
+}
+
+/**
+ * The resources `config.effects` states outright, split by which way.
+ *
+ * The same reading `resolveEffectState` gives an entry — `true` or a positive stack count is up,
+ * `false` or zero is off — because the two have to agree about what the finisher fires holding.
+ */
+function fixedResources(build: BuildDoc, resources: readonly string[]): { on: string[]; off: string[] } {
+  const stated = build.config?.effects ?? {};
+  const on: string[] = [];
+  const off: string[] = [];
+  for (const id of resources) {
+    const value = stated[id];
+    if (value === undefined) continue;
+    if (value === true || (typeof value === "number" && value > 0)) on.push(id);
+    else off.push(id);
+  }
+  return { on, off };
+}
+
+/**
+ * Every distinct pass worth pricing for `spellId`: one per subset of its resources, the full set
+ * first.
+ *
+ * The full pass is not automatically the best one. `phase_dive` holding all three charges costs
+ * turbo, fusion and turbo again before it fires; holding alpha and beta costs one turbo, and a
+ * branch that hits for less can still win when it comes round three times as often. So each
+ * subset is planned, and `simulateDps` prices them and keeps the winner.
+ *
+ * Two subsets are never offered:
+ *
+ *   - one leaving out a resource the finisher grants itself. `banishing_blade` marks you on the
+ *     plain press, so "never marked" is not a rotation you can play — the next press is marked.
+ *   - one whose pass lands in the same charge state as an earlier one, and completes or breaks
+ *     the same way. Asking for alpha alone on a bar whose only alpha supplier is `turbo` arrives
+ *     holding alpha and beta anyway, and pricing it twice would list the same rotation twice.
+ *     The shorter pass is kept.
+ *
+ * A broken full pass is kept, so the break is still reported; a broken partial one is dropped.
+ */
+export function comboCandidates(
+  snapshot: Snapshot,
+  build: BuildDoc,
+  spellId: string,
+  sheet?: Sheet,
+): ComboPlan[] {
+  const full = planCombo(snapshot, build, spellId, sheet);
+  const { resources } = full;
+  if (resources.length === 0) return [full];
+
+  // Stated in `config.effects`, a resource is the document's call and not the search's: every
+  // candidate holds it the same way, so enumerating it would only list the same branch twice.
+  const forced = resources.filter(
+    (e) => !full.fixed.includes(e) && grantsEffect(snapshot, spellId, e),
+  );
+  const free = resources.filter((e) => !forced.includes(e) && !full.fixed.includes(e));
+  const whole = forced.length + free.length;
+
+  // Largest subsets first, so the full pass is the one the dedupe keeps a broken copy of.
+  const subsets: string[][] = [];
+  for (let mask = (1 << free.length) - 1; mask >= 0; mask--) {
+    subsets.push([...forced, ...free.filter((_, i) => (mask & (1 << i)) !== 0)]);
+  }
+  subsets.sort((a, b) => b.length - a.length);
+
+  const byHolds = new Map<string, ComboPlan>();
+  for (const subset of subsets) {
+    const plan = subset.length === whole ? full : planCombo(snapshot, build, spellId, sheet, subset);
+    // The full pass is the one that says what the bar cannot reach. A partial pass that breaks
+    // too says the same thing again and can never be played, so it is not a candidate.
+    if (plan !== full && plan.broken.length > 0) continue;
+    // Brokenness is part of the key. A full pass that stalls on `beta` fires holding alpha, and
+    // so does a clean "zap, then fire" — but only the first can say the full pass is out of reach.
+    const key = `${plan.holds.join(",")}${plan.broken.length > 0 ? "!" : ""}`;
+    const seen = byHolds.get(key);
+    if (seen === undefined || plan.presses.length < seen.presses.length) byHolds.set(key, plan);
+  }
+  return [...byHolds.values()];
 }
 
 /**
  * The equipped skill best placed to supply `want`, or undefined when none is.
  *
  * Greedy on coverage first: `turbo` grants `alpha` and `beta` together, so on a bar that also
- * carries `zap` and `cold_snap` it is one press instead of two. Then on what the supplier itself
- * needs, so a supplier you can simply press beats one that drags its own chain in behind it.
+ * carries `zap` and `cold_snap` it is one press instead of two. Then on how much it spills — a
+ * resource the finisher was not asked to fire holding, which is why a pass for alpha alone
+ * presses `zap` rather than `turbo`. Then on what the supplier itself needs, so a supplier you
+ * can simply press beats one that drags its own chain in behind it.
  */
 function pickSupplier(
   snapshot: Snapshot,
@@ -360,8 +500,9 @@ function pickSupplier(
   want: string,
   missing: readonly string[],
   exclude: string,
+  unwanted: readonly string[] = [],
 ): string | undefined {
-  let best: { id: string; covers: number; needs: number; order: number } | undefined;
+  let best: { id: string; covers: number; spills: number; needs: number; order: number } | undefined;
   equipped.forEach((setup, order) => {
     if (setup.spellId === exclude) return;
     if (!grantsEffect(snapshot, setup.spellId, want)) return;
@@ -369,13 +510,15 @@ function pickSupplier(
     if (spell === undefined) return;
     const grants = grantedEffects(spell);
     const covers = missing.filter((effect) => grants.includes(effect)).length;
+    const spills = unwanted.filter((effect) => grants.includes(effect)).length;
     const needs = consumedGates(spell).length;
     const better =
       best === undefined ||
       covers > best.covers ||
-      (covers === best.covers && needs < best.needs) ||
-      (covers === best.covers && needs === best.needs && order < best.order);
-    if (better) best = { id: setup.spellId, covers, needs, order };
+      (covers === best.covers && spills < best.spills) ||
+      (covers === best.covers && spills === best.spills && needs < best.needs) ||
+      (covers === best.covers && spills === best.spills && needs === best.needs && order < best.order);
+    if (better) best = { id: setup.spellId, covers, spills, needs, order };
   });
   return best?.id;
 }
@@ -390,6 +533,8 @@ export function resolveCombo(input: ComboInput): ComboChain | undefined {
   const plan =
     input.plan ?? planCombo(input.snapshot, input.build, input.skill.spellId, input.sheet);
 
+  /** Each skill's own press-to-press floor, for {@link passSeconds}. */
+  const periods = new Map<string, number>();
   const steps: ComboStep[] = plan.presses.map((press) => {
     if (press.kind === "basic-attack") {
       const swing = swingSeconds(input.build, input.sheet);
@@ -412,6 +557,7 @@ export function resolveCombo(input: ComboInput): ComboChain | undefined {
       input.engineOptions.spellRanks,
     );
     const rate = rateFor(input, setup);
+    periods.set(press.spellId!, rate.periodSeconds);
     const spell = spellData(input.snapshot, press.spellId!);
     return {
       kind: "skill" as const,
@@ -419,7 +565,6 @@ export function resolveCombo(input: ComboInput): ComboChain | undefined {
       seconds: rate.seconds,
       castSeconds: rate.castSeconds,
       globalCooldownSeconds: rate.globalCooldownSeconds,
-      ...(rate.cooldownBound ? { cooldownBound: true } : {}),
       needs: spell === undefined ? [] : consumedGates(spell),
       grants: press.grants,
       spends: press.spends,
@@ -429,13 +574,21 @@ export function resolveCombo(input: ComboInput): ComboChain | undefined {
   // One step and nothing missing means a skill you can simply press, which has a cast rate
   // already; a "combo" card with one row in it would be noise. One step and a missing link is the
   // opposite — it is the case worth saying out loud, because the skill will never fire at all.
-  if (steps.length < 2 && plan.broken.length === 0) return undefined;
+  // Resources set by hand are the exception: the card is where the document's pin is explained,
+  // and without it a build that ticked gamma on never learns why nothing is being chosen.
+  if (steps.length < 2 && plan.broken.length === 0 && plan.fixed.length === 0) return undefined;
 
   // A chain with a hole in it has no rate at all — you never reach the last step — which is a
   // different answer from "slow", and reporting the sum of the steps that do exist would read as
   // the second.
   const timed = plan.broken.length === 0 && steps.every((s) => s.seconds !== undefined);
-  const total = steps.reduce((sum, s) => sum + (s.seconds ?? 0), 0);
+  const pressing = steps.reduce((sum, s) => sum + (s.seconds ?? 0), 0);
+  const { seconds: total, boundBy } = timed
+    ? passSeconds(steps, periods)
+    : { seconds: pressing, boundBy: undefined };
+  if (boundBy !== undefined) {
+    for (const step of steps) if (step.spellId === boundBy) step.cooldownBound = true;
+  }
 
   return {
     steps,
@@ -443,6 +596,7 @@ export function resolveCombo(input: ComboInput): ComboChain | undefined {
     castsPerSecond: timed && total > 0 ? 1 / total : undefined,
     resources: plan.resources,
     holds: plan.holds,
+    fixed: plan.fixed,
     broken: plan.broken,
   };
 }
@@ -595,6 +749,49 @@ function swingSeconds(build: BuildDoc, sheet: Sheet): number | undefined {
 // What a step costs
 // ---------------------------------------------------------------------------
 
+/**
+ * How long one pass takes, and which skill's recovery stretched it, if any did.
+ *
+ * Pressing is the floor: every step's cast plus the global cooldown it arms, back to back. A
+ * skill's own recovery runs *while* you press the others, so it only costs time when the gap
+ * before you come back round to it is shorter than the recovery. `chronobreak` on an 8s cooldown
+ * behind one 0.55s `zap` is an 8s pass, not 8.55s — the zap fits inside the wait.
+ *
+ * A skill pressed twice in a pass has two gaps, and each has to cover its recovery: `turbo`
+ * either side of `fusion` waits out its own cooldown in between, and again before the next pass.
+ * So per skill the pass is at least the sum of its gaps, each raised to its recovery. That is a
+ * lower bound, reached by a player who holds each press until it is ready and no longer — two
+ * skills both waiting in the same gap would each count the wait, and this does not add them up.
+ *
+ * The recovery is the skill's standalone cycle, cooldown or charge regen or cast speed, so a
+ * charge-paced trap whose `cooldown_ticks` reads zero is still held to its real rate.
+ */
+function passSeconds(
+  steps: readonly ComboStep[],
+  periods: ReadonlyMap<string, number>,
+): { seconds: number; boundBy: string | undefined } {
+  const costs = steps.map((s) => s.seconds ?? 0);
+  let seconds = costs.reduce((sum, c) => sum + c, 0);
+  let boundBy: string | undefined;
+
+  for (const [spellId, period] of periods) {
+    const at = steps.flatMap((s, i) => (s.spellId === spellId ? [i] : []));
+    let needed = 0;
+    at.forEach((start, k) => {
+      // The pass repeats, so the last press's gap runs round to the first one of the next pass.
+      const end = k + 1 < at.length ? at[k + 1]! : at[0]! + steps.length;
+      let gap = 0;
+      for (let i = start; i < end; i++) gap += costs[i % steps.length]!;
+      needed += Math.max(period, gap);
+    });
+    if (needed > seconds + 1e-9) {
+      seconds = needed;
+      boundBy = spellId;
+    }
+  }
+  return { seconds, boundBy };
+}
+
 function rateFor(
   input: ComboInput,
   skill: SkillSetup,
@@ -602,7 +799,8 @@ function rateFor(
   seconds: number;
   castSeconds: number;
   globalCooldownSeconds: number;
-  cooldownBound: boolean;
+  /** Press to press, on its own — cooldown, charge regen or cast speed, whichever won. */
+  periodSeconds: number;
 } {
   const spell = entry(input.snapshot, CATEGORY.spell, skill.spellId)!.data;
   const declared = spellConfig(spell);
@@ -631,15 +829,14 @@ function rateFor(
   });
   const rate = rateOf(calc, declared);
 
-  // The pass casts each step once, so a step costs its cast plus the arm it puts on everything
-  // else — unless its own cooldown outlasts that, in which case you wait for the cooldown.
-  const press = rate.castSeconds + rate.globalCooldownSeconds;
-  const own = calc.cooldownTicks / TICKS_PER_SECOND;
+  // A step costs its cast plus the arm it puts on everything else. Its own recovery is not a
+  // cost of the step: it runs while the other presses happen, and `passSeconds` charges only
+  // what is left of it when you come back round.
   return {
-    seconds: Math.max(press, own),
+    seconds: rate.castSeconds + rate.globalCooldownSeconds,
     castSeconds: rate.castSeconds,
     globalCooldownSeconds: rate.globalCooldownSeconds,
-    cooldownBound: own > press,
+    periodSeconds: rate.cycleSeconds,
   };
 }
 

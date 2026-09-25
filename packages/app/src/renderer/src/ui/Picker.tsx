@@ -14,6 +14,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+import type { At } from "./HoverCard.js";
 
 export type PickerOption = {
   id: string;
@@ -30,6 +33,13 @@ export type PickerOption = {
    * called in the data".
    */
   detail?: string;
+  /**
+   * Why this option cannot be chosen right now, which also makes it unchoosable.
+   *
+   * Greyed out rather than filtered out: an affix vanishing from the list reads as "this base
+   * cannot roll it", and the real answer — "you already have it" — belongs on the row's hover.
+   */
+  disabled?: string;
 };
 
 /** How many rows the dropdown draws. Anything past this is counted, not dropped silently. */
@@ -43,6 +53,7 @@ export function Picker({
   allowClear = false,
   width,
   autoFocus = false,
+  renderHover,
 }: {
   options: readonly PickerOption[];
   value: string | undefined;
@@ -57,8 +68,17 @@ export function Picker({
    * appears closed and the user has to click a second time, on the thing they just clicked.
    */
   autoFocus?: boolean;
+  /**
+   * A card of the caller's own for the row under the pointer, in place of the browser's `title`.
+   *
+   * The `title` popup is one flat string in the desktop's colours, which is fine for "what is
+   * this" and useless for "what would this do to my build" — a priced answer needs a heading, a
+   * table and a moment to compute. Given this, rows carry no `title` at all.
+   */
+  renderHover?: ((option: PickerOption, at: At) => ReactNode) | undefined;
 }): ReactNode {
   const [open, setOpen] = useState(autoFocus);
+  const [hover, setHover] = useState<{ option: PickerOption; at: At } | null>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -100,6 +120,7 @@ export function Picker({
     onChange(id);
     setOpen(false);
     setQuery("");
+    setHover(null);
   };
 
   return (
@@ -129,14 +150,15 @@ export function Picker({
           } else if (event.key === "Enter") {
             event.preventDefault();
             const option = matches[active];
-            if (option) commit(option.id);
+            if (option && option.disabled === undefined) commit(option.id);
           } else if (event.key === "Escape") {
             setOpen(false);
+            setHover(null);
           }
         }}
       />
       {open && (
-        <div className="picker-list">
+        <div className="picker-list" onMouseLeave={() => setHover(null)}>
           {allowClear && (
             <div className="picker-option faint" onMouseDown={() => commit(undefined)}>
               (none)
@@ -145,18 +167,32 @@ export function Picker({
           {matches.length === 0 && <div className="picker-option faint">No match</div>}
           {hidden > 0 && (
             <div className="picker-option faint" style={{ pointerEvents: "none" }}>
-              {hidden} more — keep typing to narrow it down
+              {hidden} more, keep typing to narrow it down
             </div>
           )}
           {matches.map((option, index) => (
             <div
               key={option.id}
-              className={`picker-option${index === active ? " active" : ""}`}
-              title={option.detail === undefined ? option.id : `${option.detail}
-
-${option.id}`}
+              className={`picker-option${index === active ? " active" : ""}${option.disabled === undefined ? "" : " disabled"}`}
+              title={
+                renderHover === undefined
+                  ? [option.disabled, option.detail, option.id]
+                      .filter((line) => line !== undefined)
+                      .join("\n\n")
+                  : undefined
+              }
+              aria-disabled={option.disabled !== undefined}
               onMouseEnter={() => setActive(index)}
-              onMouseDown={() => commit(option.id)}
+              onMouseMove={
+                renderHover === undefined
+                  ? undefined
+                  : (event) => setHover({ option, at: { x: event.clientX, y: event.clientY } })
+              }
+              onMouseDown={(event) => {
+                // Still keep the list open on a greyed row: the click was a question, not a choice.
+                if (option.disabled !== undefined) event.preventDefault();
+                else commit(option.id);
+              }}
             >
               <span className="ellipsis">{option.label}</span>
               {option.hint !== undefined && <span className="badge">{option.hint}</span>}
@@ -164,6 +200,10 @@ ${option.id}`}
           ))}
         </div>
       )}
+      {open &&
+        hover !== null &&
+        renderHover !== undefined &&
+        createPortal(renderHover(hover.option, hover.at), document.body)}
     </div>
   );
 }

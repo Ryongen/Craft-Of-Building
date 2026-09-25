@@ -13,7 +13,7 @@
  * could not write an autosave would be worse than one that quietly forgets.
  */
 
-const DB_NAME = "cte2-pob";
+const DB_NAME = "craft-of-building";
 const DB_VERSION = 1;
 
 /** Small values, keyed by name: the autosaved session, a user-supplied snapshot. */

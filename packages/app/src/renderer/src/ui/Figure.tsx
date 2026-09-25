@@ -96,17 +96,20 @@ export function Figure({
   // inline instead. That difference is as-found, not a decision made here.
   const large = size === "lg";
   return (
-    <div title={text}>
+    <div title={text} onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}>
       <div className="faint text-sm">
         {label}
       </div>
       {large ? (
-        <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums", color }}>
+        <div
+          className={`text-xl${onClick ? " link-ish" : ""}`}
+          style={{ fontVariantNumeric: "tabular-nums", color }}
+        >
           {value}
           <DeltaTag delta={delta} />
         </div>
       ) : (
-        <div className="num text-lg" style={{ color }}>
+        <div className={`num text-lg${onClick ? " link-ish" : ""}`} style={{ color }}>
           {value}
           <DeltaTag delta={delta} />
         </div>

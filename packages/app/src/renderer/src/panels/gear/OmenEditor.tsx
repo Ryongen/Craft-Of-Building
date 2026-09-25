@@ -164,14 +164,14 @@ export function OmenEditor({
       <>
       <Plain>
         <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
-          An {omenWord(snapshot).toLowerCase()} grants no stats by itself. Increasing requirements boosts the bonus, adding ten percent per required piece and ten percent per slot requirement, scaled by rarity, but requires equipping more matching gear to activate. Mainhand weapons never count: only armour, offhands, and jewellery curios satisfy requirements.
+          An {omenWord(snapshot).toLowerCase()} grants nothing by itself. More requirements mean a bigger bonus (10% per required piece and per slot requirement, scaled by rarity), but you need more matching gear to activate it. Your mainhand never counts; only armour, offhand and jewellery do.
         </div>
       </Plain>
       <Tech>
         <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
           An {omenWord(snapshot).toLowerCase()} grants nothing on its own. Raising a requirement
-          raises the payout — <code>getStatPercent</code> is ten per required piece plus ten per
-          slot requirement, times the rarity&apos;s <code>stat_multi</code> — but also raises what
+          raises the payout (<code>getStatPercent</code> is ten per required piece plus ten per
+          slot requirement, times the rarity&apos;s <code>stat_multi</code>) but also raises what
           you have to wear to collect it. The <strong>mainhand never counts</strong>:
           <code>recalcGears</code> collects armour, the offhand and the jewellery curios only.
         </div>
@@ -184,7 +184,7 @@ export function OmenEditor({
 
       <div className="section-title">What it grants</div>
       {buckets.length === 0 ? (
-        <div className="faint">Nothing — this omen is not in the snapshot.</div>
+        <div className="faint">Nothing. This omen isn&apos;t in the snapshot.</div>
       ) : (
         buckets.map((bucket, index) => {
           const live = filled >= bucket.pieces;
@@ -317,7 +317,7 @@ function SlotRequirements({
     <>
       <div className="section-title">
         Slot requirements{" "}
-        <span className="faint">({reqs.length} — these disqualify a piece, they do not add one)</span>
+        <span className="faint">({reqs.length}; these exclude pieces rather than add them)</span>
       </div>
       {reqs.map((req, index) => (
         <div key={index} className="row" style={{ marginBottom: 3 }}>
@@ -411,7 +411,7 @@ function OmenAffixes({
   return (
     <>
       <div className="section-title">
-        Corruption affixes <span className="faint">({affixes.length} — each unlocks one piece earlier)</span>
+        Corruption affixes <span className="faint">({affixes.length}; each one activates a piece sooner)</span>
       </div>
       {affixes.map((roll, index) => (
         <div key={index} className="row mb-2">

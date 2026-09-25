@@ -72,7 +72,7 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
               <tr key={row.resource} className={row.sustainable ? undefined : "highlight"}>
                 <td>{row.resource.replace(/_/g, " ")}</td>
                 <td className="num">{smart(row.max)}</td>
-                <td className="num" title="In combat — the column a rotation actually lives on">
+                <td className="num" title="In-combat regeneration, which is what applies during a rotation">
                   {smart(row.regenPerSecond)}/s
                 </td>
                 <td className="num">
@@ -152,18 +152,17 @@ function LeechDetail({ leech }: { leech: DpsResult["cost"]["leech"] }): ReactNod
       {capped.length > 0 && (
         <div className="faint text-sm mt-4 prose">
           <Plain>
-            <strong>Capped.</strong> Leech is banked, not restored: each second it pays out a
-            percentage of the pool and the bank is clamped to five seconds of that. More leech on
-            gear buys{" "}
-            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here
-            — a bigger pool or a higher cap does. The base cap is 5% on every pool.
+            <strong>Capped.</strong> Leech pays out a percentage of your pool each second, up to
+            five seconds&apos; worth. More leech won&apos;t help your{" "}
+            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} here; a bigger
+            pool or a higher cap will. The base cap is 5% for every pool.
           </Plain>
           <Tech>
             <strong>Capped.</strong> Leech is banked, not restored:{" "}
             <code>onSecondUseLeeches</code> pays out{" "}
             <code>&lt;resource&gt;_leech_cap</code>% of the pool each second and clamps the bank to
             five seconds of that. More leech on gear buys{" "}
-            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here — a
+            {capped.map((entry) => entry.resource.replace(/_/g, " ")).join(" or ")} nothing here; a
             bigger pool or a higher cap does. The base cap is 5% on every pool.
           </Tech>
         </div>
@@ -172,9 +171,9 @@ function LeechDetail({ leech }: { leech: DpsResult["cost"]["leech"] }): ReactNod
       {leech.unrated.length > 0 && (
         <div className="faint text-sm mt-4 prose">
           <strong>Not counted:</strong>{" "}
-          {leech.unrated.map((entry) => `${entry.statId} (${num(entry.value, 1)})`).join(", ")} —
+          {leech.unrated.map((entry) => `${entry.statId} (${num(entry.value, 1)})`).join(", ")}.
           {" "}
-          {leech.unrated[0]?.reason}. Real sustain, but not a rate a build document states.
+          {leech.unrated[0]?.reason}. It does sustain you, but there&apos;s no fixed rate to count.
         </div>
       )}
     </>

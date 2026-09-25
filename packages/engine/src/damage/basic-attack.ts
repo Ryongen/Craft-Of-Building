@@ -169,7 +169,7 @@ export function basicAttack(
       path: "character.attributes",
       message:
         `A basic attack's rate is vanilla's 1 / ${ATTACK_SPEED_ATTRIBUTE}, and this build ` +
-        `records neither that attribute nor \`character.baseAttackSpeed\` — the weapon's own ` +
+        `records neither that attribute nor \`character.baseAttackSpeed\`. The weapon's own ` +
         `speed modifier is a Minecraft item property rather than anything the snapshot carries, ` +
         `so it cannot be derived. The hit itself is real; the rate beside it is not. A capture ` +
         `from the companion mod fills it in, or type the weapon's swings per second.`,

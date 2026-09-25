@@ -225,6 +225,30 @@ test("slowing the projectiles tightens the spiral, which is what the support gem
   assert.ok(slowed > normal, `slowing should keep more pulses on a near target (${slowed} vs ${normal})`);
 });
 
+test("a per-enemy cooldown caps hits however many carriers reach the target", () => {
+  // `frost_orbs`: three pulses every 5 ticks for 200 ticks, gated on `is_not_on_cd` of the
+  // cooldown its own `set_on_cd` puts on each enemy for 20 ticks. Standing in all three at once,
+  // the mob is offered 120 contacts and takes one hit a second — ten.
+  const carrier: Carrier = {
+    kind: "projectile",
+    count: 3,
+    baseCount: 3,
+    bonusCount: 0,
+    lifeTicks: 200,
+    motion: motion({ speed: 0, expiresOnEntityHit: false }),
+  };
+  const trigger = { kind: "tick", rate: 5, firstTick: 0 } as const;
+  const placement = { ...DEFAULT_PLACEMENT, distance: 0 };
+
+  const free = coverageOf(source({ carrier, firesPerCarrier: 40, trigger }), placement);
+  const gated = coverageOf(source({ carrier, firesPerCarrier: 40, trigger, targetCooldownTicks: 20 }), placement);
+
+  assert.equal(free.hitsPerCast, 120);
+  assert.equal(gated.hitsPerCast, 10);
+  assert.match(gated.note ?? "", /immune to it for 20 ticks/);
+  assert.ok(gated.landedTicks.every((t, i, all) => i === 0 || t - (all[i - 1] ?? 0) >= 20));
+});
+
 test("a homing projectile is reported as assumed, not silently flown", () => {
   const carrier: Carrier = {
     kind: "projectile",

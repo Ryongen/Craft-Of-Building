@@ -37,7 +37,7 @@ import { useBuild } from "../../state/build-store.js";
 import { mainSkillIndex, useDerived, type DerivedBuild } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { num, smart } from "../../ui/format.js";
-import { Splitter } from "../../ui/Splitter.js";
+import { DockedPane } from "./DetailPane.js";
 import { SheetDetail, type SheetFocus } from "./SheetDetail.js";
 import { StatList } from "./StatList.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
@@ -126,12 +126,9 @@ export function CalcsPanel(): ReactNode {
         differently depending on which screen opened it would be two features.
       */}
       {focus !== null && (
-        <>
-          <Splitter height={detailHeight} onChange={setDetailHeight} />
-          <div className="breakdown-pane" style={{ height: detailHeight }}>
-            <SheetDetail focus={focus} onFocus={setFocus} />
-          </div>
-        </>
+        <DockedPane height={detailHeight} onHeight={setDetailHeight} onClose={() => setFocus(null)}>
+          <SheetDetail focus={focus} onFocus={setFocus} />
+        </DockedPane>
       )}
     </div>
   );
@@ -191,7 +188,7 @@ function SkillHeader({
               <option key={`${skill.spellId}-${index}`} value={index}>
                 {spellName(snapshot, skill.spellId)}
                 {skill.main === true ? " (main)" : ""}
-                {isSkillEnabled(skill) ? "" : " — off"}
+                {isSkillEnabled(skill) ? "" : " (off)"}
               </option>
             ))}
           </select>
@@ -203,7 +200,7 @@ function SkillHeader({
         </div>
 
         <div className="field">
-          <label title="Per hit is one press landing; per second divides it by the cast cycle. The stats below are the same either way — this only changes the figures on this row.">
+          <label title="Per hit is one press. Per second divides by the cast time. Only changes the numbers in this row.">
             Read as
           </label>
           <select value={mode} onChange={(event) => onMode(event.target.value as Mode)}>
@@ -220,8 +217,8 @@ function SkillHeader({
           <>Nothing is assumed up. The Config tab is where buffs and exile effects are switched.</>
         ) : (
           <>
-            Assumed up: {assumed.join(", ")}. Every number on this screen is computed with these
-            applied — switch them on the Config tab.
+            Assumed active: {assumed.join(", ")}. Every number here includes them. Change this on the
+            Config tab.
           </>
         )}
       </div>
@@ -234,7 +231,7 @@ function SkillHeader({
       <>
       <Plain>
         <div className="muted text-sm mt-3 prose">
-          Multiplier values (like xN) represent multiplicative damage stats that apply directly during final damage calculations, which is why their sheet values show as 0. Reaching a cap indicates a hard ceiling. Values formatted like 43.10% (1,575.9) show the effective in-game percentage followed by the underlying rating score that generates it. Click any row to view its exact source calculation.
+          Values like xN are "more" multipliers applied at the damage step, so the sheet shows 0 for them. A value like 43.10% (1,575.9) is the effective percentage followed by the rating behind it. Click a row to see where it comes from.
         </div>
       </Plain>
       <Tech>

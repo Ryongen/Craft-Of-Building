@@ -370,6 +370,16 @@ export type DamageSource = {
   castShare: number;
   /** `disable_knockback` on the act. Carried through so a breakdown can show it. */
   disableKnockback: boolean;
+  /**
+   * Ticks one enemy is immune to this source after it lands, when the part gates itself on a
+   * cooldown it also sets: `is_not_on_cd` in `en_preds` and `set_on_cd` among the acts, same id.
+   *
+   * `SetOnCooldownAction` writes the cooldown onto each *target's* unit data and
+   * `IsNotOnCooldownCondition` reads it off `ctx.target`, so the gate is per enemy and shared by
+   * every carrier of the cast. `frost_orbs` throws three orbs that pulse every 5 ticks, and a mob
+   * still takes one hit per 20 ticks however many orbs pass through it.
+   */
+  targetCooldownTicks?: number;
 };
 
 /**
@@ -586,6 +596,7 @@ export function skillModel(
           return;
         }
         if (act.type === "damage") {
+          const targetCooldownTicks = targetCooldownOf(part);
           sources.push({
             id: `${groupName}#${index}`,
             path: frame.path,
@@ -601,6 +612,7 @@ export function skillModel(
             instancesPerCast: frame.carriersPerCast * firesPerCarrier * castShare,
             castShare,
             disableKnockback: act.map["disable_knockback"] === true,
+            ...(targetCooldownTicks === undefined ? {} : { targetCooldownTicks }),
           });
           return;
         }
@@ -1061,6 +1073,23 @@ function targetOf(part: Part, calc: SpellCalc): SourceTarget {
  */
 function onceForTheRun(part: Part): boolean {
   return part.ifs.some((gate) => gate.type === "is_first_cast" || gate.type === "is_last_cast");
+}
+
+/**
+ * The per-enemy cooldown a part both checks and sets — see `DamageSource.targetCooldownTicks`.
+ *
+ * Only when both halves sit on the same part. `soul_wound` sets its cooldown on one branch and
+ * checks it on the other, which is a branch table rather than a rate limit.
+ */
+function targetCooldownOf(part: Part): number | undefined {
+  for (const gate of part.enPreds) {
+    if (gate.type !== "is_not_on_cd") continue;
+    const id = str(gate.map["cooldown_id"]);
+    const set = part.acts.find((act) => act.type === "set_on_cd" && str(act.map["cooldown_id"]) === id);
+    const ticks = set === undefined ? undefined : num(set.map["cooldown_ticks"]);
+    if (ticks !== undefined && ticks > 0) return ticks;
+  }
+  return undefined;
 }
 
 function requirementsOf(part: Part): SourceRequirement[] {

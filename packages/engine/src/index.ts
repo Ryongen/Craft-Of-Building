@@ -224,6 +224,18 @@ export type {
 
 export { mobAffix, mobAffixDiagnostics, mobAffixIds, mobAffixMods } from "./damage/mob-affixes.js";
 export type { MobAffixMod, MobAffixView } from "./damage/mob-affixes.js";
+export {
+  MAP_TIER_SOURCE,
+  isRollableMapAffix,
+  mapAffix,
+  mapAffixIds,
+  mapAffixRoll,
+  mapMobMods,
+  mapPlayerMods,
+  mapTierBonus,
+  mapTierOf,
+} from "./damage/map.js";
+export type { MapAffixSide, MapAffixView, MapMod } from "./damage/map.js";
 
 export { MAX_BASIC_ATTACKS_PER_SECOND, mobAttackRate, mobHitSize } from "./damage/incoming.js";
 export type { MobHit } from "./damage/incoming.js";
@@ -242,7 +254,7 @@ export type {
   Pools,
 } from "./damage/defence.js";
 
-export type { BrokenLink, ComboChain, ComboStep } from "./damage/combo.js";
+export type { BrokenLink, ComboChain, ComboRotation, ComboStep } from "./damage/combo.js";
 
 export { evaluateCondition, evaluateIfs } from "./damage/conditions.js";
 export type { Outcome, StatSubject } from "./damage/conditions.js";

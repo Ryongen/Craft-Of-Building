@@ -100,7 +100,7 @@ export function DataPanel(): ReactNode {
         <div className="notice info">
           Running on the repository&apos;s <code>data/snapshot.json</code> rather than one this app
           produced. Re-extracting writes to the app&apos;s own data directory, which then takes
-          precedence — the committed <code>data/</code> is never overwritten by a click.
+          priority. The committed <code>data/</code> is never overwritten.
         </div>
       )}
 
@@ -162,11 +162,10 @@ export function DataPanel(): ReactNode {
             </div>
 
             <div className="faint text-sm mt-4">
-              This site cannot read your modpack folder — a web page has no access to it. It
-              ships the snapshot above, extracted from one pack version. If yours differs, run
-              the desktop app once to extract your own <code>snapshot.json</code> and load it
-              here; it is kept in this browser and nothing is uploaded. Icons stay the site&apos;s,
-              because a snapshot file carries none.
+              A web page can't read your modpack folder, so this site uses the snapshot above. If
+              your pack version differs, extract your own <code>snapshot.json</code> with the
+              desktop app and load it here. It stays in this browser and nothing is uploaded.
+              Icons still come from the site, since snapshots don&apos;t include them.
             </div>
           </>
         )}

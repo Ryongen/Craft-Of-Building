@@ -622,7 +622,7 @@ export function GearPanel(): ReactNode {
             <>
             <Plain>
               <div className="notice">
-                These items list a gear slot with no row above: head is a custom pack slot not tracked in standard equipment blocks, so how many a character can wear is undefined. Nothing is restricted, and all stats on these items are still summed normally.
+                These items use a slot this app doesn&apos;t have a row for, so there&apos;s no limit on how many you can wear. Their stats still count.
               </div>
             </Plain>
             <Tech>
@@ -851,8 +851,8 @@ function SlotPicker({
         id: NONE,
         label:
           alsoIn === undefined
-            ? `(none) — take off ${itemName(world.snapshot, worn)}`
-            : `(none) — wear it only in ${alsoIn}`,
+            ? `(none): take off ${itemName(world.snapshot, worn)}`
+            : `(none): wear it only in ${alsoIn}`,
         hint: "unequip",
         item: undefined,
         arrival: undefined,
@@ -865,7 +865,7 @@ function SlotPicker({
         // Said on the row, because the benched piece and the one already worn read the same
         // otherwise and they are two different clicks: one moves a piece off the bench, the other
         // wears the same item in a second place.
-        label: candidate.arrival.from === "mirror" ? `${name} — the same one, worn here too` : name,
+        label: candidate.arrival.from === "mirror" ? `${name} (same item, worn here too)` : name,
         hint:
           candidate.item.offhand === true
             ? `offhand · ${Math.round(offhandWeaponShare(world.snapshot, 0) * 100)}%`
@@ -1043,10 +1043,10 @@ function SwapPreview({
       <div className="swap-panel">
         <div className="swap-panel-title">
           {candidate === undefined
-            ? `${label} — taking it off`
+            ? `${label}: taking it off`
             : worn === undefined
-              ? `${label} — would add`
-              : `${label} — would swap`}
+              ? `${label}: would add`
+              : `${label}: would swap`}
         </div>
         <div className="swap-panel-price">
           {priced === undefined ? (
@@ -1055,7 +1055,7 @@ function SwapPreview({
             <ComparisonBlock
               comparison={priced.click.comparison}
               statLimit={10}
-              emptyNote="Nothing changes — the character sheet lands in exactly the same place."
+              emptyNote="Nothing changes on the character sheet."
             />
           )}
         </div>
@@ -1107,10 +1107,10 @@ function EmptySlot({
         {suppressed ? (
           <span className="faint text-sm">emptied by the two-handed weapon</span>
         ) : candidates.length === 0 ? (
-          <span className="faint text-sm">empty — nothing in the pool fits here</span>
+          <span className="faint text-sm">empty, nothing in the pool fits here</span>
         ) : (
           <span className="faint text-sm">
-            empty — {candidates.length} option{candidates.length === 1 ? "" : "s"} fit
+            empty, {candidates.length} option{candidates.length === 1 ? "" : "s"} fit
             {candidates.length === 1 ? "s" : ""} here
           </span>
         )}
@@ -1314,14 +1314,14 @@ function ItemPool({
         </span>
         {entries.length > POOL_ROWS && (
           <span className="faint text-sm" style={{ fontWeight: "normal", marginLeft: 8 }}>
-            — scrolling
+            (scroll for more)
           </span>
         )}
       </div>
       {entries.length === 0 ? (
         <div className="faint text-sm mb-4">
-          Nothing yet. Items you search for or import land here, and taking a piece off leaves it
-          here too — so comparing two swords never means losing one of them.
+          Nothing yet. Items you search for or import go here, and so does anything you take off,
+          so you never lose an item by swapping.
         </div>
       ) : (
         /*
@@ -1390,7 +1390,7 @@ function PoolRow({
         <span className="badge">ilvl {entry.item.itemLevel}</span>
         {isTwoHanded(world.snapshot, entry.item.base) && <span className="badge warn">2H</span>}
         {entry.slot !== undefined && (
-          <span className="badge good" title="Worn — this one is on the character">
+          <span className="badge good" title="Equipped">
             {entry.slot}
           </span>
         )}
@@ -1470,7 +1470,7 @@ function EditorCard({
       <div className="section-title">
         Editing <span className="faint">{itemName(world.snapshot, item)}</span>{" "}
         {where === "pool" && (
-          <span className="badge" title="On the bench — it contributes nothing until you equip it">
+          <span className="badge" title="Not equipped, so it does nothing yet">
             not equipped
           </span>
         )}
@@ -1526,8 +1526,8 @@ function EditorCard({
           */}
           {where === "gear" && suppressed && (
             <div className="faint mb-2">
-              Nothing — the offhand is empty while a two-handed weapon is held. The engine still
-              sums it, which is why the validator calls this an error rather than a note.
+              Nothing. The offhand must be empty with a two-handed weapon. Its stats still count
+              here, so this shows as an error.
             </div>
           )}
 
@@ -1631,7 +1631,7 @@ function ItemRow({
       {alsoIn !== undefined && (
         <span
           className="badge"
-          title={`Worn twice: the same item is also in ${alsoIn}. Not a copy — editing either edits both. Choose (none) here to wear it only once.`}
+          title={`Also worn in ${alsoIn}. It's the same item, so editing one edits both. Choose (none) to wear it once.`}
         >
           ×2
         </span>
@@ -1690,7 +1690,7 @@ function ItemRow({
               {content}
             </span>
             <button
-              title="Take this off, onto the bench. Nothing is lost — it goes back to the item pool."
+              title="Unequip. It goes back to the item pool."
               onClick={(event) => {
                 event.stopPropagation();
                 onOff();
@@ -1733,7 +1733,7 @@ function CopyItemButton({ item }: { item: Item }): ReactNode {
   return (
     <CopyJsonButton
       value={item}
-      title="Copy this item as JSON — paste it into another build with Import, or into a fixture"
+      title="Copy this item as JSON. Paste it into another build with Import"
     />
   );
 }
@@ -1807,7 +1807,7 @@ function OmenRow({
         <span className="badge">lvl {omen.itemLevel}</span>
         <span className={`badge ${active ? "good" : "warn"}`}>
           {filled} piece{filled === 1 ? "" : "s"}
-          {active ? " — active" : " — grants nothing yet"}
+          {active ? ", active" : ", not active yet"}
         </span>
         {errors > 0 && <span className="badge bad">{errors} error{errors === 1 ? "" : "s"}</span>}
         {warnings > 0 && <span className="badge warn">{warnings}</span>}

@@ -33,6 +33,7 @@ import { collectBaseStats } from "./collect/base-stats.js";
 import { collectAuras, collectExileEffects, collectFoodBuffs } from "./collect/effects.js";
 import { collectGear, collectJewels } from "./collect/gear.js";
 import { collectItemSets } from "./collect/item-sets.js";
+import { collectMapAffixes } from "./collect/map-affixes.js";
 import { collectNewbieResists } from "./collect/newbie-resists.js";
 import { collectOmen } from "./collect/omen.js";
 import { collectPerks } from "./collect/perks.js";
@@ -410,6 +411,9 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
     ...collectExileEffects(env, build, effects),
     // Vanilla attributes other mods set, converted by `mmorpg_stat_compat`.
     ...collectStatCompat(env, build),
+    // The map's `Players` affixes — `CommonStatUtils.addMapAffixStats`, which the game runs
+    // for players and mobs alike.
+    ...collectMapAffixes(env, build),
   ];
 
   // 2. `CtxStats.addStatCtxModifierStats(allstats)` — stats that scale a whole context rather

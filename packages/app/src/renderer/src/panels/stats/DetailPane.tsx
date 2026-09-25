@@ -21,6 +21,8 @@ export type DetailPane = {
   focus: SheetFocus | null;
   /** Opens a focus, or closes it when it is already the one open. */
   open: (next: SheetFocus) => void;
+  /** Closes whatever is open, for a tab that docks something else in the same place. */
+  close: () => void;
   /** The stat id open on the character sheet, for rows that highlight themselves. */
   selectedStat: string | null;
   /** Render last inside the panel, as a sibling of the scrolling body. */
@@ -36,6 +38,37 @@ export function sameFocus(a: SheetFocus | null, b: SheetFocus): boolean {
   return false;
 }
 
+/**
+ * The docked frame itself: the splitter, the pane, and a close button in its corner.
+ *
+ * Clicking the figure that opened it again still closes it; the button is for the reader who
+ * has scrolled away from that figure, or who opened the pane from somewhere else entirely.
+ * Outside the scrolling body so it stays put however far down the explanation goes.
+ */
+export function DockedPane({
+  height,
+  onHeight,
+  onClose,
+  children,
+}: {
+  height: number;
+  onHeight: (height: number) => void;
+  onClose: () => void;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <>
+      <Splitter height={height} onChange={onHeight} />
+      <div className="breakdown-pane" style={{ height }}>
+        <button className="pane-close" title="Close" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+        {children}
+      </div>
+    </>
+  );
+}
+
 export function useDetailPane(initialHeight = 320): DetailPane {
   const [focus, setFocus] = useState<SheetFocus | null>(null);
   // Held across selections rather than per breakdown: somebody who made room to read one
@@ -45,15 +78,13 @@ export function useDetailPane(initialHeight = 320): DetailPane {
   return {
     focus,
     open: (next) => setFocus(sameFocus(focus, next) ? null : next),
+    close: () => setFocus(null),
     selectedStat: focus?.kind === "stat" ? focus.statId : null,
     pane:
       focus === null ? null : (
-        <>
-          <Splitter height={height} onChange={setHeight} />
-          <div className="breakdown-pane" style={{ height }}>
-            <SheetDetail focus={focus} onFocus={setFocus} />
-          </div>
-        </>
+        <DockedPane height={height} onHeight={setHeight} onClose={() => setFocus(null)}>
+          <SheetDetail focus={focus} onFocus={setFocus} />
+        </DockedPane>
       ),
   };
 }

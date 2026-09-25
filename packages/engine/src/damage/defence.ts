@@ -41,10 +41,13 @@
  * between hits is a different question and needs an incoming-damage rate, which nothing in a build
  * document states. `resources.ts` says how fast each pool refills between them.
  *
- * **Crit, and the attacker's damage increases.** Effective HP answers "how much *raw* incoming
- * damage do I survive". A crit, or a mob whose `dmg_multi` is 2, makes the raw number bigger — it
- * does not make your mitigation worse — so folding either in would be answering a different
- * question twice. They are recorded on `EnemySetup.offence` and reported beside the figure.
+ * **Crit, and the attacker's uniform damage increases.** Effective HP answers "how much of the
+ * mob's *base* hit do I survive". A crit, or a mob whose `dmg_multi` is 2, or a map tier's
+ * `MORE total_damage`, makes every hit bigger alike — it does not make one of your defences
+ * worse than another — so folding it in would be answering the over-time question twice. The
+ * over-time figures do fold `total_damage` in, through `takenFromSwing`; crit stays out of both.
+ *
+ * Damage on hits **of one element** is the exception, and is in: see {@link attackerSheet}.
  *
  * ## The attacker
  *
@@ -61,8 +64,8 @@
  * adds 8 more accuracy and 6 armour penetration on the same curve. Reading only the first made
  * every mob nine times less accurate and infinitely less penetrating than the game's.
  *
- * Its **affixes** reach this sheet too; see {@link attackerAffixes} for which of them do and why
- * the damage increases deliberately do not.
+ * Its **affixes**, and its map's, reach this sheet too; see {@link attackerAffixes} for which of
+ * them do and why the uniform damage increases deliberately do not.
  */
 
 import type { Snapshot } from "@cte2/extractor";
@@ -85,6 +88,7 @@ import { EVENT, DamageEventState } from "./event.js";
 import { layerIndex } from "./layers.js";
 import { Recorder, type LayerStep, type MoreStep } from "./breakdown.js";
 import { mobAffixMods } from "./mob-affixes.js";
+import { mapMobMods } from "./map.js";
 import { aggregateSpread, applySheetMods, sweep, type TargetMod } from "./simulate.js";
 import { mobAttackRate, mobHitSize, type MobHit } from "./incoming.js";
 import { applyAilments, type AilmentResult } from "./ailments.js";
@@ -107,7 +111,13 @@ export type Pools = {
 
 export type ElementDefence = {
   element: ElementName;
-  /** Fraction of a raw incoming hit that reaches the pools. 1 means nothing stopped it. */
+  /**
+   * Damage that reaches the pools, per unit of the mob's base hit of this element.
+   *
+   * Above 1 when the mob's own stats make a hit of this element bigger than its base and your
+   * defences stop less than that — the base block's `all_elemental_damage 50` on a fire hit, or a
+   * `plus_phys_to_fire` gaining half again as extra. Below 1 is your defences winning.
+   */
   taken: number;
   /**
    * The same fraction with every avoidance roll assumed to fail.
@@ -118,6 +128,21 @@ export type ElementDefence = {
    * character with neither stat.
    */
   takenUnavoided: number;
+  /**
+   * The same fraction with the mob's **uniform** damage increases applied too — `total_damage`
+   * from `savage` or `dmg_multi`, and a map tier's `MORE total_damage`.
+   *
+   * Per unit of the mob's base hit, like `taken`, and what the over-time figures multiply by: a
+   * tier 50 mob really does hit two and a half times as hard. Kept out of `taken` and the
+   * effective HP built on it because a hit that is bigger everywhere is not a defence that got
+   * worse — it is the same defence against a bigger number, which the over-time figures already
+   * ask about. Equal to `taken` against a mob with none.
+   *
+   * Its own sweep rather than `taken` times a factor, because `total_damage` is **additive**
+   * with the element damage already in `taken`: `savage`'s 25 and the base block's 50 on a fire
+   * hit add to 75, not multiply to 87.5.
+   */
+  takenFromSwing: number;
   /** The pool this element actually has to chew through, after the chaos bypass. */
   pool: number;
   /** Raw incoming damage survivable on average: `pool / taken`. */
@@ -168,9 +193,10 @@ export type Defence = {
   /**
    * The element with the lowest maximum hit: what one-shots you first.
    *
-   * Usually the same element as `weakest` and not always — avoidance is physical-only (dodge)
-   * or element-blind (block), so a character whose dodge is carrying their physical effective HP
-   * is softer to a single physical slam than the averaged figure suggests.
+   * Against a mob's swing this is the same element as `weakest`: dodge and block are both
+   * element-blind (`DodgeRating$Effect` has no element gate in 6.4.13), so they scale every row
+   * alike. What differs is the size — the gap between `maximumHit` and `effectiveHealth` is how
+   * much of your defence is a roll you cannot spend on the hit that kills you.
    */
   mostFragile: ElementDefence;
   /**
@@ -330,6 +356,8 @@ export function defence(
   const offence = build.config?.enemy?.offence ?? {};
   const attacker = attackerSheet(offence);
   const carried = attackerAffixes(build, snapshot, index, bal, attackerLevel, attacker, diagnostics);
+  // The same attacker with its uniform damage increases too — only the over-time figures read it.
+  const swinging = swingingSheet(attacker, offence, carried.sizing, index, diagnostics);
 
   // One shared sink across the element sweeps, deduplicated afterwards by {@link oncePerBlock}.
   //
@@ -371,12 +399,15 @@ export function defence(
     // so collecting from it would count every proc and every restore twice.
     const { procs: _procs, restores: _restores, ailments: _ailments, ...withoutSinks } = input;
     const unavoided = takenFraction({ ...withoutSinks, noAvoidance: true, diagnostics: [] });
+    const fromSwing =
+      swinging === attacker ? taken : takenFraction({ ...withoutSinks, attacker: swinging, diagnostics: [] }).taken;
 
     const pool = poolFor(element.guid, health, magicShield, shieldHolds);
     return {
       element: element.name,
       taken,
       takenUnavoided: unavoided.taken,
+      takenFromSwing: fromSwing,
       pool,
       effectiveHealth: taken > 0 ? pool / taken : Number.POSITIVE_INFINITY,
       maximumHit: unavoided.taken > 0 ? pool / unavoided.taken : Number.POSITIVE_INFINITY,
@@ -400,7 +431,7 @@ export function defence(
       path: "config",
       message:
         `\`mana_shield\` sends ${pools.manaAbsorb.percent.toFixed(1)}% of every hit to ` +
-        `mana, but only while mana is above half its maximum — a buffer of ` +
+        `mana, but only while mana is above half its maximum, so it is a buffer of ` +
         `${Math.round(pools.manaAbsorb.buffer)}, not a pool. How full that buffer is when a hit ` +
         `lands depends on regeneration between hits. A document that states how hard and how ` +
         `often this enemy hits gets that answer as a number of seconds on the over-time figures; ` +
@@ -417,8 +448,8 @@ export function defence(
       path: "gear",
       message:
         `\`block_chance\` is ${blockChance.toFixed(1)}%, but \`BlockChance\` refuses to fire ` +
-        `without a shield in the offhand — \`canActivate\` tests the offhand stack with ` +
-        `\`instanceof ShieldItem\`, and this build has none. The chance is on the sheet and stops ` +
+        `without a shield in the offhand (\`canActivate\` tests the offhand stack with ` +
+        `\`instanceof ShieldItem\`), and this build has none. The chance is on the sheet and stops ` +
         `nothing, so it is left out of the figures below rather than quietly counted.`,
     });
   }
@@ -436,10 +467,11 @@ export function defence(
       `${pierces ? " and the penetration on `config.enemy.offence`" : " and no penetration"}` +
       `${carried.applied.length === 0 ? "" : `, carrying ${carried.applied.join(", ")} from its affixes`}. ` +
       `A target preset fills those from \`MobStatUtils\` and the pack's \`mmorpg_base_stats/mob\`, ` +
-      `which between them give a mob accuracy, armour penetration and nothing else. ` +
-      `Crit and the attacker's damage increases are not in this figure — they scale the hit, not ` +
-      `your mitigation.` +
-      `${carried.withheld.length === 0 ? "" : ` Its ${carried.withheld.join(", ")} is real and is left out here for that reason; the Damage tab is where it shows.`}`,
+      `which between them give a mob accuracy, armour penetration and 50% more damage on ` +
+      `elemental and chaos hits. That last one is in these figures, because it changes which resist ` +
+      `matters. Crit and the attacker's uniform damage increases (\`total_damage\`, a map tier) ` +
+      `are not, since they make every hit bigger alike; the over-time figures carry \`total_damage\`.` +
+      `${carried.withheld.length === 0 ? "" : ` Its ${carried.withheld.join(", ")} is real and is left out of both for that reason.`}`,
   });
 
   const overTime = overTimeFor({
@@ -565,7 +597,7 @@ function overTimeFor(input: {
       path: "config.enemy.offence",
       message:
         "How hard and how often this enemy hits is not stated, so nothing here says how long you " +
-        "survive it — only how big a single hit you could take from full. The two fields are the " +
+        "survive it, only how big a single hit you could take from full. The two fields are the " +
         "mob's Minecraft attack damage and how often it swings; neither is derivable, because " +
         "`mmorpg_entity` carries no attack damage and `MobStatUtils` gives a mob accuracy and " +
         "nothing else. An attacker profile on the Config tab fills both.",
@@ -583,7 +615,7 @@ function overTimeFor(input: {
   const shieldRegen = perSecondOf("magic_shield");
 
   const elements: OverTimeElement[] = byElement.map((entry) => {
-    const perHit = entry.taken * hit.raw;
+    const perHit = entry.takenFromSwing * hit.raw;
     const perSecond = perHit * ratePerSecond;
     const sustain = selfSustain({
       perSecond,
@@ -663,9 +695,15 @@ function overTimeFor(input: {
 /**
  * The attacker's stats, as a sheet the sweep can read.
  *
- * Only what changes *mitigation* goes on it. `total_damage` and the crit pair would inflate the
- * number this divides by and make effective HP fall for a reason that has nothing to do with your
- * defences — they belong to how big the hit is, which is the other half of the question.
+ * What changes *which of your defences a hit meets, and how hard*: accuracy, penetration, and the
+ * mob's damage on hits **of one element** — `all_elemental_damage 50` and `all_chaos_damage 50`
+ * from the pack's `mmorpg_base_stats/mob`. That last pair is element-specific the way a
+ * conversion is, so it belongs here with conversion: a mob's fire hit is half again its
+ * physical one, and a character leaning on armour while their fire resist is low is weaker to
+ * that mob than a flat reading of the two resists suggests.
+ *
+ * `total_damage` and the crit pair stay off. They make every hit bigger alike, which is not a
+ * defence getting worse — see {@link swingingSheet} for where `total_damage` does go.
  */
 function attackerSheet(offence: MobOffence): Sheet {
   const sheet: Sheet = new Map();
@@ -678,11 +716,48 @@ function attackerSheet(offence: MobOffence): Sheet {
   for (const [guid, value] of Object.entries(offence.penetration ?? {})) {
     put(`${guid}_penetration`, value);
   }
+  // `all_elemental_damage` is a real stat rather than an aggregate to spread: its effect is gated
+  // on `ele_match_stat`, and `Elemental` matches fire, cold and lightning there.
+  for (const [guid, value] of Object.entries(offence.elementDamage ?? {})) {
+    put(`all_${guid}_damage`, value);
+  }
   return sheet;
 }
 
 /**
- * The mob's own affixes, folded onto the sheet it hits you with.
+ * The attacker again, with the increases that make **every** hit bigger — what it actually swings.
+ *
+ * `total_damage` from `savage`, from `offence.totalDamage` (`EntityConfig.dmg_multi`, a `MORE` in
+ * `MobStatUtils.getMobConfigStats`), and from a map tier. Returns the same sheet when there are
+ * none, so a caller can skip the extra sweep by identity.
+ */
+function swingingSheet(
+  attacker: Sheet,
+  offence: MobOffence,
+  sizing: readonly TargetMod[],
+  index: ReturnType<typeof statIndex>,
+  diagnostics: Diagnostic[],
+): Sheet {
+  const mods: TargetMod[] = [...sizing];
+  if (offence.totalDamage !== undefined && offence.totalDamage !== 0) {
+    mods.push({
+      statId: "total_damage",
+      type: "MORE",
+      value: offence.totalDamage,
+      source: "dmg_multi",
+      path: "config.enemy.offence.totalDamage",
+    });
+  }
+  if (mods.length === 0) return attacker;
+  const sheet: Sheet = new Map(attacker);
+  applySheetMods(sheet, mods, index, (severity, code, path, message) =>
+    diagnostics.push({ severity, code, path, message }),
+  );
+  return sheet;
+}
+
+/**
+ * The mob's own affixes and its map's, folded onto the sheet it hits you with.
  *
  * `config.enemy.affixes` already described the target when *you* attack it; this is the other
  * direction, and it was missing entirely — an enemy could carry Fire Lord and every effective-HP
@@ -698,10 +773,13 @@ function attackerSheet(offence: MobOffence): Sheet {
  * not, because effective HP is measured per unit of raw incoming damage and scaling the hit
  * would answer a different question twice.
  *
- * So conversion, gain-as-extra, accuracy and every penetration are applied. `total_damage`,
- * `all_<element>_damage` and `critical_hit` are not, and are named in a diagnostic rather than
- * dropped silently — a mob carrying `savage` really does hit harder, and the place that says so
- * is the damage figure, not this one.
+ * So conversion, gain-as-extra, element damage, accuracy and every penetration are applied.
+ * `total_damage` and the crit pair are not. `total_damage` comes back as `sizing`, for
+ * {@link swingingSheet} and the over-time figures; crit is named in a diagnostic rather than
+ * dropped silently.
+ *
+ * A map's `Mobs` affixes and tier are carried the same way and by the same rule: `fire_atk`'s
+ * conversion and `all_fire_damage` shape the hit, the tier's `MORE total_damage` sizes it.
  */
 function attackerAffixes(
   build: BuildDoc,
@@ -711,9 +789,10 @@ function attackerAffixes(
   mobLevel: number,
   sheet: Sheet,
   diagnostics: Diagnostic[],
-): { applied: string[]; withheld: string[] } {
+): { applied: string[]; withheld: string[]; sizing: TargetMod[] } {
   const affixIds = build.config?.enemy?.affixes ?? [];
-  if (affixIds.length === 0) return { applied: [], withheld: [] };
+  const map = build.config?.map;
+  if (affixIds.length === 0 && map === undefined) return { applied: [], withheld: [], sizing: [] };
 
   const report = (severity: Severity, code: string, path: string, message: string): void => {
     diagnostics.push({ severity, code, path, message });
@@ -722,8 +801,24 @@ function attackerAffixes(
   const applied: string[] = [];
   const withheld: string[] = [];
   const mods: TargetMod[] = [];
+  const sizing: TargetMod[] = [];
 
-  for (const mod of mobAffixMods(snapshot, index, bal, mobLevel, affixIds, report)) {
+  // The map's unknown ids are reported by the offensive pass; this one stays quiet about them so
+  // a document is not told twice.
+  const fromMap = mapMobMods(snapshot, index, bal, map, mobLevel, () => {}).map((m) => ({
+    ...m,
+    path: "config.map",
+  }));
+  const fromAffixes = mobAffixMods(snapshot, index, bal, mobLevel, affixIds, report).map((m) => ({
+    ...m,
+    path: "config.enemy.affixes",
+  }));
+
+  for (const mod of [...fromAffixes, ...fromMap]) {
+    if (mod.statId === "total_damage") {
+      sizing.push(mod);
+      continue;
+    }
     if (!shapesTheHit(mod.statId)) {
       if (sizesTheHit(mod.statId) && !withheld.includes(mod.statId)) withheld.push(mod.statId);
       continue;
@@ -736,20 +831,21 @@ function attackerAffixes(
     // cold and lightning untouched, which is not a mob that penetrates elements at all.
     if (!applied.includes(mod.statId)) applied.push(mod.statId);
     for (const statId of aggregateSpread(mod.statId)) {
-      mods.push({ ...mod, statId, path: "config.enemy.affixes" });
+      mods.push({ ...mod, statId });
     }
   }
 
   applySheetMods(sheet, mods, index, report);
-  return { applied, withheld };
+  return { applied, withheld, sizing };
 }
 
 /**
- * Conversion, gain-as-extra, accuracy and penetration — the four families that decide which of
- * your layers a hit meets.
+ * Conversion, gain-as-extra, element damage, accuracy and penetration — the families that decide
+ * which of your layers a hit meets, and how hard it meets each.
  *
  * Matched by shape rather than listed, so an affix a pack adds with a new element lands without
- * an edit here: `phys_to_<element>`, `plus_phys_to_<element>`, `<element>_penetration`.
+ * an edit here: `phys_to_<element>`, `plus_phys_to_<element>`, `<element>_penetration`,
+ * `all_<element>_damage`.
  */
 function shapesTheHit(statId: string): boolean {
   return (
@@ -758,18 +854,14 @@ function shapesTheHit(statId: string): boolean {
     statId.endsWith("_penetration") ||
     statId.startsWith("phys_to_") ||
     statId.startsWith("plus_phys_to_") ||
-    statId.startsWith("ele_to_")
+    statId.startsWith("ele_to_") ||
+    /^all_\w+_damage$/.test(statId)
   );
 }
 
-/** Pure multipliers on the hit's size — real, and deliberately not in effective HP. */
+/** The crit pair — real, and pinned off in every sweep here, so named rather than applied. */
 function sizesTheHit(statId: string): boolean {
-  return (
-    statId === "total_damage" ||
-    statId === "critical_hit" ||
-    statId === "critical_damage" ||
-    /^all_\w+_damage$/.test(statId)
-  );
+  return statId === "critical_hit" || statId === "critical_damage";
 }
 
 function round(value: number): number {

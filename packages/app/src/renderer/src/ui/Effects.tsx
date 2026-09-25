@@ -59,10 +59,10 @@ export function AssumeSwitch({ effects }: { effects: EffectState }): ReactNode {
       style={{ gap: 4 }}
       title={
         (effects.assume === "captured"
-          ? "Effects your build could apply but nothing recorded are off, so the sheet reads as " +
-            "the game did. Turn any of them on below — a branch that needs one says so."
-          : "Everything your skills, stats and auras could apply is assumed up at its cap. The " +
-            "planner's reading: it will not match a capture of the same character.") + why
+          ? "Effects that weren't active in the capture are off, so the sheet matches the game. " +
+            "Turn any of them on below."
+          : "Every effect your skills, stats and auras can apply is assumed active at max stacks. " +
+            "This won't match a capture of the same character.") + why
       }
     >
       <input
@@ -187,10 +187,9 @@ export function EffectToggle({
     .join(", ");
   const capNote =
     option.maxStacks !== option.declaredMaxStacks
-      ? ` — ${option.declaredMaxStacks} base, ${option.maxStacks} with your charge bonus` +
+      ? ` (${option.declaredMaxStacks} base, ${option.maxStacks} with your charge bonus)` +
         (option.capturedStacks !== undefined && option.capturedStacks !== option.stacks
-          ? `, and your capture caught it at ${option.capturedStacks}. A charge sits at its cap, ` +
-            "so the cap is what is counted"
+          ? `. Your capture had ${option.capturedStacks}, but charges are counted at their cap`
           : "")
       : "";
 
@@ -220,8 +219,12 @@ export function EffectToggle({
   // that stays true whatever else you turn on, so it leads.
   const blocked = option.needs === undefined ? undefined : option.needs.join(", ");
   const why = option.chosen
-    ? "You set this."
-    : on
+    ? "Set by you. Auto lets the build decide."
+    : option.byRotation === true
+      ? on
+        ? "On because the main skill's combo builds it before firing. See Combo."
+        : "Off because the main skill's best combo fires without it. See Combo."
+      : on
       ? "Assumed on."
       : blocked !== undefined
         ? `Unavailable: the only thing that grants it is gated on ${blocked}, which this build ` +
@@ -272,6 +275,21 @@ export function EffectToggle({
       {on && option.maxStacks > 1 && (
         <span className="faint text-xs">
           /{option.maxStacks}
+        </span>
+      )}
+      {option.chosen && (
+        <button
+          className="text-xs"
+          style={{ padding: "0 5px" }}
+          title="Let the build decide instead"
+          onClick={() => onChange(option.id, undefined)}
+        >
+          auto
+        </button>
+      )}
+      {!option.chosen && option.byRotation === true && (
+        <span className="badge text-xs" title="Set by the main skill's combo rotation">
+          rotation
         </span>
       )}
       {option.side === "target" && (

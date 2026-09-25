@@ -86,7 +86,7 @@ export function DefencePanel(): ReactNode {
   return (
     <div className="panel damage-panel">
       <div className="calcs-body">
-        <PoolsCard defence={defence} onCollapseAll={() => setAllPanels(DEFENCE_PANELS, false)} onExpandAll={() => setAllPanels(DEFENCE_PANELS, true)} />
+        <PoolsCard defence={defence} onSelect={detail.open} onCollapseAll={() => setAllPanels(DEFENCE_PANELS, false)} onExpandAll={() => setAllPanels(DEFENCE_PANELS, true)} />
 
         <div className="card-columns">
           <Panel
@@ -214,9 +214,8 @@ export function DefencePanel(): ReactNode {
                 steps={defence.mostFragile.unavoidedSteps}
               />
               <div className="muted text-sm mt-4 prose">
-                The same sweep with every dodge and block roll assumed to fail, which is what the
-                Maximum hit figure is measured through. Compare it against the averaged card:
-                whatever is missing here is the part of your mitigation that is a dice roll.
+                The same, but with every dodge and block failing. This is what Maximum hit uses.
+                The difference from the averaged card is the part of your defence that&apos;s luck.
               </div>
             </Panel>
           )}
@@ -350,7 +349,7 @@ function SelfDamageSustain({
                 : sustain.secondsToCutoff === undefined
                   ? `Dead in ${num(sustain.secondsToDeath, 1)}s from full.`
                   : `The effect takes itself off after ${num(sustain.secondsToCutoff, 1)}s rather ` +
-                    `than killing you — it would otherwise be ${num(sustain.secondsToDeath, 1)}s.`}
+                    `than killing you. Otherwise it would take ${num(sustain.secondsToDeath, 1)}s.`}
             </td>
           </tr>
         </tbody>
@@ -443,9 +442,8 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
 
       <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
         <Plain>
-          You count as in combat for ten seconds after every hit you land or take, so a rotation
-          never leaves it, the in-combat column is the one that has to pay for your casts, and it
-          is the one the Damage tab&apos;s Sustain card uses.{" "}
+          You stay in combat for ten seconds after any hit, so the in-combat column is what pays for
+          your casts. The Sustain card on the Damage tab uses it too.{" "}
         </Plain>
         <Tech>
           <code>in_combat</code> is a ten-second cooldown that every hit you land or take
@@ -480,7 +478,7 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
             <Tech>
               They agree here: <code>in_combat_regen_multi</code> is{" "}
               <code>{resources.inCombatRegenMulti}</code>, which is what this pack ships (the mod&apos;s
-              own default is 0.5 — Config &rarr; Server if your server changed it), and nothing in
+              own default is 0.5; see Config &rarr; Server if your server changed it), and nothing in
               this build is gated on being out of combat.
             </Tech>
           </>
@@ -500,10 +498,12 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
 
 function PoolsCard({
   defence,
+  onSelect,
   onCollapseAll,
   onExpandAll,
 }: {
   defence: Defence;
+  onSelect: (focus: SheetFocus) => void;
   onCollapseAll: () => void;
   onExpandAll: () => void;
 }): ReactNode {
@@ -518,6 +518,7 @@ function PoolsCard({
           size="lg"
           label="Effective HP"
           value={smart(weakest.effectiveHealth)}
+          onClick={() => onSelect({ kind: "ehp", element: weakest.element })}
           hint={`Against ${elementLabel(weakest.element)}, the element you are softest to. Raw incoming damage, before your mitigation touches it.`}
         />
         <Figure size="lg" label="Health" value={smart(pools.health)} hint="The Mine and Slash pool, not vanilla hearts" />
@@ -540,7 +541,8 @@ function PoolsCard({
           size="lg"
           label="Maximum hit"
           value={smart(defence.mostFragile.maximumHit)}
-          hint={`The largest single ${elementLabel(defence.mostFragile.element)} hit you survive from full, with every dodge and block roll assumed to fail. Mitigation still applies; avoidance does not, because you cannot spend a chance on one particular hit.`}
+          onClick={() => onSelect({ kind: "max-hit", element: defence.mostFragile.element })}
+          hint={`The largest ${elementLabel(defence.mostFragile.element)} hit you survive from full health if you don't dodge or block it. Mitigation still applies.`}
         />
         <Figure
           size="lg"
@@ -570,17 +572,17 @@ function PoolsCard({
         </label>
         <span className="faint text-sm" style={{ maxWidth: 620 }}>
           Armour and dodge are curves read at the <em>attacker&apos;s</em> level, so who is hitting
-          you changes what your armour is worth. Reference hit: {smart(defence.hitSize)} — it only
-          matters for flat mitigation, which is worth less against a bigger hit.
+          you changes what your armour is worth. Reference hit: {smart(defence.hitSize)}. It only
+          matters for flat mitigation, which does less against bigger hits.
         </span>
       </div>
 
       {pools.manaAbsorb.percent > 0 && (
         <div className="faint text-sm mt-4">
           <strong>Not counted above:</strong> mana absorbs {num(pools.manaAbsorb.percent, 1)}% of
-          every hit, but only while it is above half full — a buffer of{" "}
-          {smart(pools.manaAbsorb.buffer)}, not a pool. How full it is when a hit lands depends on
-          regeneration between hits, which a build document does not state.
+          every hit, but only while it is above half full, so it&apos;s a buffer of{" "}
+          {smart(pools.manaAbsorb.buffer)} rather than a pool. How much is left when a hit lands
+          depends on regeneration between hits, which can&apos;t be known here.
         </div>
       )}
     </div>
@@ -613,7 +615,7 @@ function ElementTable({
             {/* Only where something actually converts. Against a bare mob every row reads "100%
                 of itself", which is a column of noise for the common case. */}
             {converts && (
-              <th title="What the hit is made of by the time it reaches your pools. A mob affix that converts its damage — Fire Lord, Full Chaos — changes what the row above is defended by without changing which row it is.">
+              <th title="The damage type when the hit reaches you. Affixes like Fire Lord or Full Chaos convert the mob's damage, so a different defence applies.">
                 Arrives as
               </th>
             )}
@@ -624,7 +626,7 @@ function ElementTable({
             <th className="num" title="Pool divided by Taken: raw damage survived per hit on average">
               Effective HP
             </th>
-            <th className="num" title="The same with every avoidance roll assumed to fail — the largest single hit you survive">
+            <th className="num" title="The largest single hit you survive if every dodge and block fails">
               Maximum hit
             </th>
           </tr>
@@ -670,22 +672,21 @@ function ElementTable({
         </tbody>
       </table>
       <div className="muted text-sm mt-3 prose">
-        Click either figure for the pools and the mitigation behind it. Rows are highlighted on the
-        element you are softest to on average; the Maximum hit column turns amber where avoidance is
-        carrying more than 5% of your mitigation, because none of it applies to a single hit.
+        Click a number to see how it&apos;s worked out. Your weakest element is highlighted.
+        Maximum hit turns amber when more than 5% of your defence comes from dodge and block.
       </div>
       {converts && (
         <>
         <Plain>
           <div className="muted text-sm mt-3 prose">
-            Each row is named for what the attacker swings, not what actually lands. Damage conversion happens after a hit leaves the mob, so an affix like Fire Lord (converting 75% physical to fire and adding 50% extra physical as fire)causes a raw physical hit to arrive mostly as fire. That shifts the Physical row while leaving the Fire row unchanged, as damage starting as fire is unaffected by physical conversion. The Arrives As column shows which of your resistances mitigates damage in each row.
+            Rows are named for the damage the mob deals, not what reaches you. Affixes like Fire Lord turn physical hits mostly into fire, so they change the Physical row, not the Fire row. Arrives as shows which of your resistances applies.
           </div>
         </Plain>
         <Tech>
           <div className="muted text-sm mt-3 prose">
             <strong>A row is named for what the attacker swings, not for what lands.</strong>{" "}
             Conversion happens after the hit leaves the mob, so an affix like <code>fire_lord</code>{" "}
-            &mdash; <code>phys_to_fire 75</code> and <code>plus_phys_to_fire 50</code> &mdash; makes a
+            (<code>phys_to_fire 75</code> and <code>plus_phys_to_fire 50</code>) makes a
             raw <em>physical</em> hit arrive mostly as fire. That is why it moves the Physical row and
             leaves the Fire row exactly where it was: a hit that started as fire is not something
             <code> phys_to_fire</code> has anything to say about. The Arrives as column is which of
@@ -735,6 +736,11 @@ function AttackerNote({ defence }: { defence: Defence }): ReactNode {
   const offence = doc.config?.enemy?.offence;
   const pierces = Object.entries(offence?.penetration ?? {}).filter(([, v]) => v > 0);
   const preset = doc.config?.targetPreset;
+  // `mmorpg_base_stats/mob`'s `all_elemental_damage 50` and `all_chaos_damage 50`, as the preset
+  // filled them — "+50% elemental, +50% chaos".
+  const elementBonus = Object.entries(offence?.elementDamage ?? {})
+    .filter(([, v]) => v !== 0)
+    .map(([guid, v]) => `${v > 0 ? "+" : ""}${num(v, 0)}% ${guid === "water" ? "cold" : guid}`);
 
   return (
     <div className="faint text-sm mt-4">
@@ -749,13 +755,14 @@ function AttackerNote({ defence }: { defence: Defence }): ReactNode {
           {pierces.length > 0
             ? `, and ${pierces.map(([e, v]) => `${num(v, 1)} ${e}`).join(", ")} penetration`
             : " and no penetration"}
-          {preset === undefined ? "" : ` (${preset})`}. Mine and Slash gives a mob accuracy and
-          nothing else offensive, so a penetrating mob is one carrying a map affix — state it in
-          the enemy block.
+          {preset === undefined ? "" : ` (${preset})`}
+          {elementBonus.length > 0 ? `, hitting ${elementBonus.join(", ")} harder` : ""}. Beyond
+          that, penetration comes from mob or map affixes, both on the Config tab.
         </>
       )}{" "}
-      Crit and the attacker&apos;s damage increases are not in these numbers: they make the hit
-      bigger rather than your mitigation worse.
+      Extra damage of one element is included here, since it changes which resist matters. Crit
+      and bonuses to all damage (map tier, Savage) aren&apos;t; they make every hit bigger equally,
+      so they show in the per-hit numbers under attack instead.
     </div>
   );
 }
@@ -842,9 +849,8 @@ function OverTimeCard({ overTime }: { overTime: OverTime | undefined }): ReactNo
         <>
           <Plain>
             <p className="faint">
-              Nothing here says how long you survive, because this build does not say what it is
-              fighting. The figures above answer the other question — the biggest single hit you
-              could take from full.
+              There&apos;s no enemy set, so this can&apos;t say how long you survive. The numbers
+              above show the biggest single hit you can take from full health.
             </p>
           </Plain>
           <Tech>
@@ -858,8 +864,8 @@ function OverTimeCard({ overTime }: { overTime: OverTime | undefined }): ReactNo
           </Tech>
         </>
         <p className="faint text-sm">
-          Set the enemy&rsquo;s attack damage and how often it swings on the Config tab — an
-          attacker profile fills both in one click.
+          Set the enemy&rsquo;s attack damage and attack speed on the Config tab. An attacker
+          profile fills in both.
         </p>
       </div>
     );
@@ -942,7 +948,7 @@ function OverTimeCard({ overTime }: { overTime: OverTime | undefined }): ReactNo
             The same <code>selfSustain</code> walk Holy Fire&rsquo;s recoil gets: shield
             regeneration is capped by the drain and by the regen, health regeneration takes the
             remainder, and <code>netLossPerSecond</code> is what neither covers. Mitigation is the
-            defence pass&rsquo;s own <code>taken</code> fraction — nothing here re-derives a layer.
+            defence pass&rsquo;s own <code>taken</code> fraction; nothing here re-derives a layer.
           </p>
         </Tech>
       </>
@@ -1042,7 +1048,7 @@ function WhenHitCard({ overTime }: { overTime: OverTime }): ReactNode {
         <Tech>
           <p className="faint text-sm mt-3">
             <code>Target</code>-side <code>proc_spell</code> blocks. Their chances are the defence
-            sweep&rsquo;s own — every <code>ifs</code> folded in — and only the rate is new. A
+            sweep&rsquo;s own (every <code>ifs</code> folded in), and only the rate is new. A
             block gated on <code>is_is_blocked_true</code> or <code>is_is_dodged_true</code> keeps
             its <code>when-hit</code> limit, because block, dodge and spell dodge are folded into
             one avoidance outcome by the sweep, and splitting them would mean re-deriving the{" "}

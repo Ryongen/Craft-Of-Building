@@ -219,7 +219,7 @@ export function SkillsPanel(): ReactNode {
               main
             </span>
           )}
-          <span className="badge" title="Always available — this is not a Skill and takes no hotbar slot">
+          <span className="badge" title="Always available. Not a Skill, so it doesn't use a hotbar slot">
             weapon
           </span>
           {basicRank !== undefined && <span className="num text-sm">{smart(Math.round(basicRank))}</span>}
@@ -239,7 +239,7 @@ export function SkillsPanel(): ReactNode {
           />
           <button
             disabled={selected.kind !== "skill"}
-            title="Copy this skill with its support gems, their rarities and their rolls — the setup you are comparing against, kept"
+            title="Duplicate this skill with its support gems, so you can compare setups"
             onClick={() => {
               if (selected.kind !== "skill") return;
               duplicateSkill(selected.index);
@@ -263,9 +263,8 @@ export function SkillsPanel(): ReactNode {
         <label
           className="field"
           title={
-            "Ranks the list by each skill's own DPS. Every skill is priced through the damage " +
-            "pipeline to do it, which is one engine pass each — so it is a switch rather than " +
-            "the default, and it recomputes a beat behind your edits."
+            "Sorts skills by their own DPS. It's slower, so it's off by default and updates a " +
+            "moment after your edits."
           }
         >
           <input
@@ -277,7 +276,7 @@ export function SkillsPanel(): ReactNode {
         </label>
 
         <div className="field mt-2">
-          <label title="A gem is 'compatible' when its stats are actually read by one of this skill's damage sources — which is measured, not declared. Roughly half the pack's gems do nothing for any given skill.">
+          <label title="Compatible gems actually affect this skill's damage. About half the pack's gems do nothing for any given skill.">
             Show support gems
           </label>
           <select value={gemFilter} onChange={(event) => setGemFilter(event.target.value as GemFilter)}>
@@ -287,7 +286,7 @@ export function SkillsPanel(): ReactNode {
         </div>
 
         <div className="field mt-2">
-          <label title="The rarity and roll a gem you link from here arrives at, and the roll the ranked list prices every candidate at. It never changes a gem already socketed — each one keeps its own slider.">
+          <label title="The rarity and roll for newly added gems, and for ranking the list. Gems already socketed keep their own roll.">
             New gems roll at
           </label>
           <select
@@ -307,7 +306,7 @@ export function SkillsPanel(): ReactNode {
                 {rarityName(world.snapshot, r.id)} {r.max}%
               </option>
             ))}
-            <option value="">Unset — bottom of the band</option>
+            <option value="">Unset (lowest roll)</option>
           </select>
         </div>
       </div>
@@ -508,7 +507,7 @@ function SkillListRow({
           title={
             skill.main === true
               ? "Damage is reported for this skill"
-              : "Nothing in this build marks a main skill, so the damage figures use the first enabled skill that deals damage — this one. Tick `main skill` to pin it."
+              : "No main skill is set, so this is used as the first enabled damaging skill. Tick `main skill` to pin it."
           }
         >
           {skill.main === true ? "main" : "main (auto)"}
@@ -750,12 +749,12 @@ function SkillCard({
               <strong>This is the mercenary&apos;s version of the skill.</strong>{" "}
               <Plain>
                 {spellName(world.snapshot, skill.spellId) ?? "It"} is in the hired companion&apos;s
-                tree, not yours — it caps at rank 1 and carries the companion&apos;s cooldowns, so
-                every number below is about a skill your character cannot cast.
+                tree, not yours. It caps at rank 1 and uses the companion&apos;s cooldowns, and your
+                character can&apos;t cast it.
               </Plain>
               <Tech>
                 <code>{skill.spellId}</code> is in the hired companion&apos;s tree
-                (<code>mmorpg_mercenary</code>), not yours — it caps at rank 1 and carries the
+                (<code>mmorpg_mercenary</code>), not yours. It caps at rank 1 and carries the
                 companion&apos;s cooldowns, so every number below is about a skill your character
                 cannot cast.
               </Tech>
@@ -765,12 +764,12 @@ function SkillCard({
               <strong>This is a wizard&apos;s version of the skill.</strong>{" "}
               <Plain>
                 {spellName(world.snapshot, skill.spellId) ?? "It"} is one of the spells a hostile
-                wizard casts at you — a mob&apos;s copy, with the mob&apos;s numbers. No class
-                teaches it, so your character cannot cast it.
+                wizard casts at you, with the mob&apos;s numbers. No class teaches it, so you can&apos;t
+                cast it.
               </Plain>
               <Tech>
                 <code>{skill.spellId}</code> is one of the spells an <code>mmorpg_wizard</code>
-                {" "}casts at you — a hostile mob&apos;s copy, with the mob&apos;s numbers. No class
+                {" "}casts at you: a hostile mob&apos;s copy, with the mob&apos;s numbers. No class
                 teaches it, so your character cannot cast it.
               </Tech>
             </>
@@ -779,12 +778,11 @@ function SkillCard({
               <strong>This version of the skill has been retired.</strong>{" "}
               <Plain>
                 {spellName(world.snapshot, skill.spellId) ?? "It"} is a spell the pack replaced:
-                nothing in the game reaches it any more — no class perk teaches it, nothing
-                summons or procs it — so the numbers below describe a skill you cannot obtain.
+                no class teaches it and nothing summons or procs it, so you can&apos;t get it.
               </Plain>
               <Tech>
                 <code>{skill.spellId}</code> is a spell the pack replaced: nothing in the game
-                reaches it any more — no class perk teaches it, nothing summons or procs it — so
+                reaches it any more (no class perk teaches it, nothing summons or procs it), so
                 the numbers below describe a skill you cannot obtain.
               </Tech>
             </>
@@ -849,7 +847,7 @@ function SkillCard({
           title={
             barFull && !enabled
               ? `The hotbar already holds ${MAX_ACTIVE_SKILLS} Skills (GemInventoryHelper.MAX_SKILL_GEMS). Disable another one to make room for this.`
-              : "Turn the skill off without losing its level or its support gems. A disabled skill contributes no stats, no Full DPS, none of the exile effects it would have made available, and nothing when something else procs it — which is the only switch that takes a procced spell out of a figure."
+              : "Turn the skill off but keep its level and support gems. A disabled skill adds no stats, DPS or effects, even when something else procs it."
           }
         >
           <input
@@ -898,7 +896,7 @@ function SkillCard({
           <span
             className="badge"
             title={
-              "MaxSpellLevel / MaxAllSpellLevels — the plus_lvl_<tag>_spells stats on gear, " +
+              "MaxSpellLevel / MaxAllSpellLevels: the plus_lvl_<tag>_spells stats on gear, " +
               `perks, runewords or exile effects. Your class allocation teaches this spell at ` +
               `rank ${learnedRank ?? 0} and the sheet takes it to ${resolvedRank}. The sum of ` +
               `every source is clamped to ${bonusRanks} before it is added, so +2 to one tag ` +
@@ -913,14 +911,13 @@ function SkillCard({
             className="nudge word"
             title={
               `This skill's rank is pinned to ${skill.level} in the build, so the ` +
-              "plus_lvl_<tag>_spells stats on your gear do not move it — a captured level " +
-              "already has them folded in, and adding them twice would over-report every " +
-              `imported build. Off the sheet alone this spell resolves to ${resolvedRank}. ` +
+              "+spell level stats on your gear don't change it (a captured level already includes " +
+              `them). From the sheet alone it would be rank ${resolvedRank}. ` +
               "Clear the pin to let gear drive it."
             }
             onClick={() => patch({ level: undefined })}
           >
-            pinned at {skill.level} — sheet says {resolvedRank}
+            pinned at {skill.level}, sheet says {resolvedRank}
           </button>
         )}
         {doc.character.level < requiredLevel && (
@@ -992,7 +989,7 @@ function SkillCard({
             style={{ fontWeight: "normal", marginLeft: 8 }}
             title={resolveHint(SKILLS_COPY.gemCostMultiAll, technical)}
           >
-            — cost multiplier {costMulti.toFixed(2)}×
+            cost multiplier {costMulti.toFixed(2)}×
           </span>
         )}
       </div>
@@ -1188,7 +1185,7 @@ function SupportGemRow({
 
       {!on && (
         <div className="muted text-sm" style={{ marginTop: 2 }}>
-          Switched off — this socket grants nothing and charges nothing.
+          Switched off. No stats, no cost.
         </div>
       )}
     </div>

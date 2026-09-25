@@ -18,9 +18,9 @@ export const DAMAGE_COPY = {
 
   dmgEffectiveness: {
     plain:
-      "Damage effectiveness — how much of your added damage this attack or spell carries.",
+      "How much of your added damage this attack or spell uses.",
     tech:
-      "dmg_effectiveness — how much of your added damage this act carries",
+      "dmg_effectiveness: how much of your added damage this act carries",
   },
 
   triggeredBySkill: {

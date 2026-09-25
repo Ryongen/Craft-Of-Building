@@ -191,7 +191,7 @@ export function applyAilments(
         `config.enemy`,
         `The target's own \`${ailment.id}_receive_chance\` of ${(receive * 100).toFixed(1)}% applies ` +
           `${ailment.id} on top of your ${(own * 100).toFixed(1)}%, for ${(chance * 100).toFixed(1)}% ` +
-          "combined. A debuff you applied is doing that half — `infection`, `wounds` and " +
+          "combined. A debuff you applied is doing that half: `infection`, `wounds` and " +
           "`plague_aura_effect` are the three effects in this pack that put it on a mob.",
       );
     }

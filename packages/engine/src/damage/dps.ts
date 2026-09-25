@@ -76,7 +76,14 @@ import {
   type SpellConfig,
 } from "./spell-calc.js";
 import type { ProcHit, RestoreRecord } from "./ctx.js";
-import { planCombo, resolveCombo, type ComboChain } from "./combo.js";
+import {
+  comboCandidates,
+  planCombo,
+  resolveCombo,
+  type ComboChain,
+  type ComboPlan,
+  type ComboRotation,
+} from "./combo.js";
 import { resolveSummons, summonDps, type SummonOutput } from "./summons.js";
 
 /**
@@ -163,6 +170,14 @@ export type DpsOptions = DamageOptions & {
    * run for every gem linked to the same skill, which is exactly the sweep this exists for.
    */
   characterRun?: EngineResult;
+  /**
+   * The combo resources the finisher's pass should deliver, instead of choosing.
+   *
+   * Left out, a finisher that spends several resources is priced once per charge state its bar
+   * can reach and the best one is kept — see `rotations` on the result. The search sets this on
+   * each candidate it prices, which is also what stops it recursing.
+   */
+  comboTarget?: readonly string[];
 };
 
 /** One `damage` act, resolved: what it hits for, how often, and how much of it lands. */
@@ -418,6 +433,14 @@ export type DpsResult = {
    * finisher's share, not the rotation's total.
    */
   comboDps?: number;
+  /**
+   * Every charge state the bar can reach for this finisher, priced, when there was a choice.
+   *
+   * `phase_dive` holding all three charges is not automatically the best way to play it: a pass
+   * that stops at alpha and beta is a third as long. Exactly one entry is `chosen`, and it is the
+   * one `combo`, `comboDps` and the damage figures describe.
+   */
+  rotations?: ComboRotation[];
   /** The share of `dps` coming from sources that outlive the cast cycle. */
   persistentDps: number;
   /**
@@ -753,7 +776,17 @@ export function simulateDps(
   // the opening sheet and hand its answer back to a second resolution. The second pass is skipped
   // whenever it could not change anything — a skill that spends no resource, or a caller that
   // brought its own sheet — so the ordinary spell still costs exactly one settle.
-  const plan = planCombo(snapshot, build, chosen.spellId, opening.stats);
+  //
+  // Which charge state to play for is a damage question, so it is answered by pricing each one
+  // the bar can reach. Skipped under a caller's `characterRun`: that run was resolved without
+  // the pin, so the charge state could not move the damage and every candidate would tie.
+  const picked =
+    options.comboTarget === undefined && options.characterRun === undefined
+      ? bestRotation(build, snapshot, options, chosen, opening.stats)
+      : undefined;
+  const plan =
+    picked?.plan ??
+    planCombo(snapshot, build, chosen.spellId, opening.stats, options.comboTarget);
   const characterRun: EngineResult =
     plan.resources.length === 0 || options.characterRun !== undefined
       ? opening
@@ -809,17 +842,17 @@ export function simulateDps(
       code: "spell-not-castable",
       path: "skills",
       message:
-        `\`${skill.spellId}\` declares \`cast_speed_ticks: 0\`, so it cannot be cast — it happens ` +
+        `\`${skill.spellId}\` declares \`cast_speed_ticks: 0\`, so it cannot be cast. It happens ` +
         `when something triggers it. ` +
         (sources.length === 0
           ? `Nothing in the pack procs it, so this figure describes a cast that never occurs.`
           : held.length === 0
             ? `${sources.length} stat(s) proc it (${sources.slice(0, 3).map((s) => `\`${s.statId}\``).join(", ")}` +
               `${sources.length > 3 ? ", …" : ""}) and this build carries none of them, so nothing here produces it.`
-            : `${held.map((s) => `\`${s.statId}\``).join(", ")} procs it on this build — its real rate is on ` +
+            : `${held.map((s) => `\`${s.statId}\``).join(", ")} procs it on this build. Its real rate is on ` +
               `whichever skill you are actually casting, under Procs.`) +
         (rate.procPaced
-          ? ` The cycle shown is \`proc_cooldown_ticks\` — the fastest it could ever repeat, not a rate you can plan on.`
+          ? ` The cycle shown is \`proc_cooldown_ticks\`, the fastest it could ever repeat, not a rate you can plan on.`
           : ` The cycle shown is its own cooldown, which caps how often a trigger can land it.`),
     });
   }
@@ -860,7 +893,7 @@ export function simulateDps(
       path: "skills",
       message:
         `\`${skill.spellId}\` puts \`${id}\` on the enemy, and that effect damages whoever holds ` +
-        `it — the mob. Pricing it needs the mob's own sheet to tick against, which is stated ` +
+        `it, which is the mob. Pricing it needs the mob's own sheet to tick against, which is stated ` +
         `rather than derived, so it is listed and not counted.`,
     });
   }
@@ -896,7 +929,7 @@ export function simulateDps(
       message:
         `\`${skill.spellId}\` puts a vanilla entity in the world (\`${model.unmodelledSummons.join("`, `")}\`) ` +
         `whose damage is Minecraft's rather than this pack's, so it is on no stat sheet and is not ` +
-        `in this figure. Mine and Slash's own pets are counted — see the summons beside the figure.`,
+        `in this figure. Mine and Slash's own pets are counted; see the summons beside the figure.`,
     });
   }
   for (const act of model.unmodelledActs) {
@@ -914,11 +947,12 @@ export function simulateDps(
   const overrides = options.coverageOverrides ?? build.config?.coverageOverrides ?? {};
   const sources: SourceResult[] = [];
   const requires = new Set<string>();
-  // Collected from the first source's sweep only: every source of a spell sweeps the same
-  // source-side stats, so asking each one would report the same procs six times over.
+  // Collected from every source and weighted by the hits each one lands. The sources share
+  // their source-side stats but not their element, and an `ele_match_stat` proc rolls only on
+  // the source whose element it names: asking the first alone left a cold proc on a
+  // physical-first attack reporting `cannot-trigger`.
   const wantProcs = options.procs !== false;
-  let procHits: { onHit: ProcHit[]; onCrit: ProcHit[] } | undefined;
-  let critChance = 0;
+  const procShares: { procs: { onHit: ProcHit[]; onCrit: ProcHit[] }; critChance: number; hits: number }[] = [];
 
   for (const source of model.sources) {
     for (const need of source.requires) {
@@ -936,7 +970,7 @@ export function simulateDps(
       effects,
       // Never off a self-hit: `disable_attacker_stats` means its source sweep does not run, so it
       // reaches no `proc_spell` block and would report an empty list as though it were an answer.
-      procs: wantProcs && procHits === undefined && source.target?.kind !== "self",
+      procs: wantProcs && source.target?.kind !== "self",
       element: source.element,
       valueCalcId: source.valueCalcId,
       // A `self` selector is the caster. Resolved against your own sheet rather than the mob's,
@@ -944,10 +978,7 @@ export function simulateDps(
       selfHit: source.target?.kind === "self",
     });
     if (!hit) continue;
-    if (hit.procs !== undefined) {
-      procHits = hit.procs;
-      critChance = hit.critChance;
-    }
+    const asked = hit.procs;
 
     const forced = overrides[source.id];
     const coverage: Coverage =
@@ -989,6 +1020,7 @@ export function simulateDps(
       concurrentCasts,
       concurrentCarriers: concurrentCasts * source.carriersPerCast,
     });
+    if (asked !== undefined) procShares.push({ procs: asked, critChance: hit.critChance, hits: coverage.hitsPerCast });
 
     if (limit !== undefined) {
       diagnostics.push({
@@ -997,7 +1029,7 @@ export function simulateDps(
         path: "skills",
         message:
           `\`${skill.spellId}\` source \`${source.id}\` is in the \`${limit.group}\` summon ` +
-          `limit group, so at most ${limit.maxAlive} of them exist at once — every cast culls ` +
+          `limit group, so at most ${limit.maxAlive} of them exist at once, and every cast culls ` +
           `the oldest. Placing one every ${rate.cycleSeconds.toFixed(2)}s would destroy it before ` +
           `it finished, so this source is paced at one per ${limit.periodSeconds.toFixed(2)}s ` +
           `instead and contributes ${(100 * (rate.cycleSeconds / limit.periodSeconds)).toFixed(0)}% ` +
@@ -1112,7 +1144,7 @@ export function simulateDps(
         path: "skills",
         message:
           `\`${skill.spellId}\` needs ${combo.steps.length - 1} other press(es) before it fires, and ` +
-          `one of them could not be timed — so the chain shows the presses without a rate. ` +
+          `one of them could not be timed, so the chain shows the presses without a rate. ` +
           `${combo.steps.find((st) => st.seconds === undefined)?.note ?? ""}`.trim(),
       });
     } else if (combo.secondsPerCast !== undefined) {
@@ -1131,6 +1163,21 @@ export function simulateDps(
           `. \`dps\` is the button rate; \`comboDps\` is the chain rate.`,
       });
     }
+  }
+  if (picked !== undefined && plan.holds.length < plan.resources.length) {
+    const full = picked.rotations.find((r) => r.holds.length === plan.resources.length);
+    diagnostics.push({
+      severity: "info",
+      code: "combo-partial-rotation",
+      path: "skills",
+      message:
+        `\`${skill.spellId}\` is priced firing with ` +
+        `${plan.holds.length === 0 ? "no charges" : plan.holds.join(" + ")} rather than all of ` +
+        `${plan.resources.join(", ")}: on this bar that pass deals more per second` +
+        (full?.dps === undefined
+          ? `; the full one ${full?.broken === true ? "cannot be completed" : "cannot be timed"}.`
+          : ` than the full one (${full.dps.toFixed(1)}).`),
+    });
   }
 
   const character = characterRun.stats;
@@ -1199,7 +1246,7 @@ export function simulateDps(
           `and one cast costs ${row.costPerCast.toFixed(1)}. A pool never fills past its maximum, ` +
           `so the ${row.regenPerSecond.toFixed(1)}/s regenerating into it changes nothing` +
           (regen.bloodMage && (row.resource === "mana" || row.resource === "energy")
-            ? ` — and with \`blood_user\` on, this pool is not what pays anyway.`
+            ? `, and with \`blood_user\` on, this pool is not what pays anyway.`
             : `.`),
       });
       continue;
@@ -1216,7 +1263,7 @@ export function simulateDps(
         `${(row.secondsToEmpty ?? 0).toFixed(1)}s` +
         (row.castsBeforeEmpty === undefined
           ? ""
-          : ` — about ${Math.floor(row.castsBeforeEmpty)} casts`) +
+          : ` (about ${Math.floor(row.castsBeforeEmpty)} casts)`) +
         `, after which this figure is the burst rate rather than the sustained one.`,
     });
   }
@@ -1282,7 +1329,7 @@ export function simulateDps(
         path: `config.conditions.${key}`,
         message:
           `\`${skill.spellId}\` has a branch behind ${negated ? "not having" : "having"} ` +
-          `\`${effectId}\` — ${blocked.damageActs} damage act(s). A vanilla potion effect is ` +
+          `\`${effectId}\` (${blocked.damageActs} damage act(s)). A vanilla potion effect is ` +
           `world state, not a property of the build, so it is assumed absent. Set ` +
           `\`config.conditions.${key}\` to true to count it instead.`,
       });
@@ -1297,8 +1344,8 @@ export function simulateDps(
       code: "branch-gated-off",
       path: "config.effects",
       message:
-        `\`${skill.spellId}\` has a branch behind ${want} — ${blocked.damageActs} damage act(s) ` +
-        `— and ${blocked.activeStacks === 0 ? "it is not up" : `only ${blocked.activeStacks} stack(s) are up`}. ` +
+        `\`${skill.spellId}\` has a branch behind ${want} (${blocked.damageActs} damage act(s)), ` +
+        `and ${blocked.activeStacks === 0 ? "it is not up" : `only ${blocked.activeStacks} stack(s) are up`}. ` +
         (effects.assume === "captured"
           ? `Your capture did not record it, so it is off; turn it on in \`config.effects\` to count the branch.`
           : `Nothing in the build applies it, or \`config.effects\` turned it off.`),
@@ -1342,6 +1389,7 @@ export function simulateDps(
         rate.cycleSeconds
       : 0;
 
+  const procHits = weighProcShares(procShares);
   const procs =
     procHits === undefined
       ? []
@@ -1349,9 +1397,9 @@ export function simulateDps(
           snapshot,
           build,
           effects,
-          onHit: procHits.onHit,
-          onCrit: procHits.onCrit,
-          critChance,
+          onHit: procHits,
+          onCrit: [],
+          critChance: 0,
           hitsPerSecond,
           sheet: characterRun.stats,
           spellTags: new Set(declared.tags),
@@ -1564,6 +1612,7 @@ export function simulateDps(
     critDps: perSecond(sustainedCritPerCast),
     ...(combo === undefined ? {} : { combo }),
     ...(comboDps === undefined ? {} : { comboDps }),
+    ...(picked === undefined ? {} : { rotations: picked.rotations }),
     persistentDps: perSecond(persistentPerCast),
     procs,
     procDps: procDps(procs),
@@ -1653,6 +1702,76 @@ function buffDurationOf(
     durationSeconds: ticks / TICKS_PER_SECOND,
     declaredSeconds: upkeep.durationTicks / TICKS_PER_SECOND,
     infinite: false,
+  };
+}
+
+/**
+ * Price every charge state the bar can reach for this finisher and keep the best.
+ *
+ * Each candidate is a whole `simulateDps` pinned to that pass, so the branch, the sheet under it
+ * and the chain's rate all describe the same rotation — the same guarantee the single pass has.
+ * Procs, granted procs and summons are off for the comparison: `comboDps` does not include them,
+ * and they are the expensive part.
+ *
+ * Compared on the finisher's own damage at the pass's rate, which is what `comboDps` reports.
+ * The suppliers' hits are left out, as they are there; `simulateFullDps` is where those add up.
+ *
+ * A pass that never completes or cannot be timed has no rate and never wins. When nothing beats
+ * zero, the full pass is kept, so a broken chain is still reported as broken rather than
+ * swapped for a partial one that deals nothing either.
+ *
+ * Undefined when there is no choice to make — one resource the finisher grants itself, or none.
+ */
+function bestRotation(
+  build: BuildDoc,
+  snapshot: Snapshot,
+  options: DpsOptions,
+  skill: SkillSetup,
+  sheet: Sheet,
+): { plan: ComboPlan; rotations: ComboRotation[] } | undefined {
+  const candidates = comboCandidates(snapshot, build, skill.spellId, sheet);
+  if (candidates.length < 2) return undefined;
+
+  const priced = candidates.map((plan) => {
+    const run = simulateDps(build, snapshot, {
+      ...options,
+      skill,
+      comboTarget: plan.target,
+      procs: false,
+      granted: false,
+      summons: false,
+    });
+    const alone = run !== undefined && run.combo === undefined;
+    // A finisher on its own is one press a pass, whatever its `times_to_cast`.
+    const seconds = alone ? run.rate.cycleSeconds : run?.combo?.secondsPerCast;
+    const dps = plan.broken.length > 0 ? undefined : alone ? run.dps : run?.comboDps;
+    return { plan, seconds, dps };
+  });
+
+  let best = 0;
+  priced.forEach((candidate, i) => {
+    const dps = candidate.dps ?? 0;
+    if (dps <= 0) return;
+    const current = priced[best]!.dps ?? 0;
+    // Room for rounding either way. On a tie the pass with fewer presses wins: the same damage
+    // for less of the bar leaves the global cooldown free for everything else you cast, and a
+    // Chronobreak paced by its own 8s cooldown deals the same whether you spent three presses
+    // or none getting there.
+    const tie = Math.abs(dps - current) <= current * 1e-9;
+    const fewer = candidate.plan.presses.length < priced[best]!.plan.presses.length;
+    if (dps > current * (1 + 1e-9) || (tie && fewer)) best = i;
+  });
+
+  return {
+    plan: priced[best]!.plan,
+    rotations: priced.map((candidate, i) => ({
+      holds: candidate.plan.holds,
+      presses: candidate.plan.presses.map((press) => press.spellId),
+      secondsPerCast: candidate.seconds,
+      dps: candidate.dps,
+      broken: candidate.plan.broken.length > 0,
+      chosen: i === best,
+    })),
   };
 }
 
@@ -1873,6 +1992,30 @@ const MAX_RAMP_CASTS = 400;
  * buttons you already press, and every skill in the pass contributes triggers to the same
  * shared `proc_cooldown_ticks` ceiling. {@link rotationProcs} merges them.
  */
+/**
+ * Every source's procs as one per-hit list, each source counting by the share of the hits it
+ * lands, with the crit branches already blended in — `resolveProcs` then multiplies by the
+ * skill's total hits per second.
+ *
+ * A proc that rolls on only one source comes out at that source's chance times its share,
+ * which is the rate it really fires at. When nothing lands the shares are even, so a proc's
+ * chance stays readable on a figure that is zero for placement reasons.
+ */
+function weighProcShares(
+  shares: readonly { procs: { onHit: ProcHit[]; onCrit: ProcHit[] }; critChance: number; hits: number }[],
+): ProcHit[] | undefined {
+  if (shares.length === 0) return undefined;
+  const total = shares.reduce((sum, s) => sum + s.hits, 0);
+  const out: ProcHit[] = [];
+  for (const share of shares) {
+    const weight = total > 0 ? share.hits / total : 1 / shares.length;
+    if (weight <= 0) continue;
+    for (const hit of share.procs.onHit) out.push({ ...hit, chance: hit.chance * (1 - share.critChance) * weight });
+    for (const hit of share.procs.onCrit) out.push({ ...hit, chance: hit.chance * share.critChance * weight });
+  }
+  return out;
+}
+
 export function simulateFullDps(
   build: BuildDoc,
   snapshot: Snapshot,
@@ -1983,7 +2126,7 @@ export function simulateFullDps(
       path: "skills",
       message: auraOnly
         ? "Every skill ticked into Full DPS is an aura, so the figure is what they pulse for on " +
-          "their own — no button is being pressed. Tick the skill you actually attack with to " +
+          "their own, with no button being pressed. Tick the skill you actually attack with to " +
           "see the rotation."
         : "Every skill ticked into Full DPS is a buff, so the rotation is the presses themselves. " +
           "Tick the skill you actually attack with to see what those buffs are worth.",

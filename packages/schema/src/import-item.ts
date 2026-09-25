@@ -219,7 +219,7 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
         "warning",
         "unknown-rarity",
         `Rarity "${rarity}" is not in this snapshot. Affix counts and roll bands cannot be checked ` +
-          `against it — pick a rarity in the editor.`,
+          `against it. Pick a rarity in the editor.`,
       ),
     );
   }
@@ -319,7 +319,7 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
       "info",
       "read-from-document",
       issues.length === 0
-        ? "Read from this app's own item JSON — exact, and every id resolved in the loaded snapshot."
+        ? "Read from this app's item JSON. Exact, and every id was found in the snapshot."
         : "Read from this app's own item JSON. The rolls are exact; the ids noted above are not in " +
           "the loaded snapshot.",
     ),
@@ -472,7 +472,7 @@ function importFromNbt(gear: Record<string, unknown>, snapshot: Snapshot): Impor
   readSockets(snapshot, gear["sockets"], item);
 
   issues.push(
-    issue("info", "read-from-nbt", "Read from item NBT — every roll is exact, nothing was inferred."),
+    issue("info", "read-from-nbt", "Read from item NBT. Every roll is exact."),
   );
   return { item, format: "nbt", issues };
 }
@@ -643,7 +643,7 @@ function importFromTooltip(raw: string, snapshot: Snapshot): ImportResult {
         "not-in-depth-tooltip",
         "This is the merged tooltip: no `[min - max]` ranges and no tier names, so the affixes " +
           "behind each line cannot be recovered. Hold Shift over the item in game and copy it " +
-          "again — `GearTooltipUtils` only splits prefixes from suffixes in the in-depth view.",
+          "again. The game only separates prefixes from suffixes in the Shift view.",
       ),
     );
     return { item: undefined, format: "tooltip", issues };
@@ -683,7 +683,7 @@ function importFromTooltip(raw: string, snapshot: Snapshot): ImportResult {
       "info",
       "read-from-tooltip",
       "Read from tooltip text. Rolls are derived from the printed ranges and are only as precise " +
-        "as the game's own rounding — check anything flagged below.",
+        "as the game's own rounding. Check anything flagged below.",
     ),
   );
 

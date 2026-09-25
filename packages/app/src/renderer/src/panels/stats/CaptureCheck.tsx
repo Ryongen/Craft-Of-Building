@@ -79,8 +79,8 @@ export function CaptureCheck(): ReactNode {
             <strong>
               {bad.length} of {rows.length} stats disagree
             </strong>{" "}
-            with the game. That is an engine bug, or a mechanic the document cannot describe —
-            the Diagnostics tab usually says which.
+            with the game. That&apos;s either a bug or a mechanic this app can&apos;t model yet.
+            Diagnostics usually says which.
           </>
         )}
       </div>

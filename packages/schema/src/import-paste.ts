@@ -204,7 +204,7 @@ function readJewel(node: Record<string, unknown>, snapshot: Snapshot): Read {
     );
   }
 
-  issues.push(issue("info", "read-from-copy", "Read from an in-game copy — every roll is exact, nothing was inferred."));
+  issues.push(issue("info", "read-from-copy", "Read from an in-game copy. Every roll is exact."));
   return { thing: { kind: "jewel", jewel }, issues };
 }
 
@@ -245,7 +245,7 @@ function readOmen(node: Record<string, unknown>, snapshot: Snapshot): Read {
   const affixes = affixList(node["affixes"], snapshot, issues, "omen");
   if (affixes.length > 0) omen.affixes = affixes;
 
-  issues.push(issue("info", "read-from-copy", "Read from an in-game copy — every roll is exact, nothing was inferred."));
+  issues.push(issue("info", "read-from-copy", "Read from an in-game copy. Every roll is exact."));
   return { thing: { kind: "omen", omen }, issues };
 }
 
@@ -270,7 +270,7 @@ function readSkill(node: Record<string, unknown>, snapshot: Snapshot): Read {
     issue(
       "info",
       "skill-rank-from-classes",
-      "A Skill's rank comes from your class allocation, not from the gem — this is the gem's own level.",
+      "A Skill's rank comes from your class points, not the gem. This is the gem's own level.",
     ),
   );
   return { thing: { kind: "skill", skill }, issues };
@@ -290,7 +290,7 @@ function readSupport(node: Record<string, unknown>, snapshot: Snapshot): Read {
   const rarity = asString(node["rarity"]);
   if (rarity !== undefined && rarity.length > 0) support.rarity = rarity;
 
-  issues.push(issue("info", "read-from-copy", "Read from an in-game copy — this gem's own roll, not the Skill's."));
+  issues.push(issue("info", "read-from-copy", "Read from an in-game copy. This is the gem's own roll, not the Skill's."));
   return { thing: { kind: "support", support }, issues };
 }
 
@@ -308,7 +308,7 @@ function readAura(node: Record<string, unknown>, snapshot: Snapshot): Read {
   const rarity = asString(node["rarity"]);
   if (rarity !== undefined && rarity.length > 0) aura.rarity = rarity;
 
-  issues.push(issue("info", "read-from-copy", "Read from an in-game copy — every roll is exact, nothing was inferred."));
+  issues.push(issue("info", "read-from-copy", "Read from an in-game copy. Every roll is exact."));
   return { thing: { kind: "aura", aura }, issues };
 }
 

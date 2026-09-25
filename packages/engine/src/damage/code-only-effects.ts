@@ -404,13 +404,21 @@ export function inCodeEffects(): InCodeEffect[] {
   //
   //     float totalDodge = Mth.clamp(data.getValue() - effect.data.getNumber(ACCURACY).number, 0, MAX);
   //     float chance = dodge.getUsableValue(effect.targetData.getUnit(), (int) totalDodge, effect.sourceData.getLevel()) * 100;
-  //     return effect.getAttackType().isAttack() && RandomUtils.roll(chance);
   //     ...
-  //     effect.data.setHitAvoided(EventData.IS_DODGED);
+  //     if (!effect.canAvoidHit()) return false;
+  //     if (effect.data.isHitAvoided()) return false;
+  //     if (effect.data.getBoolean(EventData.AVOIDANCE_ROLLED)) return false;
+  //     if (!effect.getAttackType().isHit() && effect.getAttackType() != AttackType.bonus_dmg) return false;
+  //     if (effect.isSpell() && effect.getSpell().config.tags.contains(SpellTags.magic)) return false;
+  //     return true;
   //
-  // — DodgeRating.java:75-117. Narrow: physical only, `AttackType.hit` only, and never against a
-  // spell tagged `magic`. The attacker's accuracy is subtracted first, and the curve is read at
-  // the *attacker's* level, exactly as armour is.
+  // — `DodgeRating$Effect.canActivate`, read out of the 6.4.13 jar. **No element gate.** A hit or
+  // a bonus-damage hit of any element is dodged, unless it is a `magic` spell, which is Spell
+  // Dodge's. The old port refused everything but physical, so a mob's fire swing and every
+  // elemental melee skill (`flame_strike`, `tidal_strike`) walked straight past the character's
+  // dodge. `DodgeRating.getElement()` does return Physical, but that is the stat's display
+  // element and the effect never reads it. The attacker's accuracy is subtracted first, and the
+  // curve is read at the *attacker's* level, exactly as armour is.
   //
   // A roll that lands zeroes the hit outright. A figure averaged over many hits is not one hit,
   // so this multiplies by `1 - chance` on the block layer instead — the same expectation, and the
@@ -454,7 +462,7 @@ export function inCodeEffects(): InCodeEffect[] {
   //             && effect.isSpell() && effect.getSpell().config.tags.contains(SpellTags.magic);
   //
   // — SpellDodgeEffect, verified in 6.4.13. The exact complement of dodge above, and the pair
-  // partitions every hit: dodge takes physical non-`magic` hits, this takes `magic` spells of
+  // partitions every hit: dodge takes non-`magic` hits, this takes `magic` spells, both of
   // **any** element, and `AVOIDANCE_ROLLED` stops both from rolling on the same hit.
   //
   // It was previously unported, and the audit tracked it as a gap — but nothing could reach it
@@ -775,8 +783,10 @@ function canAvoidHit(ctx: DamageCtx): boolean {
 
 function dodgeEffect(ctx: DamageCtx, value: number): void {
   if (!canAvoidHit(ctx)) return;
-  if (ctx.event.data.getElement() !== "Physical") return;
-  if (ctx.event.data.getString(EVENT.ATTACK_TYPE, "hit") !== "hit") return;
+  // `isHit() || == bonus_dmg`, the same pair Spell Dodge accepts. No element test — see the
+  // registration.
+  const attackType = ctx.event.data.getString(EVENT.ATTACK_TYPE, "hit");
+  if (attackType !== "hit" && attackType !== "bonus_dmg") return;
   // `effect.isSpell() && spell.config.tags.contains(SpellTags.magic)` — a magic spell is never
   // dodged, however physical its element.
   if (ctx.spellTags.has("magic")) return;

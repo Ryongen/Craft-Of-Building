@@ -22,7 +22,7 @@ import { autoUpdater } from "electron-updater";
 import { CHANNEL, type UpdateStatus } from "@shared/ipc";
 
 /** Where the portable build sends people. The feed itself comes from `publish` in electron-builder.yml. */
-const RELEASES_URL = "https://github.com/Ryongen/cte2-pob/releases/latest";
+const RELEASES_URL = "https://github.com/Ryongen/Craft-Of-Building/releases/latest";
 
 const portable = process.env["PORTABLE_EXECUTABLE_DIR"] !== undefined;
 

@@ -700,7 +700,7 @@ function loggedWeaponMismatch(fixture: Fixture, snapshot: Snapshot): Diagnostic[
       message:
         `The hit on \`${observed.spellId}\` was made with \`${logged}\`${where}, but the build's ` +
         `\`${slot ?? "unknown"}\` slot holds ${held}. The capture and the hit describe different ` +
-        `characters, so every absolute number in this reading — base damage, flat damage — is ` +
+        `characters, so every absolute number in this reading (base damage, flat damage) is ` +
         `comparing against gear that was not in hand. Re-export with the weapon that made the hit ` +
         `selected. Ratios and the layer structure are still meaningful.`,
     });

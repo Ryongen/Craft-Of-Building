@@ -54,6 +54,9 @@ const GEM_LOOK: Record<string, { css: string; icon: string }> = {
   Buff: { css: "tt-buff", icon: AUGMENT_ICON },
   Debuff: { css: "tt-debuff", icon: AUGMENT_ICON },
   Passive: { css: "tt-perk-card", icon: GEM_ICON },
+  // On the enemy, so it wears the debuff's colours: it is something working against you.
+  "Mob Prefix": { css: "tt-debuff", icon: AUGMENT_ICON },
+  "Mob Suffix": { css: "tt-debuff", icon: AUGMENT_ICON },
 };
 
 export function useSpellTooltip(card: SpellCard | undefined) {

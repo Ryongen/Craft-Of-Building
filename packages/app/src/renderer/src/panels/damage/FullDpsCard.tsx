@@ -37,10 +37,17 @@ export function FullDpsCard({
   full,
   skills,
   onToggle,
+  swingProcDps = 0,
 }: {
   full: FullDpsResult | undefined;
   skills: SkillSetup[];
   onToggle: (index: number, include: boolean) => void;
+  /**
+   * What your weapon swings proc, on the swing's own clock. Shown beside the rotation because
+   * the buffs that grant these procs (Whiteout Sovereign, Ice-Tipped Blade) are ticked here, and
+   * a rotation that showed nothing for them read as the buffs doing nothing.
+   */
+  swingProcDps?: number;
 }): ReactNode {
   const world = useWorld();
   if (full === undefined) return null;
@@ -59,8 +66,8 @@ export function FullDpsCard({
             different numbers under one name. The terms are all still here, to its right. */}
         <Figure
           label="Full DPS"
-          value={full.skills.length === 0 ? "—" : smart(full.dps + full.ailmentDps)}
-          hint="One pass through every ticked skill, everything it procs and everything it leaves burning, divided by how long that pass takes. Pets and the weapon swing are not in it — the topbar's Total DPS has those."
+          value={full.skills.length === 0 ? "—" : smart(full.dps + full.ailmentDps + swingProcDps)}
+          hint="All damage from one pass through the ticked skills, including procs, damage over time and what your basic attacks proc, divided by how long it takes. Doesn't include pets or the swings' own hits; Total DPS in the top bar does."
         />
         {full.skills.length > 0 && (
           <>
@@ -73,7 +80,14 @@ export function FullDpsCard({
               <Figure
                 label="Procs"
                 value={smart(full.procDps)}
-                hint="Spells your gear casts while you press these buttons — part of the Full DPS above"
+                hint="Spells your gear casts during the rotation. Included in Full DPS"
+              />
+            )}
+            {swingProcDps > 0 && (
+              <Figure
+                label="Swing procs"
+                value={smart(swingProcDps)}
+                hint="Spells your basic attacks cast while you run this rotation, at your swing rate. Included in Full DPS"
               />
             )}
             {full.auraDps > 0 && (
@@ -97,14 +111,14 @@ export function FullDpsCard({
               <Figure
                 label="Ailment DPS"
                 value={smart(full.ailmentDps - full.ailmentProcDps)}
-                hint="Bleed, ignite and poison, summed across the rotation — part of the Full DPS above"
+                hint="Bleed, ignite and poison across the rotation. Included in Full DPS"
               />
             )}
             {full.ailmentProcDps > 0 && (
               <Figure
                 label="Ailment hit DPS"
                 value={smart(full.ailmentProcDps)}
-                hint="Shatter and Shock releasing what the rotation's freezes and electrifies accumulated — part of the Full DPS above"
+                hint="Shatter and Shock releasing the damage built up by freezes and electrifies. Included in Full DPS"
               />
             )}
           </>
@@ -181,16 +195,16 @@ export function FullDpsCard({
                       short
                         ? `It lasts ${num(lasts, 1)}s but cannot be re-cast for ` +
                           `${num(entry.upkeepSeconds ?? 0, 1)}s, so it is down for ` +
-                          `${num((entry.upkeepSeconds ?? 0) - lasts, 1)}s of every cycle — and the ` +
-                          "stats under every figure here assume it is up throughout."
+                          `${num((entry.upkeepSeconds ?? 0) - lasts, 1)}s of every cycle, but the numbers here ` +
+                          "assume it's always up."
                         : entry.upkeepSeconds === Infinity
-                          ? "potion_dur: -1 — the sentinel the game reads as never expiring."
+                          ? "potion_dur: -1, which the game treats as never expiring."
                           : undefined
                     }
                     style={short ? { color: "var(--warn)" } : undefined}
                   >
                     {entry.upkeepSeconds === Infinity
-                      ? "never — a toggle"
+                      ? "never (toggle)"
                       : short
                         ? `${num(entry.upkeepSeconds ?? 0, 1)}s · lasts ${num(lasts, 1)}s`
                         : `${num(entry.upkeepSeconds ?? 0, 1)}s`}
@@ -206,16 +220,12 @@ export function FullDpsCard({
       )}
 
       <div className="faint text-sm mt-3 prose">
-        Tick the skills you actually press. Casting an <em>attack</em> activates one shared global
-        cooldown, so a combo extender you cast to enable a finisher costs the finisher real time,
-        which is why this reads lower than the finisher on its own, and why that is the
-        real number. A <strong>buff</strong> or a <strong>curse</strong> costs the pass only its
-        upkeep: it is re-casted when what it applied runs out, which for a curse is its duration
-        on the pack rather than its cooldown, and for a toggle such as Banishing Blade is never.
-        An <strong>aura</strong> is free the same way and deals its damage on its own clock, so
-        ticking one adds what it pulses for and takes nothing away. Their stats are on your sheet
-        whether or not they are ticked here, availability comes from the skill bar, and the
-        <strong> enabled</strong> box on the Skills tab is the only thing that takes one off it.
+        Tick the skills you actually press. Attacks share a global cooldown, so casting a combo
+        starter takes time away from the finisher. That's why this can be lower than the finisher
+        alone. A <strong>buff</strong> or <strong>curse</strong> only costs the time to recast it
+        when it runs out (never, for a toggle like Banishing Blade). An <strong>aura</strong>{" "}
+        costs nothing and adds its own damage. Their stats count whether or not they&apos;re ticked
+        here; to remove one, untick <strong>enabled</strong> on the Skills tab.
       </div>
     </div>
   );
@@ -256,21 +266,21 @@ function upkeepTitle(entry: FullDpsSkill): string {
   const press = `One press costs ${num(entry.pressSeconds, 2)}s`;
   const pulses =
     (entry.auraDps ?? 0) > 0
-      ? ` It pulses for ${smart(entry.auraDps ?? 0)}/s on its own timing for as long as it is up — ` +
-        `that is in the figure above, and the rotation does not pace it.`
+      ? ` It pulses for ${smart(entry.auraDps ?? 0)}/s on its own timer while it's up. ` +
+        `That's included above.`
       : "";
   if (entry.upkeepSeconds === Infinity) {
     return (
-      `${press}, and ${entry.upkeepEffectId} never expires — it is a toggle, so you press it once ` +
-      `and the rotation is charged nothing for it.${pulses}`
+      `${press}, and ${entry.upkeepEffectId} is a toggle that never expires, so it costs the ` +
+      `rotation nothing.${pulses}`
     );
   }
   const where = entry.upkeepHolder === "target" ? "falls off the pack" : "runs out";
   return (
     `${press}, and ${entry.upkeepEffectId} ${where} every ` +
-    `${num(entry.upkeepSeconds ?? 0, 1)}s — ${num(entry.pressesPerRotation ?? 0, 3)} presses per ` +
-    `pass, so ${upkeepCost(entry.rotationSeconds)} of it. Its cooldown is not what paces it: a ` +
-    `cooldown says how soon you may press again, not how soon you have to.${pulses}`
+    `${num(entry.upkeepSeconds ?? 0, 1)}s, so ${num(entry.pressesPerRotation ?? 0, 3)} presses per ` +
+    `pass (${upkeepCost(entry.rotationSeconds)} of it). Its duration sets the pace, not its ` +
+    `cooldown.${pulses}`
   );
 }
 

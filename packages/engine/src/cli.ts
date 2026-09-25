@@ -376,7 +376,7 @@ function explain(statId: string, sources: Sources): string[] {
 
   const out: string[] = [];
   if (observed.length === 0) {
-    out.push("           game:   (no breakdown captured — re-export to get one)");
+    out.push("           game:   (no breakdown captured; re-export to get one)");
   } else {
     for (const s of observed) {
       const slot = s.slot === undefined ? "" : ` ${s.slot}.`;

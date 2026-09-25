@@ -22,20 +22,19 @@ export const STATS_COPY = {
 
   timesToCast: {
     plain: "One press fires the spell more than once.",
-    tech: "times_to_cast — one press fires the spell more than once.",
+    tech: "times_to_cast: one press fires the spell more than once.",
   },
 
   chargeRate: {
     plain: "A charge spell's rate is how fast a charge comes back, not its cooldown.",
     tech:
-      "A charge spell's rate is how fast a charge comes back, not its cooldown — the game " +
+      "A charge spell's rate is how fast a charge comes back, not its cooldown. The game " +
       "force-writes cooldown_ticks to 3 when charges are declared.",
   },
 
   castSpeedBound: {
     plain:
-      "Bound by your cast speed rather than by the spell's own cooldown, because the longer of " +
-      "the two is what you wait for.",
+      "Limited by your cast speed, not the cooldown. You wait for whichever is longer.",
     tech:
       "Bound by cast speed rather than by the spell's own cooldown: getEffectiveCooldownTicks " +
       "is max(cooldown_ticks, cast_speed_ticks).",
@@ -48,9 +47,8 @@ export const STATS_COPY = {
 
   critMultiLead: {
     plain:
-      "What a crit is actually worth on this skill, measured rather than read off a stat: the " +
-      "crit branch divided by the non-crit one. Double damage and the conversion children are " +
-      "inside it, which is why it is more than your crit damage alone.",
+      "What a crit is really worth on this skill: crit damage divided by non-crit damage. It " +
+      "includes double damage and conversions, so it can be higher than your crit damage stat.",
     tech:
       "What a crit is actually worth on this skill, measured rather than read off a stat: the " +
       "crit branch divided by the non-crit one. Double damage and the conversion children are " +
@@ -59,17 +57,16 @@ export const STATS_COPY = {
 
   hitChanceLead: {
     plain:
-      "The share of this skill's hits the target does not dodge. It is already folded into every " +
-      "damage figure, as an average rather than as a roll, so this says how much of the number " +
-      "above is the miss.",
+      "How many of this skill's hits the target doesn't dodge. Every damage number already " +
+      "averages this in.",
     tech:
-      "The share of this skill's hits the target does not dodge — damage_block's multiplier. It " +
+      "The share of this skill's hits the target does not dodge (damage_block's multiplier). It " +
       "is already folded into every damage figure, as expectation rather than as a roll, so this " +
       "says how much of the number above is the miss.",
   },
 
   ailmentAlsoLands: {
-    plain: "It lands as well. The release is a separate hit from the one that set it off.",
+    plain: "The original hit still lands. The release is a separate hit.",
     tech:
       "It lands as well. The two are separate events: `shatterAccumulated` fires an " +
       "`EventBuilder.ofDamage` of its own.",
@@ -77,32 +74,30 @@ export const STATS_COPY = {
 
   selfDamageTaken: {
     plain:
-      "Your armour and your resists apply. Increases to damage and crit do not — you are not " +
-      "attacking yourself, only taking the hit.",
+      "Your armour and resists apply. Your damage and crit bonuses don't.",
     tech:
       "Your armour, your resists and your dmg_received. Increases to damage and crit do not " +
-      "apply — no_attacker_stats_on_selfdmg switches the attacker half of the sweep off — but " +
+      "apply (no_attacker_stats_on_selfdmg switches the attacker half of the sweep off), but " +
       "mitigation does.",
   },
 
   selfDamageShield: {
     plain:
-      "First, because the shield absorbs before health does. With no magic shield there is " +
-      "nothing here to pay from, however much shield regeneration your gear rolls.",
+      "Magic shield absorbs before health. With no magic shield, shield regeneration does nothing here.",
     tech:
       "First, because the shield absorbs before health does. A build with no magic shield pays " +
       "nothing from here, however much magic_shield_regen its gear rolls.",
   },
 
   costBase: {
-    plain: "What the spell charges, multiplied by every support gem linked into it.",
+    plain: "The spell's cost, multiplied by every linked support gem.",
     tech: "mana_cost or ene_cost on the spell, times the product of the gems' manaMulti.",
   },
 
   inCombat: {
     plain:
-      "You count as in combat for ten seconds after every hit, so a rotation never leaves it. " +
-      "Anything that only works out of combat is worth nothing here.",
+      "You stay in combat for ten seconds after every hit, so out-of-combat bonuses do nothing " +
+      "during a rotation.",
     tech:
       "in_combat is a ten-second cooldown that every hit re-stamps, so a rotation never leaves " +
       "it. Anything gated on being out of combat is worth nothing here.",
@@ -110,7 +105,7 @@ export const STATS_COPY = {
 
   procShared: {
     plain:
-      "Merged across the whole pass against one shared proc cooldown, not added up per skill.",
+      "Counted once across the rotation with one shared proc cooldown, not per skill.",
     tech:
       "Merged across the whole pass against one shared set of `proc_cooldown_ticks`, not added " +
       "up per skill.",

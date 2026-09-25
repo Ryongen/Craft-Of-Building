@@ -206,12 +206,12 @@ export function TraceStatList({
                   ? {
                       title:
                         `${num(shape.usable, 2)}% ${USABLE_NOUN[statId] ?? "effective"} from ` +
-                        `${smart(shape.raw)} — IUsableStat.getUsableValue, a hyperbolic curve read ` +
+                        `${smart(shape.raw)}. IUsableStat.getUsableValue, a hyperbolic curve read ` +
                         `at your level, so the same rating is worth less the more of it you have.`,
                     }
                   : {
                       title:
-                        `Capped at ${smart(shape.usable)}% — ` +
+                        `Capped at ${smart(shape.usable)}%. ` +
                         `ElementalResist.getUsableValue clamps to 75 plus this element's ` +
                         `max-resist stat, itself clamped to 90. The ` +
                         `${smart(shape.raw - shape.usable)}% above it is granted and unused, and ` +

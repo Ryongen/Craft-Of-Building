@@ -20,8 +20,8 @@ export const AUGMENTS_COPY = {
 
   rarityBand: {
     plain:
-      "The rarity band determining this gem's roll percentage range.",
+      "The rarity sets this gem's roll range.",
     tech:
-      "SkillGemData.rar — the band this gem's roll was drawn from",
+      "SkillGemData.rar: the band this gem's roll was drawn from",
   },
 } satisfies CopyTable;

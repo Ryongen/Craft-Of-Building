@@ -23,6 +23,7 @@ export type {
   EnemySetup,
   FoodBuffSetup,
   FoodBuffSlot,
+  MapSetup,
   MobOffence,
   ExileEffectSetup,
   Item,
@@ -53,6 +54,9 @@ export {
   syncStages,
 } from "./stages.js";
 export type { StageContent } from "./stages.js";
+
+export { mapRarityForTier, maxMapTier } from "./maps.js";
+export type { MapRarity } from "./maps.js";
 
 export {
   ATTACKER_PROFILES,

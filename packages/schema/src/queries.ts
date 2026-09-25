@@ -79,6 +79,7 @@ export const CATEGORY = {
   itemRequirement: "library_of_exile_item_requirement",
   itemSet: "mmorpg_sets",
   gem: "mmorpg_gems",
+  mapAffix: "mmorpg_map_affix",
   mercenary: "mmorpg_mercenary",
   mobAffix: "mmorpg_mob_affix",
   mobRarity: "mmorpg_mob_rarity",

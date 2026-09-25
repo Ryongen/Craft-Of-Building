@@ -91,7 +91,7 @@ function affixOption(
   const detail = modDetail(snapshot, stats);
   return {
     id,
-    label: `${affixName(snapshot, id)} — ${
+    label: `${affixName(snapshot, id)}: ${
       stats[0] === undefined ? "no stats" : modifierLine(snapshot, stats[0], 100)
     }`,
     keywords: modKeywords(snapshot, stats),
@@ -162,7 +162,7 @@ export function JewelList(): ReactNode {
           const augment = auraName(snapshot, a.eyeAuraReq);
           return {
             id: a.id,
-            label: `${augment} — ${
+            label: `${augment}: ${
               a.stats[0] === undefined ? "no stats" : modifierLine(snapshot, a.stats[0], 100)
             }`,
             keywords: `${modKeywords(snapshot, a.stats)} ${augment} ${a.eyeAuraReq} ${a.id}`,
@@ -197,12 +197,12 @@ export function JewelList(): ReactNode {
         <>
         <Plain>
           <span className="faint text-sm">
-            Jewel sockets on your character sheet - 18 talents grant one each, while items like Bubonic Trail and Hungering Vessel grant additional sockets.
+            Jewel sockets on your sheet. 18 talents grant one each, and Bubonic Trail and Hungering Vessel grant more.
           </span>
         </Plain>
         <Tech>
           <span className="faint text-sm">
-            <code>jewel_socket</code> off your sheet — 18 talents grant one each, and Bubonic Trail
+            <code>jewel_socket</code> off your sheet. 18 talents grant one each, and Bubonic Trail
             and Hungering Vessel grant more.
           </span>
         </Tech>
@@ -230,7 +230,7 @@ export function JewelList(): ReactNode {
       {jewels.length === 0 && (
         <div className="faint mb-4">
           None. Jewels carry <code>jewel</code>-type affixes and apply wherever they are
-          socketed — the tree position is recorded but Mine and Slash has no radius rule.
+          socketed. The tree position is saved, but Mine and Slash has no radius rule.
         </div>
       )}
 
@@ -476,7 +476,7 @@ function JewelCard({
         {auraStats.length > 0 && (
           <span
             className="badge"
-            title="Augment effects — each fires only while its own Augment is socketed"
+            title="Augment effects. Each only works while its Augment is socketed"
           >
             {liveAuraStats} of {auraStats.length} Augment{auraStats.length === 1 ? "" : "s"}
           </span>
@@ -491,7 +491,7 @@ function JewelCard({
         <CopyJsonButton
           compact
           value={copyEnvelope("jewel", jewelName(snapshot, jewel), jewel)}
-          title="Copy this jewel as JSON — paste it into another build with Import"
+          title="Copy this jewel as JSON. Paste it into another build with Import"
         />
         <button
           title="Remove this jewel"
@@ -513,12 +513,12 @@ function JewelCard({
         <>
         <Plain>
           <div className="notice">
-            No socket available for this jewel, so it grants no stats. The game automatically unequips any jewel beyond your total socket count.
+            No free socket, so this jewel does nothing. The game unequips jewels past your socket count.
           </div>
         </Plain>
         <Tech>
           <div className="notice">
-            No socket for this one — it grants <strong>nothing</strong>. The game unequips every
+            No socket for this one, so it grants <strong>nothing</strong>. The game unequips every
             jewel past the <code>jewel_socket</code> count and the engine drops it the same way.
           </div>
         </Tech>
@@ -548,7 +548,7 @@ function JewelCard({
           <select
             value={jewel.style ?? DEFAULT_JEWEL_STYLE}
             onChange={(event) => onChange({ ...jewel, style: event.target.value })}
-            title="PlayStyle — decides which jewel this is and which affixes may roll on it"
+            title="Play style. Decides the jewel type and which affixes can roll"
           >
             {JEWEL_STYLES.map((style) => (
               <option key={style} value={style}>
@@ -624,14 +624,14 @@ function JewelCard({
         <>
         <Plain>
           <div className="notice">
-            An Abyssal Eye carries one to three stats that activate only while a specific Augment is socketed. Which Augment is required depends on the selected stat line, so the selector lists the Augment first. They drop from uber bosses as unique Stardust jewels with one line per boss tier, rolling randomly from 0 to 100 without tiers or rarity bands.
+            An Abyssal Eye has one to three lines, each active only while a certain Augment is socketed. The picker shows that Augment first. They drop from uber bosses, one line per boss tier, and each line rolls 0-100 with no tiers.
           </div>
         </Plain>
         <Tech>
           <div className="notice">
             An <strong>Abyssal Eye</strong> carries one to three lines that each fire only while a
-            particular Augment is socketed — <code>StatsWhileUnderAuraData</code>, gated by the
-            affix's own <code>eye_aura_req</code>. Which Augment is a property of the line you pick
+            particular Augment is socketed (<code>StatsWhileUnderAuraData</code>, gated by the
+            affix's own <code>eye_aura_req</code>). Which Augment is a property of the line you pick
             here, so the picker names it first. The game drops them off uber bosses as
             unique-rarity Stardust (<code>int</code>) jewels with one line per boss tier, and each
             line rolls anywhere in 0-100 with no tier and no rarity band.
@@ -664,7 +664,7 @@ function JewelCard({
           disabled={auraStats.length >= MAX_EYE_AURA_STATS}
           title={
             auraStats.length >= MAX_EYE_AURA_STATS
-              ? `An eye holds at most ${MAX_EYE_AURA_STATS} — UberBossTier.watcherEyeAffixes tops out there, and nothing adds a fourth afterwards.`
+              ? `An eye holds at most ${MAX_EYE_AURA_STATS}.`
               : "A line that fires only while its Augment is socketed"
           }
           // The line's own level, not the character's: `StatsWhileUnderAuraData.lvl` is set from
@@ -686,13 +686,13 @@ function JewelCard({
         <>
         <Plain>
           <div className="notice">
-            An Orb of Mesmerizing Chaos adds one corruption affix (or two on a 1-in-10 chance) to an uncorrupted jewel. Corruption affixes apply alongside normal stats and are drawn from the general jewel corruption pool.
+            An Orb of Mesmerizing Chaos adds one corruption affix (two, 1 in 10 times) to an uncorrupted jewel. They stack with the normal affixes.
           </div>
         </Plain>
         <Tech>
           <div className="notice">
             An Orb of Mesmerizing Chaos rolls one, or two on a 1-in-10, and only on a jewel that
-            has none — <code>JewelItemData.corrupt</code>. They resolve alongside the rolled
+            has none (<code>JewelItemData.corrupt</code>). They resolve alongside the rolled
             affixes and are drawn from the <code>jewel_corruption</code> pool, which the play style
             does not narrow.
           </div>
@@ -722,7 +722,7 @@ function JewelCard({
           title={
             corruptions.length >= MAX_JEWEL_CORRUPTIONS
               ? "Two is the most one orb rolls, and a corrupted jewel cannot be corrupted again."
-              : "An Orb of Mesmerizing Chaos line — it resolves alongside the rolled affixes"
+              : "Add an Orb of Mesmerizing Chaos corruption"
           }
           onAdd={(affixId) =>
             setCorruptions([
@@ -814,7 +814,7 @@ function JewelAuraRow({
           className={live ? "badge" : "badge warn"}
           title={
             augment.length === 0
-              ? "This affix carries no eye_aura_req, so nothing says which Augment gates it — the engine skips the line and says so in Diagnostics."
+              ? "This line doesn't name an Augment, so it's skipped. See Diagnostics."
               : live
                 ? "This Augment is socketed, so the line is on your sheet"
                 : "Socket this Augment on the Items tab to switch the line on"
@@ -822,7 +822,7 @@ function JewelAuraRow({
         >
           {augment.length === 0
             ? "no Augment requirement"
-            : `${underAugmentLabel(snapshot, augment)}${live ? "" : " — not socketed"}`}
+            : `${underAugmentLabel(snapshot, augment)}${live ? "" : " (not socketed)"}`}
         </span>
         <RollSlider
           value={draft.shown}
@@ -940,7 +940,7 @@ function JewelAffixRow({
       <div className="row wrap" style={{ marginTop: 3 }}>
         <select
           value={roll.tier}
-          title="The affix's own tier, which is not the jewel's — the roll band comes from this"
+          title="The affix's own tier, separate from the jewel's. Sets the roll range"
           onChange={(event) => {
             const tier = event.target.value;
             const next = band(tier);

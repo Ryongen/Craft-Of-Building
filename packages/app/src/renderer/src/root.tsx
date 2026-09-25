@@ -138,14 +138,13 @@ function Setup({ error, onChoose }: { error?: string | undefined; onChoose: () =
   return (
     <div className="setup">
       <div className="setup-inner">
-        <h1>Path of Building — Craft to Exile 2</h1>
+        <h1>Path of Building for Craft to Exile 2</h1>
         {canExtract ? (
           <>
             <p>
               Point this at your Craft to Exile 2 instance and it will read the pack&apos;s
               registries into a snapshot. Your modpack folder is only ever{" "}
-              <strong>read from</strong>, and nothing extracted is redistributed — the data stays
-              on this machine.
+              <strong>read from</strong>, and the extracted data stays on this machine.
             </p>
             <p className="faint">
               Either the Prism instance folder or the <code>minecraft</code> game directory inside
@@ -154,9 +153,8 @@ function Setup({ error, onChoose }: { error?: string | undefined; onChoose: () =
           </>
         ) : (
           <p>
-            This site ships its own copy of the pack data, and it could not be loaded. That is a
-            problem with the deployment rather than with anything you did — reloading is worth a
-            try, and the reason is below.
+            This site's copy of the pack data could not be loaded. That's a problem on our end,
+            not yours. Try reloading; the error is below.
           </p>
         )}
         {error !== undefined && (
@@ -206,7 +204,7 @@ function ExtractReport({
             {summary.unresolvedItems.length > 0 && (
               <span className="faint">
                 {" "}
-                — the rest are vanilla items, whose textures are in the client jar
+                (the rest are vanilla items, textured by the client jar)
               </span>
             )}
           </dd>

@@ -37,6 +37,7 @@ import { evaluateIfs } from "./conditions.js";
 import { applyStatEffect } from "./effects.js";
 import { multiplyExact, parseRolledMods, rollToExact, type ModType } from "../modifier.js";
 import { mobAffixDiagnostics, mobAffixMods } from "./mob-affixes.js";
+import { mapMobMods } from "./map.js";
 import { activeOn, type EffectState } from "./effect-state.js";
 import { inCodeEffects, MAX_CONVERSION_DEPTH } from "./code-only-effects.js";
 import { sheetValue, type DamageCtx, type ProcHit, type RestoreRecord, type Sheet } from "./ctx.js";
@@ -148,9 +149,9 @@ export type DamageResult = {
   /**
    * The share of this act's hits that are not evaded — `damage_block`'s multiplier.
    *
-   * 1 wherever nothing can dodge the hit, which is most acts: `DodgeRating` takes physical
-   * non-`magic` hits and `SpellDodgeEffect` takes `magic` spells, and a mob with no evasion
-   * rating leaves the layer unwritten either way. Reported rather than left inside the number
+   * 1 wherever nothing can dodge the hit: `DodgeRating` takes non-`magic` hits of any element
+   * and `SpellDodgeEffect` takes `magic` spells, and a mob with no evasion rating leaves the
+   * layer unwritten either way. Reported rather than left inside the number
    * because it is already folded into every total here, and a figure that quietly assumes a
    * target you never miss is one the reader cannot check.
    */
@@ -417,12 +418,29 @@ function runBranch(
   // dropped the non-crit branch's entirely to avoid the duplication. That also dropped the few
   // that are genuinely branch-specific — a crit-only layer being averaged, for one.
   const sink: Diagnostic[] = [];
-  const trace = runEvent(shared, shared.element, shared.baseValue, crit, 0, false, byElement, ailments, sink, procs, restores);
+  const events: ProcHit[] | undefined = procs === undefined ? undefined : [];
+  const trace = runEvent(shared, shared.element, shared.baseValue, crit, 0, false, byElement, ailments, sink, events, restores);
   mergeDiagnostics(diagnostics, sink);
+  if (procs !== undefined && events !== undefined) procs.push(...eitherEvent(events));
 
   let total = 0;
   for (const amount of byElement.values()) total += amount;
   return { total, byElement, ailments, restores, ...(trace ? { trace } : {}) };
+}
+
+/**
+ * One entry per proc for the whole hit, where the hit and its bonus-element events each rolled
+ * it: `1 - Π(1 - p)`, because each event rolls independently and the proc fires if any does.
+ */
+function eitherEvent(hits: readonly ProcHit[]): ProcHit[] {
+  const out = new Map<string, ProcHit>();
+  for (const hit of hits) {
+    const key = `${hit.statId}:${hit.spellId}:${hit.side}`;
+    const seen = out.get(key);
+    if (seen === undefined) out.set(key, { ...hit });
+    else seen.chance = 1 - (1 - seen.chance) * (1 - hit.chance);
+  }
+  return [...out.values()];
 }
 
 /** Appends the diagnostics the other branch has not already reported, keyed on code and path. */
@@ -958,9 +976,11 @@ function collectBonusElements(
       byElement,
       ailments,
       diagnostics,
-      // A bonus-element child sweeps the same source stats again, so collecting from it would
-      // count every proc twice. The parent event has already recorded them.
-      undefined,
+      // Collected, and folded into the parent's by `runBranch`. The child is its own
+      // `DamageEvent` and rolls every proc block again, and an `ele_match_stat` gate can only pass
+      // on it: Blade of Desecrated Hallows' Frost Orbs proc on a *cold* hit, and a physical attack
+      // it converts is cold only in the bonus event.
+      ctx.procs,
       // Leech is the opposite case, and deliberately so: each bonus element is its own
       // `DamageEvent` carrying its own share of the hit, and `ele_match_stat` picks the leech
       // stat that matches *it*. Collecting from the children is how `fire_mana_leech` reaches
@@ -1096,7 +1116,24 @@ function targetSheetFor(
   );
   for (const d of mobAffixDiagnostics(snapshot, affixIds)) report(d.severity, d.code, d.path, d.message);
 
-  const mods = [...affixes, ...debuffMods(effects, snapshot, index, bal, build.character.level)];
+  // The map's `Mobs` affixes and its tier, which every mob in it carries on top of its own — see
+  // `damage/map.ts`. Same accumulator as the affixes above, because the game sums them in one
+  // container: `fire_res 45` from the map and `of_elemental_resistance` from the mob meet there.
+  const fromMap = mapMobMods(snapshot, index, bal, build.config?.map, mobLevel, report).flatMap((m) =>
+    spreadsTo(m.statId).map((statId) => ({
+      statId,
+      type: m.type,
+      value: m.value,
+      source: m.source,
+      path: "config.map",
+    })),
+  );
+
+  const mods = [
+    ...affixes,
+    ...fromMap,
+    ...debuffMods(effects, snapshot, index, bal, build.character.level),
+  ];
 
   // Captured before the mods are folded in, because that is the only moment the enemy's own
   // declared value still exists — `applySheetMods` overwrites it in place.
@@ -1227,6 +1264,11 @@ export function applySheetMods(
     let value = (current?.value ?? 0) + mods.flat;
     value *= 1 + mods.percent / 100;
     if (shape.multiUseType === "MULTIPLY_STAT") value *= mods.multi;
+    // The other half of `InCalcStatData`: on a `MULTIPLICATIVE_DAMAGE` stat, MORE is not folded
+    // into the value at all but kept as the stat's damage multiplier, which the damage effect
+    // spends as its own MORE line. A map tier's `MORE total_damage` on a mob with no flat
+    // `total_damage` is exactly this, and dropping it here lost the whole tier.
+    const damageMulti = shape.multiUseType === "MULTIPLICATIVE_DAMAGE" ? mods.multi : 1;
 
     // `InCalcStatData.calcValue` is `(base + Flat) × (1 + Percent/100) × Multi`, and MORE feeds
     // only `Multi` — so a MORE modifier on a stat whose base and flat are both zero multiplies
@@ -1234,7 +1276,7 @@ export function applySheetMods(
     // makes a debuff that reads as a large effect worth literally nothing. `hunters_mark` is the
     // one that matters: `MORE 7.5..15 dmg_received`, and `dmg_received` has `base: 0`, so
     // marking a mob changes no number at all unless something else has already given it some.
-    if (mods.multi !== 1 && (current?.value ?? 0) + mods.flat === 0) {
+    if (mods.multi !== 1 && damageMulti === 1 && (current?.value ?? 0) + mods.flat === 0) {
       report(
         "warning",
         "debuff-more-on-zero-base",
@@ -1249,7 +1291,7 @@ export function applySheetMods(
 
     sheet.set(statId, {
       value: Math.min(Math.max(value, shape.min), shape.max),
-      dmgMulti: current?.dmgMulti ?? 1,
+      dmgMulti: (current?.dmgMulti ?? 1) * damageMulti,
       hardcap: current?.hardcap ?? 0,
       softcap: current?.softcap ?? 0,
     });
@@ -1451,8 +1493,8 @@ export function simulateBasicAttack(
     dmgEffectiveness: 1,
     element,
     critChance,
-    // A swing is `AttackType.hit` and physical, which is exactly what `DodgeRating` takes, so
-    // this is the one place the figure is routinely below 1.
+    // A swing is `AttackType.hit` and not a `magic` spell, which is exactly what `DodgeRating`
+    // takes, so against a mob with dodge the figure is routinely below 1.
     hitChance: shared.hitChance,
     selfHit: false,
     hit,

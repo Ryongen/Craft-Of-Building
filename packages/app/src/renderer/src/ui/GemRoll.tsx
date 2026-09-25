@@ -134,8 +134,8 @@ export function GemRarityRoll({
       />
 
       {gem.rollPercent === undefined && (
-        <span className="badge warn" title="This gem computes at the bottom of its band">
-          unset — {band.min}%
+        <span className="badge warn" title="No roll set, so it uses the lowest roll">
+          unset, {band.min}%
         </span>
       )}
     </>

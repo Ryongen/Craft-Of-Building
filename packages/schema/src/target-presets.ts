@@ -156,19 +156,19 @@ export const TARGET_PRESETS: readonly TargetPreset[] = [
   {
     id: "uncommon_mob",
     name: "Uncommon mob",
-    description: "MnS's `uncommon` rarity — a blue mob.",
+    description: "A blue mob (`uncommon` rarity).",
     rarityId: RARITY.uncommon,
   },
   {
     id: "rare_mob",
     name: "Rare mob",
-    description: "MnS's `rare` rarity — a yellow mob.",
+    description: "A yellow mob (`rare` rarity).",
     rarityId: RARITY.rare,
   },
   {
     id: "epic_mob",
     name: "Epic mob",
-    description: "MnS's `epic` rarity — an elite, and the commonest one you fight.",
+    description: "The most common elite (`epic` rarity).",
     rarityId: RARITY.epic,
   },
   {
@@ -180,33 +180,33 @@ export const TARGET_PRESETS: readonly TargetPreset[] = [
   {
     id: "mythic_mob",
     name: "Mythic mob",
-    description: "MnS's `mythic` rarity — the rarest non-boss elite.",
+    description: "The rarest non-boss elite (`mythic` rarity).",
     rarityId: RARITY.mythic,
   },
   {
     id: "map_boss",
     name: "Map boss",
-    description: "The mob behind a normal map's boss room — MnS's `boss` rarity.",
+    description: "A normal map's boss (`boss` rarity).",
     rarityId: RARITY.boss,
   },
   {
     id: "uber_boss",
     name: "Uber boss",
-    description: "What an uber altar spawns — MnS's `uber` rarity.",
+    description: "What an uber altar spawns (`uber` rarity).",
     rarityId: RARITY.uber,
   },
   {
     id: "pinnacle_boss",
     name: "Pinnacle boss",
-    description: "What an uber altar spawns in a pinnacle-flagged map — MnS's `pinnacle` rarity.",
+    description: "What an uber altar spawns in a pinnacle map (`pinnacle` rarity).",
     rarityId: RARITY.pinnacle,
   },
   {
     id: "max_resist",
     name: "Max resist",
     description:
-      "Every resistance at the 90% hard cap, over armour solved for 75% physical mitigation — " +
-      "not a boss's own armour, which stops a quarter of that. Shows what penetration is worth.",
+      "All resistances at the 90% cap and enough armour for 75% physical mitigation (a real " +
+      "boss has much less). Shows what penetration is worth.",
   },
 ] as const;
 
@@ -255,7 +255,7 @@ export const ATTACKER_PROFILES: readonly AttackerProfile[] = [
     name: "Zombie",
     vanillaAttackDamage: 3,
     attacksPerSecond: 1,
-    citation: "minecraft:zombie, generic.attack_damage 3.0 — the ordinary overworld melee mob.",
+    citation: "minecraft:zombie, generic.attack_damage 3.0. A regular overworld melee mob.",
   },
   {
     id: "skeleton",
@@ -271,7 +271,7 @@ export const ATTACKER_PROFILES: readonly AttackerProfile[] = [
     name: "Vindicator",
     vanillaAttackDamage: 13,
     attacksPerSecond: 1,
-    citation: "minecraft:vindicator, generic.attack_damage 13.0 on Normal — a raid-tier melee hit.",
+    citation: "minecraft:vindicator, generic.attack_damage 13.0 on Normal. A raid-tier melee hit.",
   },
   {
     id: "ravager",
@@ -279,8 +279,8 @@ export const ATTACKER_PROFILES: readonly AttackerProfile[] = [
     vanillaAttackDamage: 12,
     attacksPerSecond: 0.5,
     citation:
-      "minecraft:ravager, generic.attack_damage 12.0 with a slow roar-and-charge cadence — the " +
-      "boss-shaped end of vanilla.",
+      "minecraft:ravager, generic.attack_damage 12.0, slow roar-and-charge attacks. The " +
+      "closest vanilla gets to a boss.",
   },
 ] as const;
 
@@ -440,14 +440,14 @@ const ELEMENTAL_RESIST_FAMILY = ["fire_resist", "water_resist", "lightning_resis
  *
  *     stats.add(ExactStatData.scaleTo(1, ModType.FLAT, OffenseStats.ACCURACY.get().GUID(), lvl));
  *
- * One line, verified in 6.4.13, and that is the whole offensive block: accuracy on the same
- * `NORMAL_STAT_SCALING` curve as armour, and **nothing else** — no penetration, no critical strike
- * chance, no damage increase that is not the per-entity `dmg_multi`. Rarity does not touch it
- * either: `MobRarity.stats` in this pack carries only `inc_effect_of_negative_buff_on_you`.
+ * One line, verified in 6.4.13: accuracy on the same `NORMAL_STAT_SCALING` curve as armour. Rarity
+ * does not touch it: `MobRarity.stats` in this pack carries only
+ * `inc_effect_of_negative_buff_on_you`. The rest comes from `mmorpg_base_stats/mob` — 8 more
+ * accuracy, 6 armour penetration, and 50% more damage on elemental and chaos hits.
  *
- * So the zeroes here are a finding rather than a placeholder. A mob that penetrates your resists
- * is one carrying a map affix or an entity config that says so, and those are fields to fill in
- * by hand — the preset would be inventing them.
+ * So the zeroes left here are a finding rather than a placeholder. A mob that penetrates your
+ * resists is one carrying a map affix, a mob affix or an entity config that says so, and those
+ * are stated elsewhere — the preset would be inventing them.
  */
 function mobOffence(snapshot: Snapshot, level: number, balanceId?: string): MobOffence {
   const curve = normalScaling(snapshot, balanceId);
@@ -461,8 +461,22 @@ function mobOffence(snapshot: Snapshot, level: number, balanceId?: string): MobO
     // mitigation coming off the player's armour and was previously being thrown away.
     armorPenetration: base["armor_penetration"] ?? 0,
     penetration: zeroResists(),
+    // `all_elemental_damage 50` and `all_chaos_damage 50`, flat. Additive damage on a hit of
+    // that element only, which is why it is carried per element rather than folded into one
+    // `totalDamage` — a mob's fire hit is half again its physical one.
+    elementDamage: elementDamageOf(base),
     critChance: 0,
   };
+}
+
+/** Every `all_<element>_damage` in the base block, keyed by the element guid. */
+function elementDamageOf(base: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [statId, value] of Object.entries(base)) {
+    const match = /^all_(\w+)_damage$/.exec(statId);
+    if (match?.[1] !== undefined && value !== 0) out[match[1]] = value;
+  }
+  return out;
 }
 
 /** Which rarities the snapshot actually has, for a picker that should not offer a dead one. */

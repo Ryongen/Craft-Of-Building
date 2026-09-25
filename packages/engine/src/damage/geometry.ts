@@ -245,11 +245,9 @@ function compute(source: DamageSource, placement: TargetPlacement): Coverage {
 
   const targetPos = targetPosition(placement);
 
-  let hits = 0;
-  const landedTicks: number[] = [];
+  const landings: { tick: number; weight: number }[] = [];
   const land = (tick: number, weight: number): void => {
-    hits += weight;
-    landedTicks.push(tick);
+    landings.push({ tick, weight });
   };
 
   for (const site of resolved.sites) {
@@ -276,7 +274,18 @@ function compute(source: DamageSource, placement: TargetPlacement): Coverage {
     }
   }
 
-  const note = resolved.note ?? coverageNote(method, source, hits);
+  const cooldown = source.targetCooldownTicks;
+  const kept = cooldown === undefined ? landings : gateByTargetCooldown(landings, cooldown);
+  const hits = kept.reduce((sum, l) => sum + l.weight, 0);
+  const landedTicks = kept.map((l) => l.tick);
+
+  const gated = cooldown !== undefined && kept.length < landings.length;
+  const note =
+    resolved.note ??
+    (gated
+      ? `the enemy is immune to it for ${cooldown} ticks after each hit, however many carriers ` +
+        `reach it, so ${landings.length} contacts land as ${kept.length} hits`
+      : coverageNote(method, source, hits));
   return {
     hitsPerCast: hits,
     fraction: 0,
@@ -284,6 +293,25 @@ function compute(source: DamageSource, placement: TargetPlacement): Coverage {
     landedTicks: sample(landedTicks, MAX_LANDED_TICKS),
     ...(note === undefined ? {} : { note }),
   };
+}
+
+/**
+ * Drops every landing that arrives while the target is still on the source's own cooldown —
+ * `DamageSource.targetCooldownTicks`.
+ *
+ * `set_on_cd` runs in the same act list as the damage, so the cooldown starts on the tick the
+ * hit lands and a second carrier touching the mob on that same tick is refused too.
+ */
+function gateByTargetCooldown<T extends { tick: number }>(landings: readonly T[], cooldown: number): T[] {
+  const sorted = landings.slice().sort((a, b) => a.tick - b.tick);
+  const kept: T[] = [];
+  let readyAt = Number.NEGATIVE_INFINITY;
+  for (const landing of sorted) {
+    if (landing.tick < readyAt) continue;
+    kept.push(landing);
+    readyAt = landing.tick + cooldown;
+  }
+  return kept;
 }
 
 /**
@@ -308,7 +336,7 @@ function coverageNote(
   if (fallsToGround(source)) {
     return "a gravity projectile that misses is flown to its full lifespan rather than stopped "
       + "by the ground, so anything it drops on expiry lands further away than it really would "
-      + "— type over this if you know the near misses still cover the target";
+      + "(type over this if you know the near misses still cover the target)";
   }
   return undefined;
 }

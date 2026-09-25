@@ -96,19 +96,19 @@ const CTX_BLURB: Record<string, string> = {
     "resist at level 1 and steps it down to +25 at 25, 0 at 50 and −25 at 75, on top of the " +
     "pack's own flat −25 base. At level 100 the grant is spent, which is why this reads −25.",
   STAT_POINTS: "Points you allocated on the character screen.",
-  GEAR: "An equipped item — its base stats, affixes, runes and runeword.",
+  GEAR: "An equipped item: base stats, affixes, runes and runeword.",
   TALENT: "A node allocated on the passive tree.",
   ASCENDANCY: "An ascendancy node.",
   PASSIVES: "A spell school perk. The solo-class bonus deliberately goes to Misc instead.",
   ATLAS: "An atlas passive.",
   JEWEL: "A socketed jewel.",
   AURA: "An aura you are running.",
-  POTION_EFFECT: "An exile effect — a buff, a charge, a stance or a curse on you.",
+  POTION_EFFECT: "An exile effect: a buff, charge, stance or curse on you.",
   INNATE_SPELL: "A stat the skill itself grants, rather than one on your sheet.",
   SUPPORT_GEM: "A support gem socketed into a skill.",
   VANILLA_STAT_COMPAT:
     "A vanilla Minecraft attribute another mod set, converted into a real stat by " +
-    "`mmorpg_stat_compat` — food diversity, Mine and Meals, the KubeJS attributes.",
+    "`mmorpg_stat_compat` (food diversity, Mine and Meals, the KubeJS attributes).",
   ENCHANT_COMPAT: "A vanilla enchantment on equipped gear, converted the same way.",
   ITEM_SET:
     "A gear set bonus. It belongs to the combination rather than to any one piece, which is "  +
@@ -119,7 +119,7 @@ const CTX_BLURB: Record<string, string> = {
     "Not a source of its own: the share of every other context that `aura_effect` and its two " +
     "siblings add on top. The game builds it from the contexts that already exist, so the row " +
     "names the stat that took the share and the context it was a share of.",
-  MISC: "Everything the game files under Misc — an omen's payout and the solo-class bonus.",
+  MISC: "Everything the game files under Misc, like omen bonuses and the solo-class bonus.",
 };
 
 /**
@@ -210,9 +210,8 @@ export function StatBreakdown({
       {onSkillSheet && (
         <div className="notice info">
           This is <strong>{statName(snapshot, statId)} on this skill</strong>, which is not the
-          same number as the one on your character sheet. The game keeps a separate stat unit per
-          spell, and a support gem writes into that unit only — so the gems below are in this
-          figure and are in none of the sidebar&apos;s.{" "}
+          same as the number on your character sheet. Each spell has its own stats, and support gems
+          only add to those, so the gems below count here but not in the sidebar.{" "}
           {onScope !== undefined && (
             <a className="link" onClick={() => onScope("character")}>
               Show the character sheet&apos;s {smart(derived.stats.get(statId)?.value ?? 0)}
@@ -235,8 +234,8 @@ export function StatBreakdown({
           On {spellId === undefined ? "your main skill" : spellName(snapshot, spellId)} this stat
           is <strong>{smart(skillValue)}{display.isPerc ? "%" : ""}</strong>, not{" "}
           {smart(stat.value)}
-          {display.isPerc ? "%" : ""} — the spell has its own stat unit and support gems write
-          only into it.{" "}
+          {display.isPerc ? "%" : ""}. The spell has its own stats, and support gems only add to
+          those.{" "}
           {onScope !== undefined && (
             <a className="link" onClick={() => onScope("skill")}>
               Show where the skill&apos;s number comes from.
@@ -278,8 +277,8 @@ export function StatBreakdown({
         </div>
         {stat.usableValue !== undefined && (
           <div className="faint">
-            usable value: <strong>{smart(stat.usableValue)}%</strong> — the diminishing-returns
-            number the game applies, not this raw total
+            usable value: <strong>{smart(stat.usableValue)}%</strong>, after diminishing returns.
+            This is what the game uses
           </div>
         )}
       </div>
@@ -297,11 +296,11 @@ export function StatBreakdown({
           ))}{" "}
           <Plain>
             before anything resolves, then zeroes itself. It reads <strong>0</strong> on the sheet
-            no matter what feeds it — the value is not lost, it moved.
+            no matter what feeds it. The value isn&apos;t lost, it moved.
           </Plain>
           <Tech>
             before anything resolves, then zeroes itself (<code>ITransferToOtherStats</code>). It
-            reads <strong>0</strong> on the sheet no matter what feeds it — the value is not lost,
+            reads <strong>0</strong> on the sheet no matter what feeds it. The value is not lost,
             it moved.
           </Tech>
         </div>
@@ -319,8 +318,8 @@ export function StatBreakdown({
             This stat is <code>MULTIPLICATIVE_DAMAGE</code>: its MORE modifiers are deliberately{" "}
             <em>not</em> in the value above. They are carried as{" "}
             <strong>×{num(stat.dmgMulti, 3)}</strong> and spent once, later, in the damage layer.
-            Anything reading this stat&apos;s value — including every <code>one_to_other</code>{" "}
-            that adds from it — sees the number without that multiplier, which is what the game
+            Anything reading this stat&apos;s value, including every <code>one_to_other</code>{" "}
+            that adds from it, sees the number without that multiplier, which is what the game
             does too.
           </div>
         </Tech>
@@ -484,8 +483,8 @@ function ContribRow({
           <span
             className="warn chip-toggle"
             title={
-              "Assumed up by the planner — no capture recorded it. Click to switch it off and " +
-              "see this number without it."
+              "Assumed active; the capture didn't record it. Click to turn it off and see the " +
+              "number without it."
             }
             onClick={(event) => {
               event.stopPropagation();
@@ -746,7 +745,7 @@ export function originPart(snapshot: Snapshot, mod: ModContribution): string | u
 
 function derivedTypeHint(type: string): string {
   if (type === "ADD_TO_VALUE") {
-    return "Written straight onto the resolved value, after the calculation — not a modifier";
+    return "Added straight to the final value after the calculation, not a modifier";
   }
   if (type === "MULTI_ADD") {
     return "InCalcStat.addFullyTo adds to the multiplier where every other MORE path multiplies";

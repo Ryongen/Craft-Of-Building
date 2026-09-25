@@ -463,6 +463,16 @@ export type MobOffence = {
   /** `<element>_penetration`, taken off the raw resist *before* the 75% clamp. */
   penetration?: Record<string, number>;
   /**
+   * `all_<element>_damage`, keyed by element guid — `elemental`, `chaos`, `fire` and so on.
+   *
+   * An additive increase to the mob's hits **of that element only**, so unlike
+   * {@link totalDamage} it changes which of your resists matters. The pack's
+   * `mmorpg_base_stats/mob` gives every mob `all_elemental_damage 50` and `all_chaos_damage 50`:
+   * a mob's fire hit is half again its physical one, and a Fire Lord swing converted to fire picks
+   * that up too. A target preset fills both.
+   */
+  elementDamage?: Record<string, number>;
+  /**
    * `critical_hit` and `critical_damage`.
    *
    * Recorded but not part of effective HP, and deliberately: eHP answers "how much raw incoming
@@ -561,6 +571,38 @@ export type EnemySetup = {
    * refused, since asking "what would three cost" is a fair planner question.
    */
   affixes?: string[];
+};
+
+/**
+ * The map a fight happens in: `MapItemData`'s tier and affixes.
+ *
+ * Every entity in a map gets the map's affix stats — `CommonStatUtils.addMapAffixStats`, called
+ * from `StatCalculation` for players and mobs alike, and each affix only reaches the side its
+ * `affected` names. So a map is two things at once: stats on the enemy (armour, resists,
+ * conversion) and stats on **you** (`fire_minus_res`, `minus_armor`, the curses). Both are real,
+ * and a figure that applied only the first would flatter every build in a hard map.
+ *
+ * The tier does two more things, verified in `Mine_and_Slash-1.20.1-6.4.13.jar`:
+ *
+ *   - `MapItemData.getTierStats` gives every non-summon mob `MORE health` and `MORE total_damage`
+ *     of `tier × HP/DMG_MOB_BONUS_PER_MAP_TIER × 100` — on `original_balance` 9.5% and 3% a tier;
+ *   - `setTier` re-derives the map's gear rarity from its tier (`rarityForTier`), and each affix's
+ *     roll is drawn from that rarity's `stat_percents` (`MapBlueprint.reconcileAffixes`). A higher
+ *     tier is a better-rolled — which for a map means worse — set of affixes.
+ */
+export type MapSetup = {
+  /** `MapItemData.tier`, 0 to the top rarity's `map_tiers.max` (100 on this pack). */
+  tier?: number;
+  /**
+   * `mmorpg_map_affix` ids. The game rolls these without repeats and only from affixes whose
+   * `req` is empty; a prophecy affix belongs to a different system and is reported.
+   */
+  affixes?: string[];
+  /**
+   * The roll every affix is read at, 0-100. Unset means the middle of the tier's rarity band,
+   * which is the average of what `stat_percents.random()` gives.
+   */
+  affixRoll?: number;
 };
 
 /**
@@ -688,7 +730,8 @@ export type BuildConfig = {
   mainIsBasicAttack?: boolean;
   /** Shorthand for `enemy.level`. `enemy.level` wins when both are set. */
   enemyLevel?: number;
-  mapTier?: number;
+  /** The map the fight is in — its tier and affixes. Unset means open world. */
+  map?: MapSetup;
   enemy?: EnemySetup;
   /** Condition id -> whether it is considered active. */
   conditions?: Record<string, boolean>;

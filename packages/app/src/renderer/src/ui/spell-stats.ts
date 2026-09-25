@@ -46,7 +46,9 @@ import {
   auraName,
   entry,
   exileEffectName,
+  humanise,
   isSpellPerk,
+  mobAffixName,
   parseFormatting,
   perk,
   perkName,
@@ -199,7 +201,7 @@ export function spellCard(
     facts.push({
       label: "Recovery",
       value: seconds(recovery),
-      title: "config.cast_speed_ticks — the animation you are locked into after the cast",
+      title: "config.cast_speed_ticks: the animation you are locked into after the cast",
     });
   }
   const weapon = stringAt(config, "castingWeapon");
@@ -248,7 +250,7 @@ export function supportGemCard(
     facts.push({
       label: "Cost Multiplier",
       value: `${multi.toFixed(2)}×`,
-      title: "SocketedGem.getManaCostMulti — every linked gem's multiplied together",
+      title: "SocketedGem.getManaCostMulti: every linked gem's multiplied together",
     });
   }
   pushShared(facts, data);
@@ -337,7 +339,7 @@ export function effectCard(
       value: `${stacks} / ${declaredMax}`,
       title: stacksAffect
         ? "max_stacks. `stacks_affect_stats` is set, so the stats above are this many times " +
-          "their band — that is what `increaseByAddedPercent` does."
+          "their band. That is what `increaseByAddedPercent` does."
         : "max_stacks. This effect does not set `stacks_affect_stats`, so stacking it changes " +
           "nothing about the stats above.",
     });
@@ -346,7 +348,7 @@ export function effectCard(
     label: "Rolled At",
     value: `${Math.round(at.rollPercent)}%`,
     title:
-      "`new LeveledValue(0, 100).getValue(caster, spell)` — the rank of whatever applies this " +
+      "`new LeveledValue(0, 100).getValue(caster, spell)`: the rank of whatever applies this " +
       "effect decides where in each band its stats sit.",
   });
 
@@ -425,6 +427,72 @@ export function perkCard(
     stats,
     facts,
     ...(view.icon === "" ? {} : { icon: view.icon }),
+  };
+}
+
+/**
+ * A mob affix, resolved the way `MobAffix.getStatAndContext` resolves it: fixed at 100% and
+ * scaled to the **mob's** level, not the character's. So the lines read what the Config tab's
+ * toggle adds to the target, and agree with `mobAffixMods` in the engine.
+ */
+export function mobAffixCard(
+  snapshot: Snapshot,
+  affixId: string,
+  at: { mobLevel: number },
+): GemCard | undefined {
+  const data = entry(snapshot, CATEGORY.mobAffix, affixId)?.data;
+  if (!data) return undefined;
+
+  const suffix = stringAt(data, "type") === "suffix";
+  return {
+    id: affixId,
+    name: mobAffixName(snapshot, affixId),
+    kind: suffix ? "Mob Suffix" : "Mob Prefix",
+    stats: linesFrom(snapshot, data["stats"], 100, at.mobLevel),
+    facts: [
+      {
+        label: "Scaled To",
+        value: `Mob level ${at.mobLevel}`,
+        title: "`ToExactStat(100, level)`: the mob's level, not yours",
+      },
+    ],
+    note: "A mob rolls at most one prefix and one suffix.",
+  };
+}
+
+/**
+ * A map affix, at the map's roll and level.
+ *
+ * Map affixes have no lang name — the game's map tooltip prints only their stat lines, grouped
+ * under "Mob Affixes" and "Player Affixes" — so the name is the humanised id and the lines are
+ * what identifies it.
+ */
+export function mapAffixCard(
+  snapshot: Snapshot,
+  affixId: string,
+  at: { roll: number; level: number },
+): GemCard | undefined {
+  const data = entry(snapshot, CATEGORY.mapAffix, affixId)?.data;
+  if (!data) return undefined;
+
+  const onPlayers = stringAt(data, "affected") === "Players";
+  return {
+    id: affixId,
+    name: humanise(affixId),
+    kind: onPlayers ? "Map Affix · on you" : "Map Affix · on mobs",
+    stats: linesFrom(snapshot, data["stats"], at.roll, at.level),
+    facts: [
+      {
+        label: "Roll",
+        value: `${Math.round(at.roll)}%`,
+        title: "`MapAffixData.p`: drawn from the map rarity's `stat_percents`",
+      },
+      {
+        label: "Scaled To",
+        value: `Map level ${at.level}`,
+        title: "`getStats(p, getLevel())`: the map's level",
+      },
+    ],
   };
 }
 

@@ -143,9 +143,8 @@ export function StatPoints({
           ) : (
             <>
               Levelling to {doc.character.level} grants {available}. Up to{" "}
-              {budget?.maxBonus ?? 0} more are obtainable in game from sources a build document
-              cannot record, so this is legal up to {budget?.ceiling ?? available} — just not
-              verifiable here.
+              {budget?.maxBonus ?? 0} more can come from in-game rewards this app can't see, so
+              anything up to {budget?.ceiling ?? available} is possible, just not verifiable here.
             </>
           )}
         </div>
@@ -167,12 +166,12 @@ export function StatPoints({
         <>
         <Plain>
           <div className="faint text-sm mt-5" style={{ lineHeight: 1.5 }}>
-            Each spent point grants +1 regardless of level. Levelling grants more points, but never increases the value of points already spent. The total matches your character sheet, including bonuses from gear, perks, and auras alongside these points. Percentage stat bonuses apply after attribute conversion, so percentage boosts scale the stats granted by these points.
+            Each point gives +1 at any level. The total is your character sheet value, including gear, perks and auras. Percentage bonuses to a stat also scale what these points give.
           </div>
         </Plain>
         <Tech>
           <div className="faint text-sm mt-5" style={{ lineHeight: 1.5 }}>
-            One point is <strong>+1</strong>, at every character level —{" "}
+            One point is <strong>+1</strong> at every character level.{" "}
             <code>StatPointsData</code> passes a hardcoded level of 1 to{" "}
             <code>ExactStatData.levelScaled</code>, and the core-stat scaling curve at level 1 is
             exactly 1. Levelling grants more points; it never makes the ones you already spent

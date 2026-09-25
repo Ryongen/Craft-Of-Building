@@ -112,16 +112,16 @@ export function AugmentList({
         <>
         <Plain>
           <div className="notice">
-            Every Augment is a gem with a rarity and a roll of its own. The rarity grants nothing directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a common one 0-17. One with no roll set computes at the bottom of its band and says so in Diagnostics. Augment Effect scales whatever these grant, and is applied.
+            Each Augment has its own rarity and roll. Rarity sets the roll range (mythic 86-100, common 0-17). An Augment with no roll set uses the bottom of its range, and Diagnostics will say so. Augment Effect scales everything they grant.
           </div>
         </Plain>
         <Tech>
           <div className="notice">
             Every Augment is a gem with a rarity and a roll of its own
             (<code>SkillGemData.rar</code> and <code>.perc</code>). The rarity grants nothing
-            directly — it is the band the roll came from, so a mythic Augment rolls 86-100 and a
+            directly; it is the band the roll came from, so a mythic Augment rolls 86-100 and a
             common one 0-17. One with no roll set computes at the bottom of its band and says so in
-            Diagnostics. <code>aura_effect</code> — Augment Effect — scales whatever these grant,
+            Diagnostics. <code>aura_effect</code> (Augment Effect) scales whatever these grant,
             and is applied.
           </div>
         </Tech>
@@ -178,7 +178,7 @@ function CapacityBar({ capacity }: { capacity: AuraCapacity }): ReactNode {
         <span
           className="faint text-sm"
           title={
-            "GemInventoryHelper.getTotalSpirit — the `spirit_cost` stat, which the game calls " +
+            "GemInventoryHelper.getTotalSpirit: the `spirit_cost` stat, which the game calls " +
             "Augment Capacity. It is code-only (no mmorpg_stat entry declares it), base 100, and " +
             "talents and gear take it to at most 250."
           }
@@ -203,15 +203,15 @@ function CapacityBar({ capacity }: { capacity: AuraCapacity }): ReactNode {
         <>
         <Plain>
           <div className="notice">
-            Over capacity by {-capacity.remaining}. Exceeding your available capacity causes the game to unequip all Augments on your character, not just the latest one, leaving you with no active Augments. The planner still totals their stats as a reference note rather than unequipping them automatically.
+            Over capacity by {-capacity.remaining}. The game would unequip all your Augments, not just the last one. Their stats are still counted here.
           </div>
         </Plain>
         <Tech>
           <div className="notice">
             <strong>Over capacity by {-capacity.remaining}.</strong>{" "}
             <code>removeAurasIfCantWear</code> unequips <strong>every</strong> Augment on the
-            character the moment <code>getRemainingSpirit()</code> goes negative — not just the
-            last one — so this is a character wearing none of them. The engine still sums them all,
+            character the moment <code>getRemainingSpirit()</code> goes negative, not just the
+            last one, so this is a character wearing none of them. The engine still sums them all,
             which is why this is a note rather than something the panel does for you.
           </div>
         </Tech>
@@ -322,7 +322,7 @@ function AugmentRow({
         <CopyJsonButton
           compact
           value={copyEnvelope("aura", auraName(snapshot, aura.id), aura)}
-          title="Copy this Augment as JSON — paste it into another build with Import"
+          title="Copy this Augment as JSON. Paste it into another build with Import"
         />
         <button
           title="Remove this Augment"

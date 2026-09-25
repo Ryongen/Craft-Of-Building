@@ -129,7 +129,7 @@ export function installMenu(window: BrowserWindow | null): void {
     submenu: [
       {
         label: "Project on GitHub",
-        click: () => void shell.openExternal("https://github.com/Ryongen/cte2-pob"),
+        click: () => void shell.openExternal("https://github.com/Ryongen/Craft-Of-Building"),
       },
       // Main's own job rather than a renderer command: the updater lives here. The answer
       // arrives in the status bar.

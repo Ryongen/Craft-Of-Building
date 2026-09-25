@@ -123,7 +123,7 @@ test("magic shield adds to the pool, and half of chaos walks past it", () => {
   assert.equal(held.byElement.find((e) => e.element === "Shadow")!.pool, 5000);
 });
 
-test("dodge is averaged rather than rolled, and only against physical hits", () => {
+test("dodge is averaged rather than rolled, and applies to a hit of any element", () => {
   // `DodgeRating` zeroes the hit on a roll; a figure averaged over many hits multiplies by
   // `1 - chance` instead. The curve is `points / (points + 100)` at level 1, so 100 dodge is 50%.
   const result = character({ health: 1000, dodge: 100 });
@@ -133,7 +133,9 @@ test("dodge is averaged rather than rolled, and only against physical hits", () 
 
   closeTo(physical.taken, 0.5);
   closeTo(physical.effectiveHealth, 2000);
-  closeTo(fire.taken, 1, "dodge never applies to an elemental hit");
+  // `DodgeRating$Effect.canActivate` in the 6.4.13 jar has no element test — only hit or
+  // bonus damage, and not a `magic` spell. A mob's fire swing is dodged like its physical one.
+  closeTo(fire.taken, 0.5, "dodge applies to an elemental hit");
 });
 
 test("a block stops `block_damage_reduction` of the hit, and that defaults to all of it", () => {
@@ -239,13 +241,17 @@ test("the maximum hit assumes every avoidance roll failed", () => {
 });
 
 test("the most fragile element is picked on the maximum hit, not on effective HP", () => {
-  // Dodge is physical-only, so a character carrying their physical defence on it has their
-  // *average* softest spot somewhere else and their *one-shot* softest spot on physical. Fire
-  // resist is set high enough that fire wins on neither.
+  // Dodge and block are both element-blind against a mob's swing, so they scale every row by the
+  // same factor: the maximum hit sits above effective HP by exactly the dodge chance on every
+  // element, and the two figures agree on which element is softest. 300 dodge at level 1 is
+  // `300 / 400`, a 75% chance. Fire resist is high enough that fire is softest on neither.
   const result = character({ health: 1000, dodge: 300, fire_resist: 60 });
 
-  assert.equal(result.weakest.element, "Cold", "averaged, dodge carries physical past cold");
-  assert.equal(result.mostFragile.element, "Physical", "unavoided, dodge carries nothing");
+  for (const entry of result.byElement) {
+    closeTo(entry.taken / entry.takenUnavoided, 0.25, `${entry.element}: dodge is element-blind`);
+  }
+  assert.notEqual(result.weakest.element, "Fire");
+  assert.equal(result.mostFragile.element, result.weakest.element);
   assert.equal(
     result.mostFragile.maximumHit,
     Math.min(...result.byElement.map((e) => e.maximumHit)),
@@ -347,9 +353,10 @@ test("the attacker's accuracy is taken off your dodge, and its penetration off y
   closeTo(physical(withAttacker({ accuracy: 100 })).taken, 1);
 
   // Penetration comes off the raw resist before its clamp, so 50 resist against 25 penetration
-  // mitigates as 25 would.
-  closeTo(fire(bare).taken, 0.5);
-  closeTo(fire(withAttacker({ penetration: { fire: 25 } })).taken, 0.75);
+  // mitigates as 25 would. The fire hit is dodged half the time as well — dodge has no element
+  // gate — so both carry the same factor of a half.
+  closeTo(fire(bare).taken, 0.5 * 0.5);
+  closeTo(fire(withAttacker({ penetration: { fire: 25 } })).taken, 0.75 * 0.5);
 });
 
 test("the second hit is not answered until a document states one", () => {

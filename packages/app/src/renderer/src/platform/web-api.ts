@@ -321,7 +321,7 @@ export function createWebApi(): Cte2Api {
           return {
             ok: false,
             cancelled: false,
-            error: "That file has no `registries` block — it does not look like a snapshot.",
+            error: "That file has no `registries` block, so it doesn't look like a snapshot.",
           };
         }
         await setValue(SNAPSHOT_KEY, { name: file.name, json } satisfies StoredSnapshot);
@@ -352,9 +352,8 @@ export function createWebApi(): Cte2Api {
         stale: false,
         staleReason: userSupplied
           ? "Running on a snapshot you supplied. It is not checked against any install."
-          : "This is the snapshot the site was built from. It cannot be checked against your " +
-            "install — if your pack version differs from the one above, the numbers here " +
-            "describe a different pack.",
+          : "This is the snapshot the site was built with. If your pack version differs from " +
+            "the one above, the numbers may not match your game.",
         fromRepo: false,
         userSupplied,
       });

@@ -36,6 +36,7 @@ import {
   type ExileEffectSetup,
   type Item,
   type Jewel,
+  type MapSetup,
   type NodeKey,
   type OmenSetup,
   type SkillSetup,
@@ -347,6 +348,13 @@ export type BuildState = {
    * so no snapshot can answer it — which is exactly why it is a field.
    */
   setInCombatRegenMulti(multi: number | undefined): void;
+  /**
+   * The map the fight is in — its tier, affixes and roll.
+   *
+   * `undefined`, or a map with no tier and no affixes, returns to open world: nothing is stated,
+   * so nothing is applied.
+   */
+  setMap(map: MapSetup | undefined): void;
 };
 
 /** Applies a change, pushing the previous document onto the undo stack. */
@@ -897,6 +905,16 @@ export const useBuild = create<BuildState>((set) => ({
     }),
 
   setAssumeEffects: (assume) => edit(set, (doc) => withConfig(doc, { assumeEffects: assume })),
+
+  setMap: (map) =>
+    edit(set, (doc) => {
+      if (map === undefined) return withConfig(doc, { map: undefined });
+      const next: MapSetup = {};
+      if (map.tier !== undefined && Number.isFinite(map.tier) && map.tier > 0) next.tier = Math.trunc(map.tier);
+      if (map.affixes !== undefined && map.affixes.length > 0) next.affixes = map.affixes;
+      if (map.affixRoll !== undefined && Number.isFinite(map.affixRoll)) next.affixRoll = map.affixRoll;
+      return withConfig(doc, { map: Object.keys(next).length === 0 ? undefined : next });
+    }),
 
   setInCombatRegenMulti: (multi) =>
     edit(set, (doc) =>

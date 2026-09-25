@@ -315,7 +315,7 @@ export function resources(
       path: "tree",
       message:
         `\`out_of_combat_regen\` is gated on \`is_in_combat_is_false\`, and \`in_combat\` is a ` +
-        `ten-second cooldown re-stamped by every hit you land or take — so it contributes nothing ` +
+        `ten-second cooldown re-stamped by every hit you land or take, so it contributes nothing ` +
         `during a fight. The in-combat column is the one a rotation has to live on.`,
     });
   }
@@ -442,7 +442,7 @@ export function leech(input: LeechInput): Leech {
         path: "tree",
         message:
           `This build leeches ${generatedPerSecond.toFixed(1)} ${resource} a second and ` +
-          `\`${resource}_leech_cap\` is 0, so none of it is ever paid out — ` +
+          `\`${resource}_leech_cap\` is 0, so none of it is ever paid out. ` +
           `\`onSecondUseLeeches\` clamps the bank to \`cap% × max\` before draining it. The base ` +
           `for every pool is 5, so something in this build has taken it away.`,
       });

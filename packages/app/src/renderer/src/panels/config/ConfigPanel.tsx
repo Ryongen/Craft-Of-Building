@@ -20,7 +20,6 @@ import {
   TARGET_PRESETS,
   entry,
   isFoodBuffEnabled,
-  mobAffixName,
   serverConfigNumber,
   statBuffName,
   buildTargetEnemy,
@@ -61,16 +60,20 @@ import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { FoodDiversity } from "./FoodDiversity.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
+import { MobAffixPicker, type AffixSort } from "./MobAffixPicker.js";
+import { MapSection } from "./MapSection.js";
 
 export function ConfigPanel(): ReactNode {
   return (
     <div className="panel">
       <EnemySection />
-      <ServerSection />
-      {/* The health scenario sits above the conditions list because it *is* the answer to nine of
-          the entries that list used to carry — see `HealthScenario`. */}
-      <HealthScenario />
+      {/* Directly under the enemy: most conditions are about the fight, so they are read with it. */}
       <ConditionsSection />
+      {/* The map is the rest of "where is this fight": its affixes land on the enemy above and on
+          you, and its tier scales the mob. */}
+      <MapSection />
+      <ServerSection />
+      <HealthScenario />
       {/* Augments live on the Items tab: they are socketed gems, not settings, and a player
           looks for them beside the gear. One editor, one place — two would be two ideas about
           what an unset roll means. */}
@@ -124,7 +127,7 @@ function ServerSection(): ReactNode {
             <span className="faint text-sm">
               {packSaid
                 ? "read from your install's server config"
-                : "this pack's shipped value — no server config was found to read"}
+                : "this pack's default (no server config found)"}
             </span>
           ) : (
             <button onClick={() => setInCombatRegenMulti(undefined)}>
@@ -135,17 +138,17 @@ function ServerSection(): ReactNode {
         <>
         <Plain>
           <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
-            In-combat regeneration is a server setting read from your server configuration file—override it here if the server you play on differs. Craft to Exile 2 ships with 1.0; Mine and Slash's default is 0.5. You count as in combat for ten seconds after taking or dealing a hit, so an active rotation never leaves combat—this scales the regeneration column listed on the Defence tab and spent by the Damage tab's Sustain card. Energy is exempt and is never scaled by this multiplier.
+            A server setting, read from your install's server config. Change it if your server uses a different value. Craft to Exile 2 uses 1.0, Mine and Slash defaults to 0.5. You stay in combat for ten seconds after any hit, so a rotation is always in combat. This scales regeneration on the Defence tab and in the Sustain card. Energy isn't affected.
           </div>
         </Plain>
         <Tech>
           <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
             <code>in_combat_regen_multi</code> is a <strong>server</strong> config rather than pack
             data, and is read from <code>defaultconfigs/mine_and_slash-server.toml</code> in the
-            install you extracted from — override it here if the server you play on differs. Craft
+            install you extracted from. Override it here if your server differs. Craft
             to Exile 2 ships <code>1.0</code>; Mine and Slash&apos;s own default is <code>0.5</code>.{" "}
             <code>in_combat</code> is a ten-second cooldown that
-            every hit you land or take re-stamps, so a rotation never leaves it — this scales the
+            every hit you land or take re-stamps, so a rotation never leaves it. This scales the
             regeneration column the Defence tab prints and the one the Damage tab&apos;s Sustain card
             spends. Energy is exempt by name in <code>RestoreResourceEvent.activate</code> and is
             never scaled by it.
@@ -156,6 +159,12 @@ function ServerSection(): ReactNode {
     </>
   );
 }
+
+const AFFIX_SORTS: readonly [AffixSort["by"], string][] = [
+  ["name", "Name"],
+  ["dps", "DPS lost"],
+  ["ehp", "eHP lost"],
+];
 
 function EnemySection(): ReactNode {
   const doc = useBuild((s) => s.doc);
@@ -183,13 +192,20 @@ function EnemySection(): ReactNode {
     [world.snapshot, enemy.offence, enemy.level, doc.character.level, preset],
   );
 
-  const affixes = useMemo(
-    () => mobAffixIds(world.snapshot).flatMap((id) => mobAffix(world.snapshot, id) ?? []),
-    [world.snapshot],
-  );
-  const toggleAffix = (id: string): void => {
-    const held = enemy.affixes ?? [];
-    const next = held.includes(id) ? held.filter((x) => x !== id) : [...held, id];
+  const { prefixIds, suffixIds } = useMemo(() => {
+    const all = mobAffixIds(world.snapshot).flatMap((id) => mobAffix(world.snapshot, id) ?? []);
+    return {
+      prefixIds: all.filter((a) => a.type !== "suffix").map((a) => a.id),
+      suffixIds: all.filter((a) => a.type === "suffix").map((a) => a.id),
+    };
+  }, [world.snapshot]);
+  const [affixSort, setAffixSort] = useState<AffixSort>({ by: "name", desc: true });
+  const mobLevel = enemy.level ?? doc.character.level;
+  // Picking a slot replaces everything of that kind, so an older document holding two prefixes
+  // comes out with the one the game allows.
+  const setSlot = (slot: readonly string[], id: string | undefined): void => {
+    const others = (enemy.affixes ?? []).filter((held) => !slot.includes(held));
+    const next = id === undefined ? others : [...others, id];
     patch({ affixes: next.length > 0 ? next : undefined });
   };
 
@@ -234,7 +250,7 @@ function EnemySection(): ReactNode {
           Stated, never derived. Building a mob from <code>mmorpg_entity</code> and its rarity
           would put a second unverified stat calculation underneath every damage number, and a
           mismatch against the game would no longer say which half was wrong. A preset below
-          <em> fills</em> these rows and then gets out of the way &mdash; the engine still reads
+          <em> fills</em> these rows and then gets out of the way; the engine still reads
           only what is written here, and every field stays yours to edit.
         </div>
       </Tech>
@@ -266,7 +282,7 @@ function EnemySection(): ReactNode {
         <>
         <Plain>
           <div className="faint text-sm mb-5" style={{ maxWidth: 760 }}>
-            The Training Dummy mod's targets match standard monster scaling: ten times the standard stat multiplier in level-scaled armour, plus that same amount as flat, unscaled non-physical resistance. No mob in Mine and Slash has innate physical resistance, armour alone stops physical damage and a boss's raw resistance absorbs penetration before hitting the 75% cap. The max resistance target works differently: it adjusts armour to achieve 75% physical mitigation, roughly three times what a boss possesses.
+            These match the Training Dummy mod's targets: armour scaled by level and rarity, and the same value as flat resistance to every non-physical element. Mobs have no physical resistance, only armour. Max resist is different: it sets armour for 75% physical mitigation, about three times what a boss has.
           </div>
         </Plain>
         <Tech>
@@ -274,7 +290,7 @@ function EnemySection(): ReactNode {
             The Training Dummy mod&apos;s own targets, built the same way:{" "}
             <code>10 &times; stat_multi</code> of armour put through the level curve, and that same
             number again as every non-physical resistance, flat and unscaled. No mob in Mine and
-            Slash has physical resistance &mdash; armour alone stops a physical hit &mdash; and a
+            Slash has physical resistance (armour alone stops a physical hit), and a
             boss&apos;s raw resistance swallows that much penetration before the 75% clamp is even
             reached. <strong>Max resist</strong> is the one that is not a rarity: it solves its
             armour for 75% physical mitigation, as the dummy does, which is roughly three times a
@@ -399,19 +415,15 @@ function EnemySection(): ReactNode {
         <>
         <Plain>
           <div className="faint text-sm mt-3">
-            This is the mob's Minecraft attack damage, before the game scales it. Craft to Exile 2
-            multiplies it heavily with level and again by the mob's rarity — a level 100 common mob
-            hits for about 170 times what it looks like here, a Mythic for 1.75 times that again — so
-            the raw number beside it is the one your defences actually face.
-            Leaving both blank is fine; the Defence tab then tells you the size of a single hit
-            you survive, and stays quiet about how long you last.
+            The mob's Minecraft attack damage, before scaling. The game multiplies it a lot by level
+            and rarity (a level 100 common mob hits about 170 times harder, a Mythic 1.75 times more
+            on top), so the raw number beside it is what your defences actually face. You can leave
+            both blank; the Defence tab then shows the biggest hit you survive but not how long you last.
           </div>
           <div className="faint text-sm mt-2">
-            These profiles land closer together than you would expect, and that is the game, not a
-            rounding error: a mob's own attack damage counts for a third of a percent against a
-            flat bonus every mob gets, so a zombie and a vindicator hit within one percent of each
-            other. What really differs between them is how fast they swing — and what really makes
-            a hit hurt is the mob's affixes, above.
+            These profiles are close together on purpose. A mob's own attack damage is tiny next to
+            the flat bonus every mob gets, so a zombie and a vindicator hit within 1% of each other.
+            What differs is how fast they swing. What makes a hit hurt is the affixes above.
           </div>
         </Plain>
         <Tech>
@@ -422,7 +434,7 @@ function EnemySection(): ReactNode {
               vanilla_mob_dmg_as_exile_dmg
             </code>
             , then <code>StatScaling.MOB_DAMAGE.scale(num, level)</code>{" "}
-            <em>last</em> — {"1 + 0.25 * (lvl - 1)"} on this pack's <code>original_balance</code>,
+            <em>last</em>: {"1 + 0.25 * (lvl - 1)"} on this pack's <code>original_balance</code>,
             so x25.75 at level 100. That is the event's base; <code>DamageEvent.addMobDamageMultipliers</code>{" "}
             then adds <code>MOB_DMG_POWER_SCALING_BASE * MOB_DMG_POWER_SCALING^lvl</code> (x6.66 at
             level 100) and the rarity's <code>dmg_multi</code>, taken from the target preset. Only <code>getAmount()</code> is typed here: it is the vanilla{" "}
@@ -446,22 +458,60 @@ function EnemySection(): ReactNode {
             what makes a real mob tougher than the preset
           </span>
         </div>
-        <div className="row wrap gap-5">
-          {affixes.map((affix) => {
-            const on = (enemy.affixes ?? []).includes(affix.id);
-            return (
-              <label key={affix.id} className="row gap-3" style={{ alignItems: "center" }}>
-                <input type="checkbox" checked={on} onChange={() => toggleAffix(affix.id)} />
-                <span className={on ? "" : "faint"}>{mobAffixName(world.snapshot, affix.id)}</span>
-                <span className="badge mono text-sm">{affix.type}</span>
-              </label>
-            );
-          })}
+        <div className="row wrap gap-6" style={{ alignItems: "flex-end" }}>
+          <div className="field">
+            <label>Prefix</label>
+            <MobAffixPicker
+              kind="prefix"
+              affixIds={prefixIds}
+              value={(enemy.affixes ?? []).find((id) => prefixIds.includes(id))}
+              onChange={(id) => setSlot(prefixIds, id)}
+              sort={affixSort}
+              mobLevel={mobLevel}
+            />
+          </div>
+          <div className="field">
+            <label>Suffix</label>
+            <MobAffixPicker
+              kind="suffix"
+              affixIds={suffixIds}
+              value={(enemy.affixes ?? []).find((id) => suffixIds.includes(id))}
+              onChange={(id) => setSlot(suffixIds, id)}
+              sort={affixSort}
+              mobLevel={mobLevel}
+            />
+          </div>
+          <div className="field">
+            <label>Sort by</label>
+            <div className="row">
+              {AFFIX_SORTS.map(([by, text]) => {
+                const active = affixSort.by === by;
+                return (
+                  <button
+                    key={by}
+                    className={active ? "primary" : ""}
+                    title={
+                      by === "name"
+                        ? undefined
+                        : "Click again to flip between worst enemy first and easiest first"
+                    }
+                    onClick={() =>
+                      setAffixSort(active && by !== "name" ? { by, desc: !affixSort.desc } : { by, desc: true })
+                    }
+                  >
+                    {text}
+                    {active && by !== "name" && (affixSort.desc ? " ↓" : " ↑")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
         <div className="faint text-sm mt-3">
-          A mob rolls at most one prefix and one suffix; more than that is reported rather than
-          refused, because asking what three would cost is a fair question. Each resolves at the
-          enemy level above, not yours.
+          A mob rolls at most one prefix and one suffix. Each list shows how much Total DPS and
+          effective HP you lose to that affix versus an empty slot, at the enemy level above.
+          The mob&apos;s hit starts physical, so an affix that converts it to an element you resist
+          well shows as a gain. Flat damage bonuses don&apos;t change effective HP.
         </div>
 
         <div className="section-title">Resists</div>
@@ -504,7 +554,7 @@ function EnemySection(): ReactNode {
         <>
         <Plain>
           <div className="faint text-sm mt-3">
-            This stat adds to the mob base resistance cap rather than setting the cap directly, capped at an addition of {MAX_ELEMENTAL_RESIST}—exactly enough to reach the 90% hard cap and no higher.
+            This stat adds to the mob base resistance cap rather than setting the cap directly, up to +{MAX_ELEMENTAL_RESIST}, which is exactly enough to reach the 90% hard cap.
           </div>
         </Plain>
         <Tech>
@@ -512,7 +562,7 @@ function EnemySection(): ReactNode {
             <code>ElementalResist.getUsableValue</code> is{" "}
             <code>clamp(75 + max_&lt;element&gt;_resist, min, 90)</code>, so this is an{" "}
             <em>addition</em> to the cap rather than the cap itself, and{" "}
-            <code>MaxElementalResist.max</code> is {MAX_ELEMENTAL_RESIST} — exactly enough to reach
+            <code>MaxElementalResist.max</code> is {MAX_ELEMENTAL_RESIST}, exactly enough to reach
             the 90% hard cap and no more.
           </div>
         </Tech>
@@ -527,10 +577,10 @@ function EnemySection(): ReactNode {
           <div className="faint text-sm mt-3">
             Penetration is <strong>not</strong> floored at 0. <code>ElementalResist.min</code> is
             -300 and <code>getUsableValue</code> clamps to it, so enough penetration drives a
-            resist negative and the mitigation layer becomes a multiplier — up to x4.0 damage at
+            resist negative and the mitigation layer becomes a multiplier, up to x4.0 damage at
             -300. The one case where it is wasted is a resist of <em>exactly</em> 0: the stat is
             never swept, because <code>ElementalResistEffect</code> does not override{" "}
-            <code>runsOnZeroStat</code>. Armour is the mirror image — it does override it, so it
+            <code>runsOnZeroStat</code>. Armour is the opposite: it does override it, so it
             runs at 0 armour, and the sign flip on <code>afterPene</code> caps amplification at
             x1.9. Both asymmetries are in the mod, not here.
           </div>
@@ -571,13 +621,13 @@ function HealthScenario(): ReactNode {
       side: "target" as const,
       label: "Enemy health",
       value: config?.targetHealthPercent,
-      note: "Execute and opener bonuses — is_target_low_hp, is_target_near_full_hp, is_target_low.",
+      note: "Execute and opener bonuses: is_target_low_hp, is_target_near_full_hp, is_target_low.",
     },
     {
       side: "self" as const,
       label: "Your health",
       value: config?.selfHealthPercent,
-      note: "Low-life bonuses — is_source_low_hp, is_source_very_low_hp.",
+      note: "Low-life bonuses: is_source_low_hp, is_source_very_low_hp.",
     },
   ];
 
@@ -628,8 +678,7 @@ function HealthScenario(): ReactNode {
             <div className="faint text-sm">
               {row.value === undefined ? (
                 <>
-                  Not stated — every condition below that reads it is treated as inactive and
-                  reported. {row.note}
+                  Not set, so conditions that check it count as inactive. {row.note}
                 </>
               ) : (
                 row.note
@@ -702,7 +751,7 @@ function ConditionsSection(): ReactNode {
       {
         id: "other",
         title: "About the world",
-        note: "The time of day, the light level, how the attack was made — neither side owns these.",
+        note: "Time of day, light level and how the attack was made.",
         ids: [],
       },
     ];
@@ -791,8 +840,8 @@ function FoodSection(): ReactNode {
       </Plain>
       <Tech>
         <div className="notice">
-          <code>StatBuff.getStats</code> rolls at <code>perc + lvl</code> — the crafted roll{" "}
-          <em>plus</em> the food's level — so a level {level} food lands {level} points past its
+          <code>StatBuff.getStats</code> rolls at <code>perc + lvl</code> (the crafted roll{" "}
+          <em>plus</em> the food's level), so a level {level} food lands {level} points past its
           own band. The roll below is the crafted part alone, as the game stores it.
         </div>
       </Tech>

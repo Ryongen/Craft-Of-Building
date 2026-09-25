@@ -65,13 +65,13 @@ export function BasicAttackCard(): ReactNode {
         <>
         <Plain>
           <div className="faint mb-4">
-            Nothing to swing. Unarmed characters have no basic attack, but entering values below is still useful—the game applies weapon attack damage bonuses to total damage whether a weapon is equipped or not.
+            No weapon, so no basic attack. The values below still matter, since attack damage adds to total damage with or without a weapon.
           </div>
         </Plain>
         <Tech>
           <div className="faint mb-4">
             Nothing to swing. A character holding no weapon has no basic attack, and the two boxes
-            below are still worth filling in — <code>attack_damage_compat</code> reads the attribute
+            below are still worth filling in: <code>attack_damage_compat</code> reads the attribute
             whether or not anything is equipped.
           </div>
         </Tech>
@@ -105,7 +105,7 @@ export function BasicAttackCard(): ReactNode {
             <>
             <Plain>
               <div className="notice">
-                This attack rate was imported directly as a final calculated value rather than computed from base weapon speed and attack speed bonuses. It accurately reflects the captured character state, but will not update when gear changes until separated below.
+                This attack rate was imported as a final value. It's accurate for the capture, but won't change with your gear until you split it below.
               </div>
             </Plain>
             <Tech>
@@ -125,7 +125,7 @@ export function BasicAttackCard(): ReactNode {
           <ProcTable
             procs={basic.procs}
             total={basic.procDps}
-            hint="Spells your swings cast: gear procs, and the ones a buff hands you — Ice-Tipped Blade's Cryogenic Rupture, Whiteout Sovereign's storms. A proc that spends a debuff fires no faster than your skills put it back."
+            hint="Spells your swings cast, from gear and from buffs like Ice-Tipped Blade (Cryogenic Rupture) and Whiteout Sovereign. Procs that use up a debuff can't fire faster than your skills reapply it."
           />
         </>
       )}
@@ -191,7 +191,7 @@ function WeaponSpeed(): ReactNode {
       <>
       <Plain>
         <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-          Base attack speed combines weapon speed with your character's attack speed stat, but exported character files store only the final result. Separating base weapon speed from attack speed stats allows calculations to update dynamically when gear changes. Axes attack around 1.2 times per second, while daggers hit around 2.5 times per second.
+          Captures only store your final attack rate. Entering the weapon's base speed lets it update when your gear changes. Axes are about 1.2/s, daggers about 2.5/s.
         </div>
       </Plain>
       <Tech>
@@ -272,13 +272,13 @@ function WeaponAttackDamage(): ReactNode {
       <>
       <Plain>
         <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-          Weapon attack damage is a base Minecraft item property that export tools cannot read directly, it must come from an imported character snapshot or be entered here manually. Half of this value becomes total damage, which boosts all damage types across every hit, so leaving this empty creates a heavy loss on the Damage tab.
+          Weapon attack damage can't be read from the pack. It comes from a capture, or you can enter it here. Half of it becomes total damage for every hit, so leaving it empty makes all damage much lower.
         </div>
       </Plain>
       <Tech>
         <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
           A weapon&apos;s attack damage is a Minecraft item property, so no registry the extractor
-          reads can supply it — only a capture taken <em>with the weapon in hand</em>, or this box.{" "}
+          reads can supply it; only a capture taken <em>with the weapon in hand</em>, or this box.{" "}
           <code>attack_damage_compat</code> halves it into <code>total_damage</code>, which is
           additive damage with no condition attached: it moves every element of every hit, so a
           missing weapon here is a flat shortfall on the whole Damage tab.

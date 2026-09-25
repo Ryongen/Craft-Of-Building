@@ -31,7 +31,7 @@ export function OverlapCard({ dps }: { dps: DpsResult }): ReactNode {
           <Figure
             label="Projectiles alive"
             value={num(overlap.projectilesAlive, 0)}
-            hint="Carriers in the world at the same time — overlapping casts times the projectiles each throws"
+            hint="Projectiles alive at once: overlapping casts times projectiles per cast"
           />
         )}
         <Figure
@@ -76,11 +76,9 @@ export function OverlapCard({ dps }: { dps: DpsResult }): ReactNode {
       </table>
 
       <div className="faint text-sm mt-3 prose">
-        Casting again before the last carriers expire does <strong>not</strong> multiply the DPS
-        above &mdash; that figure already amortises each cast&apos;s whole output over the cast
-        interval, so overlap is in it by construction. What overlap costs you is the{" "}
-        <em>start</em> of a fight: the row above is what a target has actually taken after that
-        long, and it only reaches the headline rate once the pipeline is full.
+        Overlapping casts do <strong>not</strong> multiply the DPS above; it already includes
+        each cast&apos;s full damage. Overlap only matters at the <em>start</em> of a fight: the row
+        above shows damage actually dealt by that time, which reaches full DPS once casts overlap.
       </div>
     </div>
   );

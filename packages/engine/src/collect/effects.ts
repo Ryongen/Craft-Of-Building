@@ -165,7 +165,7 @@ export function collectAuras(env: Env, auras: readonly AuraSetup[]): StatContext
         "aura-roll-unknown",
         path,
         `\`${aura.id}\` rolls its stats on the Augment's gem (\`SkillGemData.getStatPercent()\`) ` +
-          `and no \`rollPercent\` was recorded, so it is computed at ${roll.floor}% — the floor ` +
+          `and no \`rollPercent\` was recorded, so it is computed at ${roll.floor}%, the floor ` +
           `of ${aura.rarity === undefined ? "the full range" : `a "${aura.rarity}" gem's band`}. ` +
           `Re-capture with an exporter that records the gem's roll.`,
       );
@@ -221,7 +221,7 @@ export function collectFoodBuffs(env: Env, buffs: readonly FoodBuffSetup[]): Sta
         "food-roll-unknown",
         path,
         `\`${buff.id}\` rolls at \`perc + lvl\` and no \`rollPercent\` was recorded, so it is ` +
-          `computed at 0% — the weakest food of its level, not the one that was eaten.`,
+          `computed at 0% (the weakest food of its level), not the one that was eaten.`,
       );
     }
 
@@ -317,7 +317,7 @@ function reportDerived(
       "exile-effect-roll-unknown",
       pathOf(option),
       `\`${option.id}\`'s stats roll at a percent taken from the rank of whatever applied it, ` +
-        `and nothing in the build says what would — no capture recorded it and no equipped skill ` +
+        `and nothing in the build says what would: no capture recorded it and no equipped skill ` +
         `grants it. It is computed at 0%, so a band like \`${exampleStat}\` reads at its minimum.`,
     );
     return;

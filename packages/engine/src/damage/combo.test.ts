@@ -30,13 +30,14 @@ function comboSpell(
     consumes?: string | string[];
     grants?: string | string[];
     castSpeedTicks?: number;
+    cooldownTicks?: number;
   } = {},
 ): Record<string, unknown> {
   const spell = spellEntry(id, "Physical", "hit100", {
     config: {
       tags: { tags: [] },
       use_support_gems_from: "",
-      cooldown_ticks: 0,
+      cooldown_ticks: opts.cooldownTicks ?? 0,
       cast_speed_ticks: opts.castSpeedTicks ?? 20,
       cast_time_ticks: 0,
       times_to_cast: 1,
@@ -427,4 +428,234 @@ test("a resource is up because the pass delivers it, not because the build could
   const result = simulateDps(build, snapshot, {});
   assert.ok(result);
   assert.deepEqual(result.sources.map((s) => s.source.valueCalcId), ["hit100"]);
+});
+
+// ---------------------------------------------------------------------------
+// Which charge state to play for
+// ---------------------------------------------------------------------------
+
+/**
+ * `phase_dive` in miniature: one part that wants alpha and beta, one that wants all three, and
+ * an ungated part that clears the lot. `top` is what the all-three part hits for, which is the
+ * knob that decides whether the fusion detour pays for itself.
+ */
+function tieredSpell(id: string, top: string): Record<string, unknown> {
+  const spell = spellEntry(id, "Physical", "hit100", {
+    config: {
+      tags: { tags: [] },
+      use_support_gems_from: "",
+      cooldown_ticks: 0,
+      cast_speed_ticks: 20,
+      cast_time_ticks: 0,
+      times_to_cast: 1,
+    },
+  });
+  const has = (charge: string) => ({ type: "caster_has_mns_effect", map: { exile_potion_id: charge } });
+  const hits = (calc: string, charges: string[]) => ({
+    acts: [{ type: "damage", map: { element: "Physical", value_calculation: calc } }],
+    ifs: [{ type: "on_spell_cast", map: {} }, ...charges.map(has)],
+    targets: [{ type: "aoe", map: { radius: 3, selection_type: "RADIUS", en_predicate: "enemies" } }],
+    en_preds: [],
+  });
+  (spell["attached"] as Record<string, unknown>)["on_cast"] = [
+    hits("hit100", ["alpha", "beta"]),
+    hits(top, ["alpha", "beta", "gamma"]),
+    {
+      acts: ["alpha", "beta", "gamma"].map((charge) => ({
+        type: "exile_effect",
+        map: { exile_potion_id: charge, potion_action: "REMOVE_STACKS", count: 1, potion_dur: 20 },
+      })),
+      ifs: [{ type: "on_spell_cast", map: {} }],
+      targets: [{ type: "self", map: {} }],
+      en_preds: [],
+    },
+  ];
+  return spell;
+}
+
+const TIERED = {
+  ...CHARGES,
+  mmorpg_value_calc: {
+    ...CHARGES.mmorpg_value_calc,
+    hit50: valueCalcEntry("hit50", { min: 50, max: 50 }),
+  },
+  mmorpg_spells: {
+    ...CHARGES.mmorpg_spells,
+    // All three up: 1100 over turbo, fusion, turbo, fire — four 1.05s presses. Beats 100 over two.
+    rich: tieredSpell("rich", "hit1000"),
+    // All three up: 150 over four presses. Stopping at turbo is 100 over two, which is more per second.
+    lean: tieredSpell("lean", "hit50"),
+  },
+};
+
+function tieredDps(spellIds: string[], main: string) {
+  const snapshot = engineSnapshot(TIERED);
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: spellIds.map((spellId) => ({ spellId, main: spellId === main })),
+  } as BuildDoc;
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result, `${main} produced no result`);
+  return result;
+}
+
+test("the full pass is kept when the charge it detours for is worth the detour", () => {
+  const result = tieredDps(["rich", "turbo", "fusion"], "rich");
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["turbo", "fusion", "turbo", "rich"]);
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta", "gamma"]);
+  closeTo(result.comboDps, 1100 / 4.2);
+  const chosen = result.rotations?.filter((r) => r.chosen);
+  assert.equal(chosen?.length, 1);
+  assert.deepEqual(chosen?.[0]?.holds, ["alpha", "beta", "gamma"]);
+});
+
+test("a shorter pass wins when it lands more damage per second", () => {
+  const result = tieredDps(["lean", "turbo", "fusion"], "lean");
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["turbo", "lean"],
+    "stopping at alpha + beta skips fusion and the second turbo");
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta"]);
+  closeTo(result.comboDps, 100 / 2.1);
+  const full = result.rotations?.find((r) => r.holds.length === 3);
+  closeTo(full?.dps, 150 / 4.2);
+  assert.equal(full?.chosen, false);
+  assert.ok(result.diagnostics.some((d) => d.code === "combo-partial-rotation"));
+});
+
+test("a partial pass stands in for a full one the bar cannot complete", () => {
+  // No fusion: gamma is out of reach. The full pass is still listed, and broken, but the
+  // alpha + beta pass is a real rotation and is what the figures describe.
+  const result = tieredDps(["rich", "turbo"], "rich");
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta"]);
+  assert.deepEqual(result.combo?.broken, []);
+  closeTo(result.comboDps, 100 / 2.1);
+  assert.ok(result.rotations?.some((r) => r.broken && !r.chosen));
+});
+
+test("a broken chain with no partial worth playing still reports the break", () => {
+  const result = chargeDps(["triple", "zap"], "triple");
+  assert.deepEqual(result.combo?.broken.map((b) => b.effectId), ["beta"]);
+  assert.equal(result.rotations?.find((r) => r.chosen)?.broken, true);
+});
+
+// ---------------------------------------------------------------------------
+// Cooldowns run while you press the rest
+// ---------------------------------------------------------------------------
+
+function cooldownDps(skills: Record<string, Record<string, unknown>>, main: string) {
+  const snapshot = engineSnapshot({ ...REGISTRIES, mmorpg_spells: skills });
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: Object.keys(skills).map((spellId) => ({ spellId, main: spellId === main })),
+  } as BuildDoc;
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result, `${main} produced no result`);
+  return result;
+}
+
+test("a finisher's cooldown absorbs the presses made while it recovers", () => {
+  // A 3s finisher behind one 1.05s starter is a 3.05s pass: the starter is pressed during the
+  // wait. Adding the two would charge the starter twice over.
+  const result = cooldownDps({
+    starter: comboSpell("starter", { grants: "link_a" }),
+    slow: comboSpell("slow", { needs: "link_a", consumes: "link_a", cooldownTicks: 60 }),
+  }, "slow");
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["starter", "slow"]);
+  closeTo(result.combo?.secondsPerCast, result.rate.cycleSeconds, "paced by the finisher alone");
+  assert.equal(result.combo?.steps.find((s) => s.spellId === "slow")?.cooldownBound, true);
+});
+
+test("a supplier pressed twice in a pass waits out its cooldown between the two", () => {
+  // turbo, fusion, turbo, triple: turbo's 3s cooldown has to pass between its two presses and
+  // again before the next pass comes round, so the pass is at least six seconds.
+  const result = cooldownDps({
+    turbo: comboSpell("turbo", { grants: ["alpha", "beta"], cooldownTicks: 60 }),
+    fusion: comboSpell("fusion", { needs: ["alpha", "beta"], consumes: ["alpha", "beta"], grants: "gamma" }),
+    triple: comboSpell("triple", { needs: ["alpha", "beta", "gamma"], consumes: ["alpha", "beta", "gamma"] }),
+  }, "triple");
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["turbo", "fusion", "turbo", "triple"]);
+  // Each turbo gap is one turbo press plus one other: 2.1s, raised to turbo's own cycle.
+  const turboCycle = 3.05;
+  closeTo(result.combo?.secondsPerCast, 2 * turboCycle);
+});
+
+// ---------------------------------------------------------------------------
+// Charges the document states
+// ---------------------------------------------------------------------------
+
+test("a charge set by hand is taken as given, and the rotations say so", () => {
+  // The defect: every candidate was priced with the document's gamma-on, alpha-off, beta-off,
+  // while the table labelled them "alpha + beta + gamma", "alpha + beta" and so on — four rows,
+  // one branch, the same DPS on each.
+  const snapshot = engineSnapshot(TIERED);
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: ["rich", "turbo", "fusion"].map((spellId) => ({ spellId, main: spellId === "rich" })),
+    config: { effects: { alpha: false, beta: false, gamma: true } },
+  } as unknown as BuildDoc;
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result);
+  assert.deepEqual([...(result.combo?.fixed ?? [])].sort(), ["alpha", "beta", "gamma"]);
+  assert.deepEqual(result.combo?.holds, ["gamma"], "labelled with the branch it is priced on");
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["rich"], "nothing pressed to supply it");
+  // Nothing left to choose, so there is no comparison to show.
+  assert.equal(result.rotations, undefined);
+});
+
+test("a charge set by hand narrows the search to the others", () => {
+  const snapshot = engineSnapshot(TIERED);
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: ["rich", "turbo", "fusion"].map((spellId) => ({ spellId, main: spellId === "rich" })),
+    config: { effects: { gamma: true } },
+  } as unknown as BuildDoc;
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result);
+  for (const rotation of result.rotations ?? []) {
+    assert.ok(rotation.holds.includes("gamma"), "every candidate holds the gamma the document states");
+    assert.ok(!rotation.presses.includes("fusion"), "and none of them presses fusion to make it");
+  }
+  // gamma stated up: turbo, fire lands the all-three branch in two presses.
+  assert.deepEqual(result.combo?.steps.map((s) => s.spellId), ["turbo", "rich"]);
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta", "gamma"]);
+});
+
+test("on a tie the rotation with fewer presses wins", () => {
+  // Both branches hit for 100 and the finisher is paced by its own 3s cooldown, so `zap` first
+  // buys nothing — the zap fits inside the wait and the damage is the same. Pressing it alone is
+  // the one to play, and it leaves the global cooldown free for the rest of the bar.
+  const even = branchSpell("even", "alpha");
+  const parts = (even["attached"] as Record<string, unknown>)["on_cast"] as Record<string, unknown>[];
+  (parts[1]!["acts"] as Record<string, unknown>[])[0]!["map"] = {
+    element: "Physical",
+    value_calculation: "hit100",
+  };
+  (even["config"] as Record<string, unknown>)["cooldown_ticks"] = 60;
+  const snapshot = engineSnapshot({ ...CHARGES, mmorpg_spells: { ...CHARGES.mmorpg_spells, even } });
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: ["even", "zap"].map((spellId) => ({ spellId, main: spellId === "even" })),
+  } as BuildDoc;
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result);
+  const [withZap, alone] = [
+    result.rotations?.find((r) => r.holds.includes("alpha")),
+    result.rotations?.find((r) => r.holds.length === 0),
+  ];
+  assert.ok(withZap?.dps !== undefined && alone?.dps !== undefined);
+  closeTo(withZap.dps, alone.dps, "the two passes land the same damage per second");
+  assert.equal(alone.chosen, true, "and the one without the extra press is kept");
+});
+
+test("a pass for one charge presses the supplier that hands over only that one", () => {
+  // `turbo` first on the bar used to win every alpha request and arrive holding beta as well, so
+  // "alpha only" — `parallel_convergence`'s only damaging branch — was never priced.
+  const result = tieredDps(["rich", "turbo", "zap", "fusion"], "rich");
+  const alphaOnly = result.rotations?.find((r) => r.holds.join() === "alpha");
+  assert.ok(alphaOnly, "alpha alone is one of the rotations priced");
+  assert.deepEqual(alphaOnly.presses, ["zap", "rich"]);
 });

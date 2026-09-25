@@ -29,8 +29,7 @@ export const DEFENCE_COPY = {
 
   magicShield: {
     plain:
-      "Absorbs before health. Half of a chaos hit walks past it, unless something on your build " +
-      "stops chaos bypassing the shield",
+      "Absorbs damage before health. Half of chaos damage bypasses it unless your build prevents that",
     tech:
       "Absorbs before health. Half of a chaos hit walks past it unless " +
       "chaos_doesnt_bypass_magic_shield is on",

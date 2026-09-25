@@ -150,7 +150,7 @@ function collectSupportGems(env: Env, skill: SkillSetup, path: string): StatCont
         "gem-roll-unknown",
         at,
         `\`${link.id}\` rolls its stats at its own \`SkillGemData.getStatPercent()\`, which this ` +
-          `document does not record, so it is computed at ${roll.floor}% — the floor of ` +
+          `document does not record, so it is computed at ${roll.floor}%, the floor of ` +
           `${link.rarity === undefined ? "the full range" : `a "${link.rarity}" gem's band`}, ` +
           `not the real value.`,
       );

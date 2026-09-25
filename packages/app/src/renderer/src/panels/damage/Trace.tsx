@@ -124,8 +124,8 @@ export function TraceBlock({
           <span
             className="badge mono"
             title={
-              "One scalar, spent by every mitigation layer that reads it — the resists and " +
-              "armour. Each of those rows shows what it spent."
+              "One value, used by every mitigation layer that reads it (resists and armour). " +
+              "Each of those rows shows how much it used."
             }
           >
             penetration {smart(trace.penetration)}
@@ -167,7 +167,7 @@ export function TraceBlock({
       {trace.moreMultis.length > 0 && (
         <>
           <div className="faint text-sm mt-3">
-            Multipliers — held out of every layer and applied last
+            Multipliers, applied last
           </div>
           <div className="step-group">
             {trace.moreMultis.map((more, index) => (
@@ -398,8 +398,8 @@ function ContributionRow({
       {...(fromTarget && origin === undefined && mitigation === undefined
         ? {
             title:
-              "The target's own stat, straight off the enemy preset — nothing this build does " +
-              "modifies it. See the Target card.",
+              "The target's own stat from the enemy preset. Nothing on your build changes it. " +
+              "See the Target card.",
           }
         : {})}
     >
@@ -490,7 +490,7 @@ function MoreRow({ more, ambiguous }: { more: MoreStep; ambiguous: boolean }): R
               title={
                 `\`${more.statId}\`` +
                 (more.effectId === undefined ? "" : `, written by \`${more.effectId}\``) +
-                ". Another multiplier on this hit prints the same name — either a second stat " +
+                ". Another multiplier on this hit has the same name: either a second stat " +
                 "the pack names identically, or a second MULTIPLICATIVE_DAMAGE block of this " +
                 "one, which the game records and prints as its own row."
               }
@@ -571,8 +571,7 @@ function TargetOrigin({
         value={`${num(declared, 2)}${sheetUnit}`}
         tone={valueTone(declared, true)}
         title={
-          "What the enemy preset, or the Target card, says this mob has before anything you do " +
-          "to it — whatever Config is set to, by hand or by a preset."
+          "What this mob has before anything you do to it, from Config or the Target card."
         }
       />
       {mods.map((mod, i) => (
@@ -730,8 +729,8 @@ function adjustmentOf(
       from: afterPenetration,
       label: "capped",
       title:
-        `Resistance is usable up to ${num(cap, 2)}% — 75, plus this mob's own max-resist stat, ` +
-        `clamped to 90. The subtraction came to more than that.`,
+        `Resistance caps at ${num(cap, 2)}% (75 plus this mob's max resist, up to 90). ` +
+        `The result was above that.`,
     };
   }
   if (applied <= min + 0.005) {
@@ -849,8 +848,7 @@ function StatSources({
             : "What this stat resolves to, on the sheet the damage sweep read." +
               (breakdown.stat.dmgMulti === 1
                 ? ""
-                : " Its MORE modifiers are not in it — they are carried separately and spent " +
-                  "under Multipliers.")
+                : " Its MORE modifiers aren't included here; they're applied under Multipliers.")
         }
       />
       {groups.map((group) => (
@@ -900,11 +898,10 @@ function StatSources({
           title={
             kind === "more"
               ? `No MORE modifier of \`${statId}\` is on the sheet, so this multiplier was ` +
-                `derived rather than granted — a core-stat pass or a transfer. The Stats tab ` +
-                `has the full picture.`
+                `derived rather than granted (from core stats or a conversion). See the Stats tab ` +
+                `for details.`
               : `\`${statId}\` has no modifier behind it, so it is either a base stat every ` +
-                `character has or something the pipeline derived — the Stats tab has the full ` +
-                `picture.`
+                `character has or something derived. See the Stats tab for details.`
           }
         />
       )}

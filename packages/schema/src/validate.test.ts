@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BUILD_DOC_VERSION, isAuraEnabled, type BuildDoc, type Item } from "./build-doc.js";
+import { BUILD_DOC_VERSION, isAuraEnabled, type BuildDoc, type Item, type MapSetup } from "./build-doc.js";
 import { isLegal, validateBuild, type Diagnostic } from "./validate.js";
 import { countOmenPieces, omenBuckets, omenStatPercent } from "./queries.js";
 import { BALANCE, RARITIES, baseGear, grid, makeSnapshot, rarity, standardSnapshot } from "./test-support.js";
@@ -1414,4 +1414,40 @@ test("a stage's level is a level, and an active stage that disagrees with the ch
     activeStage: "s9",
   });
   assert.deepEqual(codes(validateBuild(orphaned, snapshot), "warning"), ["unknown-active-stage"]);
+});
+
+test("a map names affixes a map can roll, at a tier and roll the game can make", () => {
+  const snapshot = makeSnapshot({
+    mmorpg_gear_rarity: {
+      rare: {
+        id: "rare",
+        type: "NORMAL",
+        item_tier: 2,
+        min_affixes: 1,
+        map_tiers: { min: 0, max: 40 },
+        stat_percents: { min: 35, max: 51 },
+      },
+    },
+    mmorpg_map_affix: {
+      fire_res: { id: "fire_res", affected: "Mobs", req: "", weight: 1000, stats: [] },
+      armor: { id: "armor", affected: "Mobs", req: "", weight: 1000, stats: [] },
+      prophecy_hp: { id: "prophecy_hp", affected: "Players", req: "prophecy", weight: 1000, stats: [] },
+      bonus_exp: { id: "bonus_exp", affected: "Players", req: "", weight: 0, stats: [] },
+    },
+  });
+  const run = (map: MapSetup) =>
+    validateBuild(build({ config: { map } }), snapshot).filter((d) => d.path.startsWith("config.map"));
+
+  assert.deepEqual(codes(run({ tier: 30, affixes: ["fire_res"] })), []);
+  assert.deepEqual(codes(run({ affixes: ["nope"] }), "error"), ["unknown-map-affix"]);
+  // `reconcileAffixes` rolls only `req`-less affixes, and weight 0 never comes out of the roll.
+  assert.deepEqual(codes(run({ affixes: ["prophecy_hp", "bonus_exp"] }), "warning"), [
+    "map-affix-not-rollable",
+    "map-affix-not-rollable",
+  ]);
+  // `setTier` clamps to the top rarity's band, and the roll comes from the tier's rarity.
+  assert.deepEqual(codes(run({ tier: 55 }), "warning"), ["map-tier-out-of-range"]);
+  assert.deepEqual(codes(run({ tier: 30, affixRoll: 90 }), "warning"), ["map-roll-out-of-band"]);
+  // A rare map carries one affix here; two is a harder map than the game rolls, said not refused.
+  assert.deepEqual(codes(run({ tier: 30, affixes: ["fire_res", "armor"] })), ["map-affix-count"]);
 });

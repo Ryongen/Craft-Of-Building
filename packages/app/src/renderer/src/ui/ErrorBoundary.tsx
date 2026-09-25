@@ -62,8 +62,8 @@ export class ErrorBoundary extends Component<Props, State> {
       <div style={{ padding: 20, maxWidth: 900 }}>
         <h2 className="mt-0">Something went wrong in {this.props.what}.</h2>
         <p className="faint">
-          Your build is still loaded and still editable — this panel stopped, not the app. If it
-          keeps happening, the detail below names the file to look in.
+          Only this panel crashed. Your build is still loaded and editable. If it keeps
+          happening, the details below show where.
         </p>
         <p style={{ fontWeight: 600 }}>{error.message}</p>
         <div className="row mb-6">

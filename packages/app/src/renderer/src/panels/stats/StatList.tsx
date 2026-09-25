@@ -139,7 +139,7 @@ export function StatList({
         </button>
         <span className="faint text-sm">
           {shown} shown
-          {selected === null ? " — click one for where its number came from" : ""}
+          {selected === null ? ". Click one to see where it comes from" : ""}
         </span>
       </div>
 
@@ -247,7 +247,7 @@ ${display.id}`
             </>
           ) : (
             <span
-              title={`${smart(stat.usableValue)}% ${USABLE_NOUN[display.id] ?? "effective"} — what this converts to in play (IUsableStat)`}
+              title={`${smart(stat.usableValue)}% ${USABLE_NOUN[display.id] ?? "effective"} in play`}
             >
               {num(stat.usableValue, 2)}%{" "}
               <span className="usable">({smart(stat.value)})</span>

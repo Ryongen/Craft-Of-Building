@@ -13,26 +13,26 @@ export const GEAR_COPY = {
     plain:
       "An omen's affix shares the rarity of the omen itself.",
     tech:
-      "AffixData.rar — an omen's affix takes the omen's rarity",
+      "AffixData.rar: an omen's affix takes the omen's rarity",
   },
 
   omenAffixRoll: {
     plain:
       "Uses the same roll percentage as the omen's own stats.",
     tech:
-      "AffixData.p — the same derived percent as the omen's own mods",
+      "AffixData.p: the same derived percent as the omen's own mods",
   },
 
   overSocketCount: {
     plain:
-      "Exceeds your jewel socket limit — the game unequips it.",
+      "Over your jewel socket limit. The game unequips it.",
     tech:
-      "Past the jewel_socket count — the game unequips it",
+      "Past the jewel_socket count; the game unequips it",
   },
 
   sharedSockets: {
     plain:
-      "Gems and runes share the same sockets, so socketing either reduces the remaining open slots.",
+      "Gems and runes share the same sockets.",
     tech:
       "GearSocketsData.so holds gems and runes in one list; getEmptySockets() subtracts the " +
       "whole list.",

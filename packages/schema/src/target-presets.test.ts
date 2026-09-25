@@ -109,3 +109,29 @@ test("no target preset states an attack damage, because none of them can know on
     );
   }
 });
+
+test("a preset carries the mob's element damage from the base block", () => {
+  // `mmorpg_base_stats/mob` gives every mob `all_elemental_damage 50` and `all_chaos_damage 50`,
+  // flat. They are per element rather than one `totalDamage` because they change which resist
+  // matters: a mob's fire hit is half again its physical one.
+  const snapshot = makeSnapshot({
+    mmorpg_gear_rarity: RARITIES,
+    mmorpg_game_balance: { original_balance: { ...BALANCE, MAX_LEVEL: 100 } },
+    mmorpg_mob_rarity: { common: { id: "common", stat_multi: 1 } },
+    mmorpg_base_stats: {
+      mob: {
+        id: "mob",
+        base_stats: [
+          { type: "FLAT", scale_to_lvl: false, stat: "all_elemental_damage", v1: 50 },
+          { type: "FLAT", scale_to_lvl: false, stat: "all_chaos_damage", v1: 50 },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(buildTargetEnemy(snapshot, "common_mob", 100).offence?.elementDamage, {
+    elemental: 50,
+    chaos: 50,
+  });
+  // Naked strips the return hit to MnS's bare number, and states no increase at all.
+  assert.equal(buildTargetEnemy(snapshot, "naked", 100).offence?.elementDamage, undefined);
+});

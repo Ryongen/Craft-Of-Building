@@ -38,6 +38,7 @@ import { DEFAULT_JEWEL_STYLE } from "./display.js";
 import { stageContent, stageDoc } from "./stages.js";
 import { ELEMENT_GUIDS } from "./elements.js";
 import { isTargetPresetId } from "./target-presets.js";
+import { mapRarityForTier, maxMapTier } from "./maps.js";
 import {
   CATEGORY,
   DEFAULT_BALANCE_ID,
@@ -1013,7 +1014,7 @@ function validateTier(
       "warning",
       "infusion-roll-not-tier-max",
       `${path}.rollPercent`,
-      `An infusion has no roll — GearInfusionData.getPercent() is its rarity's ` +
+      `An infusion has no roll: GearInfusionData.getPercent() is its rarity's ` +
         `\`stat_percents.max\`, so a "${tier.id}" one is always ${tier.statPercents.max}, not ` +
         `${roll.rollPercent}.`,
     );
@@ -1168,7 +1169,7 @@ function validateSocketsAndRunes(
         "error",
         "rune-wrong-family",
         `${path}.runes[${i}]`,
-        `"${runeId}" declares no stats for a ${family} item, which is Chats.NOT_FAMILY — ` +
+        `"${runeId}" declares no stats for a ${family} item, which is Chats.NOT_FAMILY; ` +
           "`RuneItem.canBeModified` refuses to insert it.",
       );
     }
@@ -1260,7 +1261,7 @@ function validateRuneword(
       `${path}.runeword`,
       `"${item.runeword}" can only be *made* on ${view.slots.join(", ") || "no slot at all"}, ` +
         `and this base's slot is "${slot}" (RuneWord.canApplyOnItem). An item that already ` +
-        "carries it keeps paying out — nothing re-checks this after the runeword is set — so " +
+        "carries it keeps paying out (nothing re-checks this after the runeword is set), so " +
         "this is a pack change under an existing item rather than an impossible document.",
     );
   }
@@ -1272,8 +1273,8 @@ function validateRuneword(
       `"${item.runeword}" is made from ${view.runes.join(" + ")} socketed consecutively and in ` +
         `that order; this item has ${runes.length === 0 ? "no runes" : runes.join(" + ")}. ` +
         "`hasMatchingRunesToCreate` is a substring test over the concatenated rune ids, so the " +
-        "order is part of the recipe. The stats still apply — `GetAllStats` reads only whether " +
-        "a runeword is set — so this warns rather than refuses.",
+        "order is part of the recipe. The stats still apply (`GetAllStats` reads only whether " +
+        "a runeword is set), so this warns rather than refuses.",
     );
   }
 }
@@ -1337,7 +1338,7 @@ function validateJewelSockets(doc: BuildDoc, snapshot: Snapshot, add: Add): void
       `${jewels.length} jewel(s) but ${total} jewel socket(s): ${sockets} allocated ` +
         `\`${JEWEL_SOCKET_PERK}\` talent(s)` +
         (fromGear > 0 ? ` and up to ${fromGear} from uniques` : "") +
-        `. A jewel needs a socket — allocate more or remove ${jewels.length - total} jewel(s). ` +
+        `. A jewel needs a socket. Allocate more or remove ${jewels.length - total} jewel(s). ` +
         `The game unequips the surplus outright (\`JewelInvHelper.checkRemoveJewels\`).`,
     );
   }
@@ -1400,7 +1401,7 @@ function validateJewel(jewel: Jewel, snapshot: Snapshot, path: string, add: Add)
           `and the jewel carries [${jewelTags(jewel.style).join(", ")}].` +
           (stated
             ? ""
-            : ` No \`style\` is recorded, so "${DEFAULT_JEWEL_STYLE}" was assumed — set it to the` +
+            : ` No \`style\` is recorded, so "${DEFAULT_JEWEL_STYLE}" was assumed. Set it to the` +
               ` jewel's real play style, or re-export with a build of the companion mod that` +
               ` records it.`),
       );
@@ -1549,8 +1550,8 @@ const GEM_PERCENT_BAND_MAX = 100;
 function abovePercentBand(roll: number): string {
   return (
     `${roll} is above the ${GEM_PERCENT_BAND_MAX} every rarity band tops out at. Nothing in ` +
-    `6.4.13 writes one — the blueprint, the reroll and the rarity upgrade all stay inside the ` +
-    `band — but \`SkillGemData.perc\` is never re-clamped on load, so an item rolled before a ` +
+    `6.4.13 writes one (the blueprint, the reroll and the rarity upgrade all stay inside the ` +
+    `band), but \`SkillGemData.perc\` is never re-clamped on load, so an item rolled before a ` +
     `band changed keeps its number and the game keeps using it. The gem's stats interpolate ` +
     `past the top of their range at this roll.`
   );
@@ -1772,12 +1773,13 @@ function validateReferences(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
       "skills",
       `${active} Skills are enabled and the hotbar holds ${MAX_ACTIVE_SKILLS} ` +
         "(`GemInventoryHelper.MAX_SKILL_GEMS`). Disable " +
-        `${active - MAX_ACTIVE_SKILLS} of them — a disabled Skill keeps its level and its ` +
+        `${active - MAX_ACTIVE_SKILLS} of them. A disabled Skill keeps its level and its ` +
         "support gems and contributes nothing.",
     );
   }
 
   validateEnemy(doc, snapshot, add);
+  validateMap(doc, snapshot, add);
 
   const seenAuras = new Set<string>();
   for (const [i, aura] of (doc.auras ?? []).entries()) {
@@ -1951,7 +1953,7 @@ function validateEnemy(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
           "error",
           "unknown-element",
           at,
-          `Not an element GUID. Expected one of ${ELEMENT_GUIDS.join(", ")} — note the enum names \`Cold\`, \`Nature\` and \`Shadow\` are spelled \`water\`, \`lightning\` and \`chaos\` in ids.`,
+          `Not an element GUID. Expected one of ${ELEMENT_GUIDS.join(", ")}. Note the enum names \`Cold\`, \`Nature\` and \`Shadow\` are spelled \`water\`, \`lightning\` and \`chaos\` in ids.`,
         );
       }
       if (!Number.isFinite(value)) {
@@ -1992,6 +1994,96 @@ function validateEnemy(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
       );
     }
     seen.add(id);
+  }
+}
+
+/**
+ * `config.map` — a tier the game can reach, affixes a map can roll, a roll its rarity allows.
+ *
+ * Only an unknown id is an error. Everything else describes a map the game would not make, which
+ * is a fair planner question ("what if this rolled high"), so it is said rather than refused.
+ */
+function validateMap(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
+  const map = doc.config?.map;
+  if (map === undefined) return;
+
+  const top = maxMapTier(snapshot);
+  if (map.tier !== undefined) {
+    if (!Number.isFinite(map.tier)) {
+      add("error", "bad-map-tier", "config.map.tier", `Must be a finite number, got ${JSON.stringify(map.tier)}.`);
+    } else if (map.tier < 0 || map.tier > top || !Number.isInteger(map.tier)) {
+      add(
+        "warning",
+        "map-tier-out-of-range",
+        "config.map.tier",
+        `Tier ${map.tier} is read as ${Math.min(Math.max(Math.trunc(map.tier), 0), top)}: ` +
+          `\`MapItemData.setTier\` clamps to a whole number from 0 to ${top}.`,
+      );
+    }
+  }
+
+  const tier = Math.min(Math.max(Math.trunc(map.tier ?? 0), 0), top);
+  const rarity = mapRarityForTier(snapshot, tier);
+
+  if (map.affixRoll !== undefined) {
+    if (!Number.isFinite(map.affixRoll)) {
+      add("error", "bad-map-roll", "config.map.affixRoll", `Must be a finite number, got ${JSON.stringify(map.affixRoll)}.`);
+    } else if (
+      rarity !== undefined &&
+      (map.affixRoll < rarity.statPercents.min || map.affixRoll > rarity.statPercents.max)
+    ) {
+      add(
+        "warning",
+        "map-roll-out-of-band",
+        "config.map.affixRoll",
+        `A tier ${tier} map is ${rarity.id}, which rolls its affixes from ` +
+          `${rarity.statPercents.min} to ${rarity.statPercents.max}. ${map.affixRoll} is outside ` +
+          `that, so this is a map the game does not make.`,
+      );
+    }
+  }
+
+  const affixes = map.affixes ?? [];
+  const seen = new Set<string>();
+  for (const [i, id] of affixes.entries()) {
+    const at = `config.map.affixes[${i}]`;
+    const data = entry(snapshot, CATEGORY.mapAffix, id)?.data;
+    if (data === undefined) {
+      add("error", "unknown-map-affix", at, `No ${CATEGORY.mapAffix} entry "${id}".`);
+      continue;
+    }
+    if (seen.has(id)) {
+      add("warning", "duplicate-map-affix", at, `"${id}" is listed twice. It counts once, since a map never rolls one twice.`);
+    }
+    seen.add(id);
+    const req = typeof data["req"] === "string" ? data["req"] : "";
+    const weight = typeof data["weight"] === "number" ? data["weight"] : 0;
+    if (req !== "") {
+      add(
+        "warning",
+        "map-affix-not-rollable",
+        at,
+        `"${id}" needs \`${req}\`, and \`MapBlueprint\` only rolls affixes whose \`req\` is ` +
+          `empty. It comes from that system, not from a map.`,
+      );
+    } else if (weight <= 0) {
+      add(
+        "warning",
+        "map-affix-not-rollable",
+        at,
+        `"${id}" has weight 0, so \`MapBlueprint\`'s weighted roll never picks it.`,
+      );
+    }
+  }
+
+  if (rarity !== undefined && seen.size > rarity.affixCount) {
+    add(
+      "info",
+      "map-affix-count",
+      "config.map.affixes",
+      `A tier ${tier} map is ${rarity.id} and carries ${rarity.affixCount} affixes; ` +
+        `${seen.size} are listed, which is a harder map than the game rolls.`,
+    );
   }
 }
 
@@ -2306,7 +2398,7 @@ function validateSchools(doc: BuildDoc, snapshot: Snapshot, balanceId: string, a
         at,
         perkLevel === 1
           ? `Row ${point.y} of \`${schoolId}\` needs character level ${rowReq}; this character is ${level}.`
-          : `Level ${perkLevel} of \`${perkId}\` needs character level ${needed} — row ${point.y} ` +
+          : `Level ${perkLevel} of \`${perkId}\` needs character level ${needed}: row ${point.y} ` +
             `requires ${rowReq} and each level past the first costs one more. This character is ${level}.`,
       );
     }
@@ -2536,7 +2628,7 @@ function validateOmenAffixRoll(
       "omen-affix-tier-not-omen-rarity",
       `${path}.tier`,
       `An omen's affix takes the omen's own rarity as its tier (\`adata.rar = rar.GUID()\`), ` +
-        `so this should be "${omenRarity}", not "${roll.tier ?? "(none)"}". Ignored — the tier ` +
+        `so this should be "${omenRarity}", not "${roll.tier ?? "(none)"}". Ignored; the tier ` +
         `is re-derived.`,
     );
   }
@@ -2546,7 +2638,7 @@ function validateOmenAffixRoll(
       "omen-affix-roll-not-derived",
       `${path}.rollPercent`,
       `An omen's affix has no roll: \`adata.p = OmenData.getStatPercent(...)\`, which these ` +
-        `requirements make ${derived}, not ${roll.rollPercent}. Ignored — the percent is ` +
+        `requirements make ${derived}, not ${roll.rollPercent}. Ignored; the percent is ` +
         `re-derived.`,
     );
   }

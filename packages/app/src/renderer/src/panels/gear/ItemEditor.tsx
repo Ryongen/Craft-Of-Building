@@ -43,6 +43,7 @@ import {
   gearTypeName,
   gem,
   gemName,
+  humanise,
   infusionRollPercent,
   isTwoHanded,
   enchantCompats,
@@ -50,6 +51,7 @@ import {
   maxOfOneAffixType,
   modifierLine,
   rarityLadder,
+  rarityName,
   rune,
   runeName,
   runeword,
@@ -71,10 +73,17 @@ import {
   type RunewordView,
   type SocketFamily,
 } from "@cte2/schema";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
-import { useRanking, type Ranking, type Vitals } from "../../state/compare.js";
+import {
+  compare,
+  useRanking,
+  vitalsOf,
+  type Comparison,
+  type Ranking,
+  type Vitals,
+} from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
 import { useWorld } from "../../state/snapshot.js";
@@ -88,8 +97,10 @@ import {
 } from "../../ui/fields.js";
 import { Accordion } from "../../ui/Accordion.js";
 import { AddPicker } from "../../ui/AddPicker.js";
+import { ComparisonBlock } from "../../ui/DeltaTable.js";
+import { floatingStyle, type At } from "../../ui/HoverCard.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
-import { modDetail, modKeywords } from "../../ui/mods.js";
+import { exactModLines, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
 import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
 import { GEAR_COPY } from "../../ui/copy/gear.js";
@@ -144,7 +155,7 @@ function Requirements({ item }: { item: Item }): ReactNode {
             `${statName(snapshot, check.statId)} ${smart(check.have)} of ${check.required}` +
             (check.scaled
               ? `\nScaled to the item's level (${item.itemLevel}) through STAT_REQ_SCALING.`
-              : "\nA flat requirement — it does not scale with level.") +
+              : "\nA flat requirement that doesn't scale with level.") +
             (check.met ? "" : `\nShort by ${smart(check.required - check.have)}.`)
           }
         >
@@ -154,7 +165,7 @@ function Requirements({ item }: { item: Item }): ReactNode {
       ))}
       {short.length > 0 && (
         <span className="faint text-sm">
-          unmet — the game would refuse the equip; these stats are still counted here
+          unmet. The game wouldn&apos;t let you equip it, but its stats still count here
         </span>
       )}
     </div>
@@ -179,6 +190,16 @@ type AffixGroup = {
  * +270 Magic Shield" and an "Implicit Stats: +7% Health Regen" block. Hiding those on uniques
  * made the stats unreachable in a build, not merely unset.
  */
+/** The item's four roll lists, in the order the editor draws them. */
+type RollKey = "implicits" | "prefixes" | "suffixes" | "corruptions";
+const ROLL_KEYS: readonly RollKey[] = ["implicits", "prefixes", "suffixes", "corruptions"];
+
+/**
+ * An absent list, as one array rather than a new `[]` per render — the affix hover memoises the
+ * document it prices on the list's identity.
+ */
+const NO_ROLLS: AffixRoll[] = [];
+
 const ROLLED_AFFIX_GROUPS: AffixGroup[] = [
   { key: "prefixes", type: "prefix", label: "Prefixes" },
   { key: "suffixes", type: "suffix", label: "Suffixes" },
@@ -193,7 +214,7 @@ const ROLLED_AFFIX_GROUPS: AffixGroup[] = [
  * exactly zero on everything else the item carries.
  */
 const QUALITY_TITLE =
-  "CustomItemData.KEYS.QUALITY — added to the base stat roll percent, and only that: " +
+  "CustomItemData.KEYS.QUALITY: added to the base stat roll percent, and only that: " +
   "`int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack))` in BaseStatsData.GetAllStats. " +
   "Affixes, implicits, runes and sockets are untouched.";
 
@@ -255,6 +276,33 @@ export function ItemEditor({
     [snapshot, rarity],
   );
 
+  /**
+   * The tier the affix lists are read at, and new affixes arrive at — the top of its band.
+   *
+   * Defaults to the best tier the item's rarity allows, because the question a pool is browsed
+   * with is "which of these is the biggest", and the floor of common answers it with zeroes. A
+   * pick that the rarity no longer allows falls back to that default rather than lingering.
+   */
+  const [pickedTier, setPickedTier] = useState<string | undefined>(undefined);
+  const shownTier =
+    pickedTier !== undefined && tierOptions.includes(pickedTier)
+      ? pickedTier
+      : tierOptions[tierOptions.length - 1];
+
+  /**
+   * The build with this item worn and one of its roll lists replaced, per list.
+   *
+   * What the affix hover prices against. One function per list, memoised on the item, so a
+   * hover card can memoise the document it builds — a new function every render would price
+   * the same document on every mouse move.
+   */
+  const wearList = useMemo(() => {
+    if (wearing === undefined) return undefined;
+    const byKey = {} as Record<RollKey, (rolls: AffixRoll[]) => BuildDoc>;
+    for (const key of ROLL_KEYS) byKey[key] = (rolls) => wearing({ ...item, [key]: rolls });
+    return byKey;
+  }, [wearing, item]);
+
   const patch = (next: Patch<Item>): void => {
     const merged = applyPatch(item, next);
     // Empty arrays go too: a hand-authored document says nothing rather than `"runes": []`.
@@ -270,6 +318,14 @@ export function ItemEditor({
   const perTypeMax = rarity === undefined ? 0 : maxOfOneAffixType(rarity);
   const actualAffixes = (item.prefixes?.length ?? 0) + (item.suffixes?.length ?? 0);
 
+  /** Every roll on the item outside these lists — what a list's pickers grey out against. */
+  const rollsOutside = (...keys: RollKey[]): AffixRoll[] => [
+    ...ROLL_KEYS.flatMap((k) =>
+      keys.includes(k) ? [] : (item[k] ?? []),
+    ),
+    ...(item.enchant === undefined ? [] : [item.enchant]),
+  ];
+
   /**
    * Top the item up to the affix count its rarity demands.
    *
@@ -283,7 +339,7 @@ export function ItemEditor({
    * answer.
    */
   const fillAffixes = (at: BandEnd): void => {
-    const tier = tierOptions[0] ?? "common";
+    const tier = shownTier ?? "common";
     const rollPercent = bandEnd(bandFor(world, tier), at);
     const next = {
       prefix: [...(item.prefixes ?? [])],
@@ -291,14 +347,19 @@ export function ItemEditor({
     };
 
     let missing = expectedAffixes - actualAffixes;
+    // The pickers' rule, so a fill never lands on an affix the pickers would have greyed out.
+    const held = [...rollsOutside("prefixes", "suffixes"), ...next.prefix, ...next.suffix];
     for (const type of ["prefix", "suffix"] as const) {
       if (missing <= 0) break;
-      const taken = new Set(next[type].map((roll) => roll.affixId));
       for (const affix of world.affixPool(item.base, type)) {
         if (missing <= 0 || next[type].length >= perTypeMax) break;
-        if (taken.has(affix.id)) continue;
-        next[type].push({ affixId: affix.id, tier, rollPercent });
-        taken.add(affix.id);
+        // An id repeat is skipped even where the pack would allow it: a filled item that doubles
+        // up one affix is not what anyone pressing "fill" meant.
+        if (held.some((r) => r.affixId === affix.id)) continue;
+        if (affixConflict(snapshot, affix.id, held) !== undefined) continue;
+        const roll = { affixId: affix.id, tier, rollPercent };
+        next[type].push(roll);
+        held.push(roll);
         missing -= 1;
       }
     }
@@ -356,15 +417,16 @@ export function ItemEditor({
         <div className="field">
           <label>Rarity</label>
           {/* Coloured by the rarity it is set to, the way `GemRoll`'s has always been — the
-              ladder is a colour in this game before it is a word. */}
+              ladder is a colour in this game before it is a word. Each option carries its own
+              colour too, or the open list inherits the select's and reads as one rarity. */}
           <select
             className={`rarity-${item.rarity}`}
             value={item.rarity}
             onChange={(event) => patch({ rarity: event.target.value })}
           >
             {world.rarities.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.id} ({r.minAffixes})
+              <option key={r.id} value={r.id} className={`rarity-${r.id}`}>
+                {rarityName(snapshot, r.id)} ({r.minAffixes})
               </option>
             ))}
           </select>
@@ -413,7 +475,7 @@ export function ItemEditor({
       <div className="row wrap gap-2 mb-2 item-editor-meta">
         {base === undefined ? (
           <span className="badge bad" title="No base gear type in this snapshot has this id">
-            {item.base} — not a base in this snapshot
+            {item.base}: not a base in this snapshot
           </span>
         ) : (
           <>
@@ -425,7 +487,7 @@ export function ItemEditor({
                   "(PlayerEntityMixin.getEquippedStack_Pre), so an offhand item grants nothing at all."
                 }
               >
-                two-handed — no offhand
+                two-handed, no offhand
               </span>
             )}
             {/*
@@ -503,8 +565,35 @@ export function ItemEditor({
       <BaseRolls item={item} patch={patch} />
 
       {/* Every roll on the item at once, beside the one that moves the base stats — the two
-          answer the same question at different scopes. */}
-      <RollEverything item={item} patch={patch} />
+          answer the same question at different scopes. The affix tier shares the line: it is
+          the other "at what roll" control, for the affixes not yet on the item. */}
+      <div className="row wrap gap-3" style={{ margin: "6px 0 2px" }}>
+        <RollEverything item={item} patch={patch} />
+        <div className="grow" />
+        {!isUnique && shownTier !== undefined && (
+          <div
+            className="field"
+            title={
+              "The tier new affixes are added at, and the one the lists show values for (top of " +
+              "the tier at this item's level). The item's rarity caps affix tiers: a rare can hold " +
+              "rare tiers and below."
+            }
+          >
+            <label>Affix rarity</label>
+            <select
+              className={`rarity-${shownTier}`}
+              value={shownTier}
+              onChange={(event) => setPickedTier(event.target.value)}
+            >
+              {tierOptions.map((tier) => (
+                <option key={tier} value={tier} className={`rarity-${tier}`}>
+                  {rarityName(snapshot, tier)} · {smart(bandFor(world, tier).max)}%
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
       {/*
         The affix budget, over the two lists it is a budget for. It is a line rather than a
@@ -524,13 +613,13 @@ export function ItemEditor({
           */}
           {actualAffixes < expectedAffixes && (
             <span className="badge bad">
-              {expectedAffixes - actualAffixes} short — a {rarity.id} rolls exactly{" "}
+              {expectedAffixes - actualAffixes} short, a {rarity.id} rolls exactly{" "}
               {expectedAffixes}
             </span>
           )}
           {actualAffixes > expectedAffixes && (
             <span className="badge bad">
-              {actualAffixes - expectedAffixes} too many — {expectedAffixes} is exact, not a minimum
+              {actualAffixes - expectedAffixes} too many, a {rarity.id} rolls exactly {expectedAffixes}
             </span>
           )}
           {/*
@@ -573,7 +662,10 @@ export function ItemEditor({
           baseId={item.base}
           itemLevel={item.itemLevel}
           tiers={tierOptions}
-          rolls={item.implicits ?? []}
+          shownTier={shownTier}
+          rolls={item.implicits ?? NO_ROLLS}
+          elsewhere={rollsOutside("implicits")}
+          wear={wearList?.implicits}
           onChange={(rolls) => patch({ implicits: rolls })}
         />
       </Accordion>
@@ -608,7 +700,10 @@ export function ItemEditor({
               baseId={item.base}
               itemLevel={item.itemLevel}
               tiers={tierOptions}
-              rolls={item[group.key] ?? []}
+              shownTier={shownTier}
+              rolls={item[group.key] ?? NO_ROLLS}
+              elsewhere={rollsOutside(group.key)}
+              wear={wearList?.[group.key]}
               max={perTypeMax}
               onChange={(rolls) => patch({ [group.key]: rolls } as Patch<Item>)}
             />
@@ -623,7 +718,10 @@ export function ItemEditor({
           baseId={item.base}
           itemLevel={item.itemLevel}
           tiers={tierOptions}
-          rolls={item.corruptions ?? []}
+          shownTier={shownTier}
+          rolls={item.corruptions ?? NO_ROLLS}
+          elsewhere={rollsOutside("corruptions")}
+          wear={wearList?.corruptions}
           onChange={(rolls) => patch({ corruptions: rolls })}
         />
       </Accordion>
@@ -759,9 +857,8 @@ function Enchantments({
               <span
                 className="badge warn"
                 title={
-                  "No `mmorpg_stat_compat` entry in this snapshot names this enchantment, so it " +
-                  "converts into no stat at all. That is a legal thing to have on an item — most " +
-                  "enchantments in the game convert into nothing — it simply changes no figure here."
+                  "This enchantment doesn't convert into any stat, so it changes nothing here. That's " +
+                  "normal; most enchantments don't."
                 }
               >
                 converts to nothing
@@ -893,23 +990,24 @@ function RollEverything({
     );
   if (!rollable) return null;
 
+  // A fragment: the editor puts this on one line with the affix tier select.
   return (
-    <div className="row gap-3" style={{ margin: "6px 0 2px" }}>
+    <>
       <span className="faint text-sm">roll this whole item at</span>
       {BAND_ENDS.map((end) => (
         <button
           key={end}
           className="nudge word"
           title={
-            `Set every roll on this item — base stats, affixes, unique stats, runes and the ` +
-            `runeword — to the ${end} of its own band. One undo step.`
+            `Set every roll on this item (base stats, affixes, unique stats, runes and runeword) ` +
+            `to its ${end}. One undo step.`
           }
           onClick={() => rollAll(end)}
         >
           {end}
         </button>
       ))}
-    </div>
+    </>
   );
 }
 
@@ -972,7 +1070,7 @@ function BaseRolls({ item, patch }: { item: Item; patch: (next: Patch<Item>) => 
   return (
     <div className="base-rolls mt-2">
       <div className="row wrap gap-2">
-        <span className="faint text-sm" title={`BaseStatsData.getMinMax — this rarity rolls ${band.min}–${band.max}%`}>
+        <span className="faint text-sm" title={`This rarity rolls ${band.min}–${band.max}%`}>
           Base stats
         </span>
         <RollSlider value={shown} min={band.min} max={band.max} ends onChange={setAll} />
@@ -1148,7 +1246,7 @@ function Infusion({
           onAdd={(affixId) => set({ affixId })}
         />
         <span className="faint text-sm" style={{ alignSelf: "center" }}>
-          one per item — <code>only_one_per_item</code>
+          one per item (<code>only_one_per_item</code>)
         </span>
       </div>
     );
@@ -1167,17 +1265,17 @@ function Infusion({
           className={`rarity-${tier}`}
           value={tier}
           onChange={(event) => set({ tier: event.target.value })}
-          title="The infusion's own rarity, which is not the item's — it is what the stat rolls at"
+          title="The infusion's own rarity, separate from the item's. Sets what the stat rolls at"
         >
           {ladder.map((id) => (
-            <option key={id} value={id}>
-              {id} — {infusionRollPercent(snapshot, id) ?? 0}%
+            <option key={id} value={id} className={`rarity-${id}`}>
+              {rarityName(snapshot, id)} — {infusionRollPercent(snapshot, id) ?? 0}%
             </option>
           ))}
         </select>
         {/* The same sentence the gem row makes, for the same reason: an absent control reads as
             a control the editor forgot rather than as a value the game does not roll. */}
-        <span className="faint text-sm">fixed at {percent}% — an infusion does not roll</span>
+        <span className="faint text-sm">fixed at {percent}%, infusions don&apos;t roll</span>
         <span className="grow" />
         <button onClick={() => patch({ enchant: undefined })}>✕</button>
       </div>
@@ -1202,8 +1300,11 @@ function AffixList({
   baseId,
   itemLevel,
   tiers,
+  shownTier,
   rolls,
+  elsewhere,
   max,
+  wear,
   onChange,
 }: {
   label: string;
@@ -1212,40 +1313,89 @@ function AffixList({
   /** Everything on an item resolves at the item's level, not the character's. */
   itemLevel: number;
   tiers: string[];
+  /** The tier the add picker reads its pool at, and a new affix arrives at. */
+  shownTier: string | undefined;
   rolls: AffixRoll[];
+  /** The item's rolls outside this list, which an exclusive affix clashes with just the same. */
+  elsewhere: readonly AffixRoll[];
   max?: number | undefined;
+  /** The build with this list replaced, for pricing a hover. Absent, the hover is unpriced. */
+  wear?: ((rolls: AffixRoll[]) => BuildDoc) | undefined;
   onChange: (rolls: AffixRoll[]) => void;
 }): ReactNode {
   const world = useWorld();
   const { snapshot } = world;
   const pool = world.affixPool(baseId, type);
+  const tiered = type !== "implicit";
 
   /**
-   * The pool, named by what it does rather than by what it is called in the data.
+   * Where a new affix lands: the top of the shown tier, or the top of the full range for an
+   * implicit, which has no tier. The top because it is what the list was read at — adding the
+   * "+40%" row and getting a "+4%" roll was the list lying about what it offered.
+   */
+  const addTier = tiered ? (shownTier ?? tiers[0] ?? "common") : undefined;
+  const addRoll = bandFor(world, addTier).max;
+
+  /**
+   * The pool, named by what it does rather than by what it is called in the data, at a roll.
    *
    * `affixLabel` is the player-facing name — "of the Yeti" — and on its own it says nothing
-   * about which of four cold suffixes this is. The hover carries the modifier lines at a top
-   * roll, and the search corpus carries every stat id and stat name, so typing "resist" or
-   * "bleed" narrows the list the way typing a name does.
+   * about which of four cold suffixes this is, so the first line rides along, resolved at the
+   * item's level the way the row under it will be. The add picker reads at the shown tier and a
+   * row reads at its own roll, which is why this is a cache keyed on the roll rather than one
+   * list. The search corpus carries every stat id and stat name, so typing "resist" or "bleed"
+   * narrows the list the way typing a name does.
    */
-  const options = useMemo<PickerOption[]>(
-    () =>
-      pool.map((a) => {
-        const detail = modDetail(snapshot, a.stats);
-        return {
-          id: a.id,
-          label: affixLabel(snapshot, a.id),
-          keywords: modKeywords(snapshot, a.stats),
-          ...(detail === undefined ? {} : { detail }),
-        };
-      }),
-    [pool, snapshot],
-  );
+  const optionsAt = useMemo(() => {
+    const cache = new Map<number, PickerOption[]>();
+    return (rollPercent: number): PickerOption[] => {
+      const hit = cache.get(rollPercent);
+      if (hit !== undefined) return hit;
+      const built = pool.map((a) => ({
+        id: a.id,
+        label: affixLabel(snapshot, a.id, { rollPercent, level: itemLevel }),
+        keywords: modKeywords(snapshot, a.stats),
+      }));
+      cache.set(rollPercent, built);
+      return built;
+    };
+  }, [pool, snapshot, itemLevel]);
 
-  const defaultTier = tiers[0] ?? "common";
+  /**
+   * The options with everything the item already rules out greyed, for a picker whose choice
+   * would join `held`. A row passes the item minus itself, so its own affix stays choosable.
+   */
+  const optionsBeside = (options: PickerOption[], held: readonly AffixRoll[]): PickerOption[] =>
+    options.map((option) => {
+      const conflict = affixConflict(snapshot, option.id, held);
+      return conflict === undefined ? option : { ...option, disabled: conflict };
+    });
+
+  // The list as it stands, worn — what every hover in it is measured from.
+  const asIs = useMemo(() => wear?.(rolls), [wear, rolls]);
+
   // "Add prefix" from "Prefixes", "Add infusion" from "Infusion" — the list's own name, made
   // singular, rather than the affix type, which is `chaos_stat` for a corruption.
   const one = label.toLowerCase().replace(/e?s$/, "");
+
+  /** The hover for a picker over slot `index` of this list, or over a new slot when absent. */
+  const hoverFor =
+    (index: number | undefined, tier: string | undefined, rollPercent: number) =>
+    (option: PickerOption, at: At): ReactNode => (
+      <AffixCard
+        affixId={option.id}
+        tier={tier}
+        rollPercent={rollPercent}
+        itemLevel={itemLevel}
+        heading={one}
+        disabled={option.disabled}
+        list={rolls}
+        index={index}
+        wear={wear}
+        asIs={asIs}
+        at={at}
+      />
+    );
 
   return (
     <>
@@ -1253,10 +1403,14 @@ function AffixList({
         <AffixRow
           key={`${roll.affixId}-${index}`}
           roll={roll}
-          options={options}
+          options={optionsBeside(optionsAt(roll.rollPercent), [
+            ...elsewhere,
+            ...rolls.filter((_, i) => i !== index),
+          ])}
+          renderHover={hoverFor(index, roll.tier, roll.rollPercent)}
           itemLevel={itemLevel}
           tiers={tiers}
-          tiered={type !== "implicit"}
+          tiered={tiered}
           onChange={(next) => onChange(rolls.map((r, i) => (i === index ? next : r)))}
           onRemove={() => onChange(rolls.filter((_, i) => i !== index))}
         />
@@ -1264,21 +1418,22 @@ function AffixList({
 
       <div className="row wrap gap-3">
         {/* This was `pool[0]` — whichever affix the registry happened to order first, added
-            silently. `ui/AddPicker` is the fix; the new roll still starts at the band floor, and
-            the three buttons beside it are how you move it. */}
+            silently. `ui/AddPicker` is the fix; the new roll arrives at the top of the shown
+            tier, and the three buttons beside it are how you move it. */}
         <AddPicker
           label={`Add ${one}`}
           placeholder={`Which ${type}?`}
-          options={options}
+          options={optionsBeside(optionsAt(addRoll), [...elsewhere, ...rolls])}
+          renderHover={hoverFor(undefined, addTier, addRoll)}
           width={280}
           disabled={pool.length === 0 || (max !== undefined && rolls.length >= max)}
           {...(pool.length === 0 ? { title: `No ${type} can roll on this base` } : {})}
           onAdd={(affixId) =>
             onChange([
               ...rolls,
-              type === "implicit"
-                ? { affixId, rollPercent: 0 }
-                : { affixId, tier: defaultTier, rollPercent: bandFor(world, defaultTier).min },
+              addTier === undefined
+                ? { affixId, rollPercent: addRoll }
+                : { affixId, tier: addTier, rollPercent: addRoll },
             ])
           }
         />
@@ -1334,6 +1489,7 @@ function AffixList({
 function AffixRow({
   roll,
   options,
+  renderHover,
   itemLevel,
   tiers,
   tiered,
@@ -1342,6 +1498,7 @@ function AffixRow({
 }: {
   roll: AffixRoll;
   options: PickerOption[];
+  renderHover: (option: PickerOption, at: At) => ReactNode;
   itemLevel: number;
   tiers: string[];
   /** False for implicits, the one affix the game stores without a tier. */
@@ -1392,10 +1549,12 @@ function AffixRow({
           options={options}
           value={roll.affixId}
           onChange={(id) => id !== undefined && onChange({ ...roll, affixId: id })}
+          renderHover={renderHover}
           width={230}
         />
         {tiered && (
           <select
+            className={`rarity-${roll.tier ?? tiers[0] ?? "common"}`}
             value={roll.tier ?? tiers[0] ?? "common"}
             onChange={(event) => {
               const tier = event.target.value;
@@ -1408,11 +1567,11 @@ function AffixRow({
                 rollPercent: Math.min(Math.max(roll.rollPercent, next.min), next.max),
               });
             }}
-            title="The affix's own tier, which is not the item's — the roll band comes from this"
+            title="The affix's own tier, separate from the item's. Sets the roll range"
           >
             {tiers.map((tier) => (
-              <option key={tier} value={tier}>
-                {tier}
+              <option key={tier} value={tier} className={`rarity-${tier}`}>
+                {rarityName(snapshot, tier)}
               </option>
             ))}
           </select>
@@ -1646,7 +1805,7 @@ function Sockets({
           // A rune with no line for this family cannot be inserted at all — `Chats.NOT_FAMILY`.
           label:
             lines.length === 0
-              ? `${runeName(snapshot, id)} — nothing for this slot`
+              ? `${runeName(snapshot, id)} (nothing for this slot)`
               : runeName(snapshot, id),
           hint: lines.join(" · "),
           keywords: id,
@@ -1758,7 +1917,7 @@ function Sockets({
         <code>{FAMILY_STAT_LIST[family]}</code> line
         {/* `getFor(fam)` has no `OffHand` branch, so an offhand really does take the armour
             list — worth saying, but only when you are looking at one. */}
-        {isOffhand ? " — an offhand takes the armour list, because `getFor` has no branch for it" : ""}.
+        {isOffhand ? " (offhands use the armour list)" : ""}.
       </div>
 
       {!gemsAllowed && (
@@ -1771,7 +1930,7 @@ function Sockets({
         <Tech>
           <div className="notice">
             <strong>{rarity.id}</strong> has <code>max_gems: 0</code>, so no gem can go in one of
-            these at all — <code>GemItem.canBeModified</code> refuses outright rather than capping.
+            these at all; <code>GemItem.canBeModified</code> refuses outright rather than capping.
             Runed gear takes runes.
           </div>
         </Tech>
@@ -1792,7 +1951,7 @@ function Sockets({
             {/* A gem has no roll: `Gem.getFor(fam).toExactStat(lvl)` takes no percent, unlike
                 the rune beside it. Saying so is better than an absent control. */}
             <span className="faint text-sm">
-              fixed — a gem does not roll
+              fixed, gems don&apos;t roll
             </span>
             <span className="grow" />
             <button onClick={() => patch({ sockets: sockets.filter((_, i) => i !== index) })}>✕</button>
@@ -1938,7 +2097,7 @@ function Runewords({
   return (
     <>
       <div className="faint text-xs mb-1">
-        Runewords — {runewords.length} fit this slot
+        Runewords: {runewords.length} fit this slot
       </div>
 
       {runewords.length === 0 ? (
@@ -1950,7 +2109,7 @@ function Runewords({
         </Plain>
         <Tech>
           <div className="faint text-sm">
-            No runeword in the pack lists this base&apos;s slot — <code>RuneWord.canApplyOnItem</code>{" "}
+            No runeword in the pack fits this slot. <code>RuneWord.canApplyOnItem</code>{" "}
             matches the base&apos;s <code>gear_slot</code> against the runeword&apos;s own{" "}
             <code>slots</code>.
           </div>
@@ -1966,8 +2125,7 @@ function Runewords({
                 className={active ? "primary" : ""}
                 title={
                   `${view.runes.join(" + ")}\n` +
-                  `Socketed in that order — hasMatchingRunesToCreate is a substring test over the ` +
-                  `concatenated rune ids, so the order is part of the recipe.\n` +
+                  `Socket them in this order; the order matters.\n` +
                   `Picking this replaces the runes in this item.`
                 }
                 onClick={() => onPick(active ? undefined : view.id)}
@@ -2075,14 +2233,203 @@ function socketLines(snapshot: Snapshot, mods: readonly Record<string, unknown>[
   return mods.map((mod) => modifierLine(snapshot, mod, 100));
 }
 
-function affixLabel(snapshot: Parameters<typeof affix>[0], affixId: string): string {
+/**
+ * An affix as a picker row names it: its name and first line.
+ *
+ * `at` resolves the line at a roll and the item's level, which is what the item will say; without
+ * it the line is the un-levelled wording at a top roll, for places with no item to level against.
+ */
+function affixLabel(
+  snapshot: Snapshot,
+  affixId: string,
+  at?: { rollPercent: number; level: number },
+): string {
   const view = affix(snapshot, affixId);
-  // Only 225 of 489 affixes are named in lang, and the unnamed ones are rendered by their
-  // stat lines in game. A pool entry with no name is useless, so it borrows its first line.
   const first = view?.stats[0];
-  const line = first === undefined ? undefined : modifierLine(snapshot, first, 100);
-  const name = affixName(snapshot, affixId);
-  return line === undefined ? name : `${name} — ${line}`;
+  const line =
+    first === undefined
+      ? undefined
+      : at === undefined
+        ? modifierLine(snapshot, first, 100)
+        : exactModLines(snapshot, [first], at.rollPercent, at.level)[0];
+  if (line === undefined) return affixName(snapshot, affixId);
+  // Only 225 of 489 affixes are named in lang, and the unnamed ones are rendered by their stat
+  // lines in game. Their "name" here would be the id, capitalised — a variable name on screen.
+  return affixIsNamed(snapshot, affixId) ? `${affixName(snapshot, affixId)}: ${line}` : line;
+}
+
+/** Whether the pack's lang names this affix, rather than `affixName` falling back to the id. */
+function affixIsNamed(snapshot: Snapshot, affixId: string): boolean {
+  return affixName(snapshot, affixId) !== humanise(affixId);
+}
+
+/** The affix card's assumed size, for flipping it near the window's edge. */
+const AFFIX_CARD = { width: 320, height: 320 };
+
+/**
+ * `vitalsOf` per document, so hovering row after row prices the list as it stands once.
+ *
+ * Keyed on the document object: `AffixList` memoises its as-is document on the list, so every
+ * hover in one list hands the same object back until the item changes.
+ */
+const VITALS_CACHE = new WeakMap<Snapshot, WeakMap<BuildDoc, Vitals>>();
+
+function vitalsCached(doc: BuildDoc, snapshot: Snapshot): Vitals {
+  let bySnapshot = VITALS_CACHE.get(snapshot);
+  if (bySnapshot === undefined) {
+    bySnapshot = new WeakMap();
+    VITALS_CACHE.set(snapshot, bySnapshot);
+  }
+  let vitals = bySnapshot.get(doc);
+  if (vitals === undefined) {
+    vitals = vitalsOf(doc, snapshot);
+    bySnapshot.set(doc, vitals);
+  }
+  return vitals;
+}
+
+/**
+ * One affix under the pointer in a picker: what it is called, what it rolls to on this item, and
+ * what it would do to the character.
+ *
+ * This replaced the browser's `title` popup, which printed the lines un-levelled at a top roll
+ * and the registry id under them — a number no tooltip in the game prints, and a variable name.
+ * The lines here are the item's own, at the roll the pick would land on and the item's level.
+ *
+ * ## What is priced against what
+ *
+ * Against **this item as it stands, worn**, not against the build on screen. A benched item is
+ * worn to price it, and measuring from the build would fold the whole item into every row — the
+ * same reason the socket rankings carry an as-is row. Three readings:
+ *
+ *  - over the add picker, the list plus this affix;
+ *  - over a row's picker, that row swapped for this affix at the row's own tier and roll;
+ *  - over a row's picker on the affix it already holds, the item with and without it — what
+ *    that affix is worth, which is the only non-trivial answer "swap it for itself" has.
+ *
+ * Debounced like the tree hover, because running a list with the pointer crosses a dozen rows on
+ * the way to the one you meant.
+ */
+function AffixCard({
+  affixId,
+  tier,
+  rollPercent,
+  itemLevel,
+  heading,
+  disabled,
+  list,
+  index,
+  wear,
+  asIs,
+  at,
+}: {
+  affixId: string;
+  tier: string | undefined;
+  rollPercent: number;
+  itemLevel: number;
+  /** What to call it when the pack gives it no name — "prefix", "corruption". */
+  heading: string;
+  disabled: string | undefined;
+  list: AffixRoll[];
+  index: number | undefined;
+  wear: ((rolls: AffixRoll[]) => BuildDoc) | undefined;
+  asIs: BuildDoc | undefined;
+  at: At;
+}): ReactNode {
+  const [technical] = useTechnical();
+  const { snapshot } = useWorld();
+  const view = affix(snapshot, affixId);
+
+  const own = index !== undefined && list[index]?.affixId === affixId;
+  const pair = useMemo(() => {
+    if (wear === undefined || asIs === undefined || disabled !== undefined) return undefined;
+    const roll: AffixRoll = tier === undefined ? { affixId, rollPercent } : { affixId, tier, rollPercent };
+    if (index === undefined) return { before: asIs, after: wear([...list, roll]) };
+    if (own) return { before: wear(list.filter((_, i) => i !== index)), after: asIs };
+    return { before: asIs, after: wear(list.map((r, i) => (i === index ? roll : r))) };
+  }, [wear, asIs, disabled, affixId, tier, rollPercent, list, index, own]);
+
+  const [priced, setPriced] = useState<Comparison | "failed" | undefined>(undefined);
+  useEffect(() => {
+    setPriced(undefined);
+    if (pair === undefined) return;
+    const timer = setTimeout(() => {
+      try {
+        setPriced(compare(vitalsCached(pair.before, snapshot), vitalsOf(pair.after, snapshot), snapshot));
+      } catch {
+        setPriced("failed");
+      }
+    }, 90);
+    return () => clearTimeout(timer);
+  }, [pair, snapshot]);
+
+  const lines = view === undefined ? [] : exactModLines(snapshot, view.stats, rollPercent, itemLevel);
+  const named = affixIsNamed(snapshot, affixId);
+
+  return (
+    <div className="affix-card" style={floatingStyle(at, AFFIX_CARD)}>
+      <div className="affix-card-name">
+        {named ? affixName(snapshot, affixId) : heading.charAt(0).toUpperCase() + heading.slice(1)}
+      </div>
+      <div className={`affix-card-roll${tier === undefined ? "" : ` rarity-${tier}`}`}>
+        {tier === undefined ? "" : `${rarityName(snapshot, tier)} · `}
+        {smart(rollPercent)}% roll · item level {itemLevel}
+      </div>
+      <div className="affix-card-lines">
+        {lines.map((line, i) => (
+          <div key={i}>{line}</div>
+        ))}
+      </div>
+      {disabled !== undefined && <div className="affix-card-note">{disabled}</div>}
+      {technical && <div className="affix-card-id">{affixId}</div>}
+      {pair !== undefined && (
+        <div className="delta-section">
+          <div className="delta-section-title">
+            {own ? "What it is worth on this item" : "Change to your build"}
+          </div>
+          {priced === undefined ? (
+            <div className="faint text-sm">Pricing…</div>
+          ) : priced === "failed" ? (
+            <div className="faint text-sm">This build could not be priced with it.</div>
+          ) : (
+            <ComparisonBlock
+              comparison={priced}
+              statLimit={8}
+              emptyNote="Nothing changes on the character sheet."
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Why `affixId` cannot join an item already holding `held`, or `undefined` when it can.
+ *
+ * The same two rules as the validator's `validateAffixExclusivity`, checked before the pick
+ * instead of reported after it: an `only_one_per_item` affix once, and one affix per
+ * `one_of_a_kind` group. Nearly every prefix and suffix in the pack is `only_one_per_item`, so in
+ * practice this is "you already have that one".
+ */
+function affixConflict(
+  snapshot: Parameters<typeof affix>[0],
+  affixId: string,
+  held: readonly AffixRoll[],
+): string | undefined {
+  const view = affix(snapshot, affixId);
+  if (view === undefined) return undefined;
+  for (const roll of held) {
+    if (roll.affixId === affixId && view.onlyOnePerItem) {
+      return "Already on this item. Only one can roll per item";
+    }
+    if (view.oneOfAKind.length === 0) continue;
+    const other = affix(snapshot, roll.affixId);
+    if (other?.oneOfAKind === view.oneOfAKind) {
+      return `Only one of the "${view.oneOfAKind}" group per item, and ${affixLabel(snapshot, roll.affixId)} already is`;
+    }
+  }
+  return undefined;
 }
 
 /**

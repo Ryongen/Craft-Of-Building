@@ -37,10 +37,9 @@ export function Diagnostics(): ReactNode {
     <div className="panel">
       <div className="notice info">
         An <strong>error</strong> means the game could not have produced this character. A{" "}
-        <strong>warning</strong> means the engine did something it wants you to know about —
-        usually a value it had to floor, or a mechanic it has not implemented and is therefore
-        under-reporting. A <strong>note</strong> is neither: it is the damage model showing its
-        working, so a figure can be read rather than trusted.
+        <strong>warning</strong> is something you should know about, usually a value that had to be
+        clamped or a mechanic that isn&apos;t modelled yet (so numbers may be low). A{" "}
+        <strong>note</strong> just explains how a number was worked out.
       </div>
 
       <div className="row mb-4">

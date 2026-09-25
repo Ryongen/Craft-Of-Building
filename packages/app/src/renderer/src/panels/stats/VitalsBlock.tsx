@@ -46,7 +46,7 @@ import { USABLE_NOUN, num, smart, usable } from "../../ui/format.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import { elementColour, elementLabel } from "../../ui/palette.js";
-import type { SheetFocus } from "./SheetDetail.js";
+import { rotationCost, type SheetFocus } from "./SheetDetail.js";
 
 /**
  * The resists, in the order the layers apply them and the order the mob types come in.
@@ -125,6 +125,9 @@ function SkillVitals({
   }
 
   const { rate, cost } = dps;
+  // The swing keeps its own clock, but the buffs that grant its procs are ticked into the
+  // rotation, so Full DPS reads them — the same figure the Damage tab's Full DPS card prints.
+  const swingProcDps = derived.basic?.procDps ?? 0;
   // Casts per second rather than seconds per cast: every other rate in the app is per-second,
   // and a cooldown skill's 0.33/s is easier to compare against another skill than "3.00s".
   const perSecond = rate.cycleSeconds > 0 ? 1 / rate.cycleSeconds : 0;
@@ -173,10 +176,9 @@ function SkillVitals({
           statId="ailment_damage"
           value={smart(dps.ailmentHit)}
           hint={
-            `The pool a Shatter or Shock releases, at steady state. The hit that tips it lands ` +
-            `too, so the spike on screen is ${smart(damage.average.total + dps.ailmentHit)} — ` +
-            `two events, reported as two figures. It depends on your cast rate: the pool leaks ` +
-            `10% a second while it waits.`
+            `What a Shatter or Shock releases. The hit that triggers it lands too, so the total ` +
+            `spike is ${smart(damage.average.total + dps.ailmentHit)}. Depends on cast rate, since ` +
+            `the pool loses 10% a second.`
           }
           active={same(focus, { kind: "figure", id: "ailment-hit" })}
           onSelect={pick({ kind: "figure", id: "ailment-hit" })}
@@ -268,7 +270,7 @@ function SkillVitals({
         statId="total_damage"
         value={smart(dps.dps + dps.ailmentDps)}
         strong
-        hint="Hit, ailments and Shatter/Shock: this skill's whole output on its own button. Procs, summons and the weapon swing are not in it — the topbar's Total DPS is the figure that has everything."
+        hint="Hits, ailments and Shatter/Shock from this skill alone. Doesn't include procs, summons or weapon swings; Total DPS in the top bar does."
         active={same(focus, { kind: "figure", id: "combined-dps" })}
         onSelect={pick({ kind: "figure", id: "combined-dps" })}
       />
@@ -286,15 +288,16 @@ function SkillVitals({
         <Row
           label="Full DPS"
           statId="total_damage"
-          value={smart(fullDps.dps + fullDps.ailmentDps)}
+          value={smart(fullDps.dps + fullDps.ailmentDps + swingProcDps)}
           strong
           hint={
             `Every skill ticked into Full DPS, cast once each per pass: ` +
             `${smart(fullDps.skillDps)} from the casts` +
             (fullDps.procDps > 0 ? `, ${smart(fullDps.procDps)} from what they proc` : "") +
             (fullDps.ailmentDps > 0 ? `, ${smart(fullDps.ailmentDps)} from their ailments` : "") +
-            `. One pass is ${num(fullDps.rotationSeconds, 2)}s. Pets and the weapon swing are ` +
-            `not in it; the topbar's Total DPS has those.`
+            (swingProcDps > 0 ? `, ${smart(swingProcDps)} from what your basic attacks proc` : "") +
+            `. One pass is ${num(fullDps.rotationSeconds, 2)}s. Pets and the swing's own hits ` +
+            `are not in it; the topbar's Total DPS has those.`
           }
           active={same(focus, { kind: "figure", id: "full-dps" })}
           onSelect={pick({ kind: "figure", id: "full-dps" })}
@@ -320,7 +323,7 @@ function SkillVitals({
             hint={
               cost.sustainable
                 ? "Sustained casting. Your regeneration covers it."
-                : "Sustained casting — more than your regeneration covers, so this rate is not one you can hold."
+                : "Sustained casting. More than your regeneration covers, so you can't keep it up."
             }
             tone={cost.sustainable ? undefined : "bad"}
             active={same(focus, { kind: "figure", id: "cost-rate" })}
@@ -328,7 +331,64 @@ function SkillVitals({
           />
         </>
       )}
+      {fullDps !== undefined && fullDps.dps > 0 && (
+        <RotationCost derived={derived} focus={focus} pick={pick} />
+      )}
     </div>
+  );
+}
+
+/**
+ * What one pass through the ticked skills spends, one row per pool. Clicking opens each skill's
+ * share; the arithmetic is `rotationCost`, which the detail pane reads too.
+ */
+function RotationCost({
+  derived,
+  focus,
+  pick,
+}: {
+  derived: DerivedBuild;
+  focus: SheetFocus | null;
+  pick: Pick;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const { pools, seconds } = rotationCost(derived);
+  const target: SheetFocus = { kind: "figure", id: "rotation-cost" };
+  if (pools.length === 0) {
+    return (
+      <Row
+        label="Rotation cost"
+        value="free"
+        hint="None of the ticked skills declares a mana or energy cost."
+        active={same(focus, target)}
+        onSelect={pick(target)}
+      />
+    );
+  }
+  return (
+    <>
+      {pools.map((p, i) => {
+        const short = p.perSecond > p.regen;
+        return (
+          <Row
+            key={p.pool}
+            indent={i > 0}
+            label={i === 0 ? `Rotation cost (${statName(snapshot, p.pool)})` : statName(snapshot, p.pool)}
+            statId={p.pool}
+            value={`${smart(p.perSecond)}/s`}
+            hint={
+              `${smart(p.perPass)} per ${num(seconds, 2)}s pass through the ticked skills. ` +
+              `In-combat regeneration is ${smart(p.regen)}/s` +
+              (short ? ", so you can't keep this rotation up." : ", which covers it.") +
+              " Click for each skill's cost."
+            }
+            tone={short ? "bad" : undefined}
+            active={same(focus, target)}
+            onSelect={pick(target)}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -444,7 +504,7 @@ function Survival({
           `The largest single ${defence.mostFragile.element} hit you survive from full, with ` +
           `every dodge and block roll assumed to fail. ` +
           (avoidanceGap(defence) > 0.005
-            ? `Your effective HP is ${num((1 / (1 - avoidanceGap(defence))) * 100 - 100, 0)}% higher than this because avoidance is averaged into it — that share of your defence is luck.`
+            ? `Your effective HP is ${num((1 / (1 - avoidanceGap(defence))) * 100 - 100, 0)}% higher because it averages in dodge and block, which are luck.`
             : `The same as your effective HP, because nothing in this build avoids hits.`)
         }
         active={same(focus, { kind: "figure", id: "max-hit" })}
@@ -483,7 +543,7 @@ function Survival({
             (health.secondsToFull === undefined
               ? ", and it never fills from empty"
               : `, ${num(health.secondsToFull, 1)}s from empty to full`) +
-            (health.note === undefined ? "." : ` — ${health.note}`)
+            (health.note === undefined ? "." : `. ${health.note}`)
           }
           active={same(focus, { kind: "stat", statId: "health_regen" })}
           onSelect={pick({ kind: "stat", statId: "health_regen" })}
@@ -502,7 +562,7 @@ function Survival({
               (main.secondsToFull === undefined
                 ? ", and it never fills from empty"
                 : `, ${num(main.secondsToFull, 1)}s from empty to full`) +
-              (main.note === undefined ? "." : ` — ${main.note}`)
+              (main.note === undefined ? "." : `. ${main.note}`)
             }
             active={same(focus, { kind: "stat", statId: `${main.resource}_regen` })}
             onSelect={pick({ kind: "stat", statId: `${main.resource}_regen` })}
@@ -545,8 +605,7 @@ function Survival({
             strong
             tone={selfSustain.sustainable ? undefined : "bad"}
             hint={
-              `What this skill costs you per second, after your own mitigation. It is not netted ` +
-              `off your DPS — what you deal and what you pay are different questions.`
+              `Self-damage per second, after mitigation. Not subtracted from your DPS.`
             }
             active={same(focus, { kind: "figure", id: "self-damage" })}
             onSelect={pick({ kind: "figure", id: "self-damage" })}
@@ -654,12 +713,12 @@ function StatRowOf({
       value={value}
       hint={
         stat === undefined
-          ? `${statId} — nothing in this build grants it`
+          ? `${statId}: nothing in this build grants it`
           : stat.usableValue === undefined
             ? statId
-            : `${smart(stat.usableValue)}% ${USABLE_NOUN[statId] ?? "effective"} — ${statId}` +
+            : `${smart(stat.usableValue)}% ${USABLE_NOUN[statId] ?? "effective"} (${statId})` +
               (rawIsPercent && stat.value > stat.usableValue + 0.5
-                ? `. ${smart(stat.value)}% is granted; everything past ${smart(stat.usableValue)}% is over the cap and does nothing until something raises it.`
+                ? `. You have ${smart(stat.value)}%, but anything over ${smart(stat.usableValue)}% is past the cap and does nothing.`
                 : "")
       }
       active={same(focus, { kind: "stat", statId })}
@@ -681,7 +740,7 @@ function SwingVitals({ derived }: { derived: DerivedBuild }): ReactNode {
 
   return (
     <div className="vitals-group">
-      <div className="vitals-title">Main skill — basic attack</div>
+      <div className="vitals-title">Main skill: basic attack</div>
       <Row
         label="Hit"
         statId="total_damage"
@@ -706,7 +765,7 @@ function SwingVitals({ derived }: { derived: DerivedBuild }): ReactNode {
         label="Proc DPS"
         statId="total_damage"
         value={smart(basic.procDps)}
-        hint="What your swings cast — Cryogenic Rupture, Whiteout Sovereign's storms, on-hit gear."
+        hint="Spells your swings cast, like Cryogenic Rupture, Whiteout Sovereign's storms and on-hit gear."
       />
       {basic.ailmentDps > 0 && (
         <Row label="Ailment DPS" statId="ailment_damage" value={smart(basic.ailmentDps)} />

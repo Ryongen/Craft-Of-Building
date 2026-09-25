@@ -161,8 +161,8 @@ function CompareCard({
             statLimit={MAX_STAT_ROWS}
             emptyNote={
               worn
-                ? "Nothing changes — this piece is contributing nothing, so taking it off costs nothing."
-                : "Nothing changes — the character sheet lands in exactly the same place."
+                ? "Nothing changes. This item isn't contributing anything."
+                : "Nothing changes on the character sheet."
             }
           />
           {/*
@@ -171,8 +171,7 @@ function CompareCard({
             item's own lines are the card immediately to the left.
           */}
           <div className="faint text-xs mt-2">
-            Character totals, after every increase — the rating in brackets is the flat change
-            behind it.
+            Character totals after all increases. The number in brackets is the flat change.
           </div>
         </>
       )}

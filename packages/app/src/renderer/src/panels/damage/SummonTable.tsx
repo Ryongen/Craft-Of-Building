@@ -65,7 +65,7 @@ export function SummonTable({
                 {pet.extraSpells.map((cast) => (
                   <div key={cast.spellIds.join()} className="faint text-xs">
                     + {cast.spellIds.map((id) => spellName(world.snapshot, id)).join(" / ")} at{" "}
-                    {num(cast.chance, 0)}% — {num(cast.perSecond, 2)}/s
+                    {num(cast.chance, 0)}%, {num(cast.perSecond, 2)}/s
                   </div>
                 ))}
               </td>

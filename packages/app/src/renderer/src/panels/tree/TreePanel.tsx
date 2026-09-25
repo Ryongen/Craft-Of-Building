@@ -417,7 +417,7 @@ function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): Reac
           <span>
             Click to refund <strong>{hover.affected.length}</strong>{" "}
             {hover.affected.length === 1 ? "point" : "points"}
-            {hover.affected.length > 1 && " — this node is holding up the rest"}.
+            {hover.affected.length > 1 && ", including the nodes that depend on this one"}.
           </span>
         )}
         {hover.action === "blocked" && <span className="faint">No legal route to this node.</span>}
@@ -462,14 +462,13 @@ function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): Reac
                   <ComparisonBlock
                     comparison={whatIf.alone.comparison}
                     stats={false}
-                    emptyNote="No headline figure moves for this node by itself — what it grants is the lines above."
+                    emptyNote="No headline number changes from this node alone. Its stats are listed above."
                   />
                   <div className="faint text-sm" style={{ marginTop: 3 }}>
                     {hover.action === "allocate"
                       ? `The node on its own, with the ${others} on the way already paid for`
-                      : `The node on its own, with the ${others} hanging off it left where they are`}{" "}
-                    — not a click the tree offers, which is why the figure above is the one to
-                    judge it by.
+                      : `The node on its own, with the ${others} hanging off it left where they are`}.
+                    You can't click just this, so judge it by the number above.
                   </div>
                 </>
               )}

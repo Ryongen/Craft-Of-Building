@@ -44,7 +44,7 @@ export function EffectsCard({ dps }: { dps: DpsResult }): ReactNode {
     <div className="card">
       <div className="row wrap gap-7 mb-4" style={{ alignItems: "baseline" }}>
         <span className="faint text-sm">
-          only what this build can apply — a skill, a stat or an aura that grants it
+          only effects a skill, stat or aura on this build can apply
         </span>
         <AssumeSwitch effects={dps.effects} />
       </div>
@@ -54,7 +54,7 @@ export function EffectsCard({ dps }: { dps: DpsResult }): ReactNode {
       {wanted.size > 0 && (
         <div className="mt-5">
           <div className="faint text-sm mb-2">
-            Branches switched off — turn one of these on to count them:
+            Switched off. Turn one on to count it:
           </div>
           <div className="row wrap gap-5">
             {[...wanted].map(([id, need]) => (

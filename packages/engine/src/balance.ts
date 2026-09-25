@@ -60,6 +60,13 @@ export type Balance = {
   mobDmgPowerScaling: number;
   mobDmgPowerScalingBase: number;
   /**
+   * `HP_MOB_BONUS_PER_MAP_TIER` and `DMG_MOB_BONUS_PER_MAP_TIER` — what each map tier adds to
+   * every mob in the map, as `MORE health` and `MORE total_damage`. See `damage/map.ts`. Jar
+   * initialisers are 0.067 and 0.01; `original_balance` sets 0.095 and 0.03.
+   */
+  hpMobBonusPerMapTier: number;
+  dmgMobBonusPerMapTier: number;
+  /**
    * The multiplier a `FLAT` modifier of this scaling gets at this level.
    *
    *     public float getMultiFor(float lvl) {
@@ -160,6 +167,8 @@ function buildBalance(snapshot: Snapshot, balanceId: string): Balance {
     manaCostScaling: readCurve(data["MANA_COST_SCALING"]) ?? MANA_COST_FALLBACK,
     mobDmgPowerScaling: numberAt(data, "MOB_DMG_POWER_SCALING") ?? 1.003,
     mobDmgPowerScalingBase: numberAt(data, "MOB_DMG_POWER_SCALING_BASE") ?? 1,
+    hpMobBonusPerMapTier: numberAt(data, "HP_MOB_BONUS_PER_MAP_TIER") ?? 0.067,
+    dmgMobBonusPerMapTier: numberAt(data, "DMG_MOB_BONUS_PER_MAP_TIER") ?? 0.01,
     multiFor(scaling, level) {
       const key = CONFIG_KEY[scaling];
       if (key === null) return 1;

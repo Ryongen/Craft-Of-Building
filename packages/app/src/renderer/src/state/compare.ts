@@ -512,7 +512,11 @@ function assembleVitals(parts: {
     dps: (dps?.dps ?? 0) + (dps?.grantedDps ?? 0),
     grantedDps: dps?.grantedDps ?? 0,
     critDps: dps?.critDps ?? 0,
-    fullDps: fullDps === undefined ? 0 : fullDps.dps + fullDps.ailmentDps,
+    // Swing procs included, as on the sidebar and the Damage tab: the buffs that grant them are ticked.
+    fullDps:
+      fullDps === undefined || fullDps.dps <= 0
+        ? 0
+        : fullDps.dps + fullDps.ailmentDps + rates.basicProcDps,
     procDps: rates.procDps,
     ailmentDps: rates.ailmentDps,
     basicDps: rates.basicDps,

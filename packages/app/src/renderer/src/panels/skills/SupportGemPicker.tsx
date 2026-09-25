@@ -334,17 +334,16 @@ function GemRow({
     ? "Already linked to this skill in another socket. One Skill may not hold two of the same " +
       "support gem."
     : selected
-      ? "The gem in this socket now — the figure every other row is measured against."
+      ? "The gem in this socket now. Other rows are compared to it."
       : nothing
-        ? "This gem's stats do not reach this skill: nothing it grants is read by any of the " +
-          "skill's damage sources, its cooldown or the buff it applies."
+        ? "This gem does nothing for this skill's damage, cooldown or buffs."
         : isDps
           ? `${signGlyph(moved.change)}${smart(Math.round(Math.abs(moved.change)))} DPS on this skill` +
             (full === undefined
               ? ""
               : `, ${signGlyph(full.change)}${smart(Math.round(Math.abs(full.change)))} on the rotation`)
           : `${moved.label} ${signGlyph(moved.change)}${smart(round(Math.abs(moved.change)))}` +
-            " — this gem changes nothing about the hit";
+            ". Doesn't change the hit";
 
   /*
     Priced at the same roll the ranking used.

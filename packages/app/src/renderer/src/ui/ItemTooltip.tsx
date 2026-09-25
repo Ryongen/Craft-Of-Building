@@ -252,7 +252,7 @@ function CategoryGroup({ section }: { section: ItemSection }): ReactNode {
       <div className={`tt-category-title ${section.kind}`}>
         {section.label}:
         {section.dormant === true && (
-          <div className="tt-dormant">not socketed — granting nothing</div>
+          <div className="tt-dormant">not socketed, grants nothing</div>
         )}
       </div>
       {section.lines.map((line: StatLine, i: number) => (

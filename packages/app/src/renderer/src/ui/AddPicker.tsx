@@ -18,6 +18,7 @@
 
 import { useState, type ReactNode } from "react";
 
+import type { At } from "./HoverCard.js";
 import { Picker, type PickerOption } from "./Picker.js";
 
 export function AddPicker({
@@ -29,6 +30,7 @@ export function AddPicker({
   placeholder,
   width,
   primary = false,
+  renderHover,
 }: {
   /** The button's text — "Add skill", "Add gem". */
   label: string;
@@ -41,6 +43,8 @@ export function AddPicker({
   placeholder?: string;
   width?: number | string;
   primary?: boolean;
+  /** Passed to the picker — see {@link Picker}. */
+  renderHover?: ((option: PickerOption, at: At) => ReactNode) | undefined;
 }): ReactNode {
   const [picking, setPicking] = useState(false);
 
@@ -68,6 +72,7 @@ export function AddPicker({
       autoFocus
       placeholder={placeholder ?? label}
       {...(width === undefined ? {} : { width })}
+      renderHover={renderHover}
       onChange={(id) => {
         setPicking(false);
         // `undefined` is the picker's "cleared" answer, which here means the user dismissed it

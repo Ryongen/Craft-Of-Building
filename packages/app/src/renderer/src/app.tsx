@@ -13,7 +13,7 @@ import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from
 import type { UpdateStatus } from "@shared/ipc";
 
 import { SheetDetail, type SheetFocus } from "./panels/stats/SheetDetail.js";
-import { Splitter } from "./ui/Splitter.js";
+import { DockedPane } from "./panels/stats/DetailPane.js";
 import { VitalsBlock } from "./panels/stats/VitalsBlock.js";
 import { PackIcon } from "./ui/StatIcon.js";
 import { useBuild } from "./state/build-store.js";
@@ -52,7 +52,7 @@ const EPILOGUE_TITLE = {
     "game carries the game's own totals and ignores this.",
   tech:
     "Tick when the campaign's epilogue is done. `PlayerPointsType.getFreePoints` adds " +
-    "`getBonusPoints` — quest and item rewards — on top of what levelling grants, and no document " +
+    "`getBonusPoints` (quest and item rewards) on top of what levelling grants, and no document " +
     "can derive it: at level 100 that is 54 passive points rather than 50, and 110 spell points " +
     "rather than 100. A build imported from the game carries the game's own totals and ignores " +
     "this.",
@@ -457,7 +457,7 @@ export function App(): ReactNode {
           // Where the host cannot write back to the file you opened, "Save" would be a lie —
           // every save is a fresh copy in the downloads folder. One button, named for what it
           // actually does.
-          <button onClick={() => void save(true)} title="Ctrl+S — downloads a copy">
+          <button onClick={() => void save(true)} title="Ctrl+S. Downloads a copy">
             Download{dirty ? " •" : ""}
           </button>
         )}
@@ -525,7 +525,7 @@ export function App(): ReactNode {
                   id="stage-switch"
                   value={doc.activeStage ?? ""}
                   onChange={(event) => switchStage(event.target.value)}
-                  title="The saved trees, points and level of this build — the full list is on the Tree tab"
+                  title="Saved stages of this build. Manage them on the Tree tab"
                 >
                   {doc.stages?.map((stage) => (
                     <option key={stage.id} value={stage.id}>
@@ -590,15 +590,16 @@ export function App(): ReactNode {
               <VitalsBlock focus={focus} onFocus={setFocus} />
             </div>
           {focus !== null && (
-            <>
-              <Splitter height={breakdownHeight} onChange={setBreakdownHeight} />
-              <div className="breakdown-pane" style={{ height: breakdownHeight }}>
-                {/* `onFocus` is what makes a breakdown navigable: `elemental_resist` reads 0 and
-                    hands everything to the three resists, so the useful move from either end is
-                    to jump to the other — and a figure's terms link the same way. */}
-                <SheetDetail focus={focus} onFocus={setFocus} />
-              </div>
-            </>
+            <DockedPane
+              height={breakdownHeight}
+              onHeight={setBreakdownHeight}
+              onClose={() => setFocus(null)}
+            >
+              {/* `onFocus` is what makes a breakdown navigable: `elemental_resist` reads 0 and
+                  hands everything to the three resists, so the useful move from either end is
+                  to jump to the other — and a figure's terms link the same way. */}
+              <SheetDetail focus={focus} onFocus={setFocus} />
+            </DockedPane>
           )}
           </ErrorBoundary>
         </div>
@@ -653,7 +654,7 @@ function CaptureStatus({ onOpenCapture }: { onOpenCapture: () => void }): ReactN
             : "Open a file the in-game exporter wrote (F6, or /pobexport) to check every stat against the game"
         }
       >
-        {check.dirty ? "edited since capture — not checked" : "not checked against the game"}
+        {check.dirty ? "edited since capture, not checked" : "not checked against the game"}
       </span>
     );
   }
@@ -726,7 +727,7 @@ function UpdateNotice(): ReactNode {
           onClick={() => void window.cte2.installUpdate?.()}
           title="Restart now to install it. Otherwise it installs the next time you close the app."
         >
-          {status.version} ready — restart to update
+          {status.version} ready, restart to update
         </span>
       );
     case "available":
@@ -737,7 +738,7 @@ function UpdateNotice(): ReactNode {
           onClick={() => window.open(status.url)}
           title="The portable build cannot update itself. This opens the release page."
         >
-          {status.version} available — download
+          {status.version} available, download
         </span>
       );
     case "idle":

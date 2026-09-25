@@ -173,6 +173,11 @@ export type EffectOption = {
   stacks: number;
   /** True when the document decided this, false when it was defaulted. */
   chosen: boolean;
+  /**
+   * True when the main skill's combo rotation decided this rather than availability: `alpha` is
+   * up because the pass presses `zap` before the finisher, or off because it does not.
+   */
+  byRotation?: boolean;
   /** Set when an exclusivity group forced it off in favour of another member. */
   excludedBy?: string;
   /**
@@ -447,6 +452,7 @@ function pinComboResources(
     if (option.chosen) continue;
     if (!combo.resources.includes(option.id)) continue;
     option.stacks = combo.holds.includes(option.id) ? option.maxStacks : 0;
+    option.byRotation = true;
   }
 }
 

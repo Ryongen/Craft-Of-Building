@@ -157,7 +157,7 @@ function collectItem(env: Env, item: Item, path: string): StatContext[] {
         "warning",
         "missing-base-rolls",
         path,
-        `No \`baseRolls\` recorded, so the ${baseMods.length} base stat(s) are computed at ${floor}% — the lowest \`${item.rarity}\` can roll, not the item's real value.`,
+        `No \`baseRolls\` recorded, so the ${baseMods.length} base stat(s) are computed at ${floor}%, the lowest \`${item.rarity}\` can roll, not the item's real value.`,
       );
     } else if (rolls.length !== baseMods.length) {
       env.report(
@@ -227,7 +227,7 @@ export function collectJewels(
         path,
         `This build has ${sockets} jewel socket(s) and this is jewel ${i + 1}, so the game ` +
           `unequips it (\`JewelInvHelper.checkRemoveJewels\`) and none of its stats are counted. ` +
-          `Allocate a \`jewel_socket\` talent — or wear a unique that grants one — to use it.`,
+          `Allocate a \`jewel_socket\` talent, or wear a unique that grants one, to use it.`,
       );
       return out;
     }
@@ -462,7 +462,7 @@ function socketStats(
         "warning",
         "rune-roll-unknown",
         `${path}.runes[${i}]`,
-        `\`${runeId}\` rolls its stats when socketed (\`SocketData.p\`) and no \`runeRolls[${i}]\` was recorded, so it is computed at 0% — its stats read at their minimum.`,
+        `\`${runeId}\` rolls its stats when socketed (\`SocketData.p\`) and no \`runeRolls[${i}]\` was recorded, so it is computed at 0% and its stats read at their minimum.`,
       );
     }
     const from: ModOrigin = { kind: "rune", id: runeId, rollPercent: roll ?? 0 };
@@ -485,7 +485,7 @@ function socketStats(
           "warning",
           "runeword-roll-unknown",
           path,
-          `\`${item.runeword}\` rolls its stats when completed (\`GearSocketsData.rp\`) and no \`runewordRoll\` was recorded, so it is computed at 0% — its stats read at their minimum.`,
+          `\`${item.runeword}\` rolls its stats when completed (\`GearSocketsData.rp\`) and no \`runewordRoll\` was recorded, so it is computed at 0% and its stats read at their minimum.`,
         );
       }
       const from: ModOrigin = { kind: "runeword", id: item.runeword, rollPercent: roll ?? 0 };

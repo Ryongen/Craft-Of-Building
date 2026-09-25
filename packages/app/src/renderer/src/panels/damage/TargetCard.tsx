@@ -64,7 +64,7 @@ export function TargetCard({
         <NumberField value={packSize} min={1} width={56} onChange={(value) => onPackSize(value)} />
         {reach !== undefined && (
           <button className="badge" type="button" onClick={() => set({ distance: reach })}>
-            reaches {num(reach, 1)} — move the target in
+            reaches {num(reach, 1)}, move the target closer
           </button>
         )}
         {packSize > 1 && (
@@ -77,9 +77,8 @@ export function TargetCard({
         <button onClick={() => onPlacement(undefined)}>Reset</button>
       </div>
       <div className="faint text-sm mt-3 prose">
-        Blocks from you to the target, its own half-width, and the degrees off your facing it
-        stands. A melee skill measured at 2 blocks and the same skill measured at 6 are different
-        numbers for a good reason &mdash; move it and watch the Lands column.
+        Distance to the target in blocks, its half-width, and its angle from where you&apos;re
+        facing. Moving it changes how many hits land; watch the Lands column.
       </div>
     </div>
   );

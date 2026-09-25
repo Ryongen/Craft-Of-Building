@@ -859,10 +859,35 @@ tr.highlight > td {
 
 /* The pane the splitter resizes. The drill-down itself scrolls inside it. */
 .breakdown-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex-shrink: 0;
+}
+
+/*
+ * Pinned to the pane rather than inside the scrolling body, so it stays in the corner however
+ * far down the explanation has been read. The body gets the room back on its right so a title's
+ * badge never sits under it.
+ */
+.pane-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+  z-index: 1;
+  padding: 0 var(--space-3);
+  line-height: 1.4;
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
+.pane-close:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.breakdown-pane > .breakdown {
+  padding-right: 44px;
 }
 
 .breakdown {
@@ -1528,6 +1553,17 @@ table.grid td.num {
 .picker-option:hover,
 .picker-option.active {
   background: var(--accent-dim);
+}
+
+/* An option this choice would make illegal — an affix the item already holds. */
+.picker-option.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.picker-option.disabled:hover,
+.picker-option.disabled.active {
+  background: none;
 }
 
 /*
@@ -2344,6 +2380,15 @@ textarea.paste:focus {
   min-width: 0;
 }
 
+/* The mob affix list: a name and two losses, DPS and effective HP. */
+.gem-rank-head.mob-affix-row,
+.gem-rank-row.mob-affix-row {
+  display: grid;
+  grid-template-columns: 1fr 62px 62px;
+  gap: var(--space-4);
+  align-items: baseline;
+}
+
 .gem-rank-pct,
 .gem-rank-abs,
 .gem-rank-cost {
@@ -2533,6 +2578,58 @@ textarea.paste:focus {
   margin-top: 1px;
   font-size: var(--text-xs);
   letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+
+/*
+ * An affix under the pointer in the item editor's pickers: name, the item's own lines, and what
+ * it would change. Fixed and portalled like `.delta-tip`, and click-through so it never sits
+ * between the pointer and the row it describes.
+ */
+.affix-card {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  width: 300px;
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+  padding: 7px 10px 8px;
+  background: rgba(14, 16, 21, 0.97);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  font-size: var(--text-md);
+}
+
+.affix-card-name {
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+/* The tier takes its rarity colour from `.rarity-<id>`; without one it stays quiet. */
+.affix-card-roll {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+
+.affix-card-lines {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.affix-card-note {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--bad);
+}
+
+.affix-card-id {
+  margin-top: var(--space-1);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
@@ -3993,3 +4090,43 @@ button.stage-pick {
   overflow-y: auto;
 }
 
+/* -- map (Config tab) ---------------------------------------------------- */
+
+/* Two lists side by side — what the map does to the mobs, what it does to you — stacking on a
+   narrow window rather than squeezing the stat lines into a column one word wide. */
+.map-affix-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4) var(--space-8);
+}
+
+.map-affix-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 2px 0;
+}
+
+.map-affix-name {
+  flex: 0 0 140px;
+}
+
+.map-affix-lines {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.map-affix-remove {
+  flex: 0 0 auto;
+}
+
+.map-affix-count.warn {
+  color: var(--warn);
+}
+
+.map-clear {
+  margin-left: auto;
+}

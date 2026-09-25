@@ -34,9 +34,9 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
             label="Ailment DPS"
             value={smart(dps.ailmentDps - dps.ailmentProcDps)}
             hint={
-              "Bleed, burn and poison at full stacks — every landing hit adds one that runs its own duration. " +
+              "Bleed, burn and poison at full stacks. Every hit adds a stack with its own duration. " +
               dps.ailmentStacks.map((s) => `${s.ailment}: ${num(s.stacks, 1)} stacks`).join(", ") +
-              ". Beside the hit rate rather than part of it: they tick on their own clock."
+              ". Separate from hit rate because they tick on their own timer."
             }
           />
         )}
@@ -55,7 +55,7 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
         <Figure
           label="Cycle"
           value={`${num(rate.cycleSeconds, 2)}s`}
-          hint="Cast time plus recovery — recovery starts when the cast finishes, not when it begins"
+          hint="Cast time plus recovery. Recovery starts after the cast finishes"
         />
       </div>
 
@@ -143,7 +143,7 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
             />
           )}
           <span className={cost.sustainable ? "badge" : "badge warn"}>
-            {cost.sustainable ? "sustainable" : "runs dry — see Sustain below"}
+            {cost.sustainable ? "sustainable" : "runs dry, see Sustain below"}
           </span>
         </div>
       )}

@@ -27,7 +27,8 @@ import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { Panel, setAllPanels } from "../../ui/Panel.js";
-import { useDetailPane } from "../stats/DetailPane.js";
+import { DockedPane, useDetailPane } from "../stats/DetailPane.js";
+import type { SheetFocus } from "../stats/SheetDetail.js";
 import { TraceStatList, traceStats } from "../stats/TraceStats.js";
 import { num, smart } from "../../ui/fields.js";
 import { spellName } from "@cte2/schema";
@@ -150,6 +151,22 @@ function SkillDamagePanel(): ReactNode {
    */
   const [ailmentId, setAilmentId] = useState<string | null>(null);
   const detail = useDetailPane(340);
+  /**
+   * The Effects assumed up, docked where the detail pane goes.
+   *
+   * One or the other rather than both stacked: two splitters at the bottom of a tab leave
+   * neither pane room to read. Opening either closes the other.
+   */
+  const [effectsOpen, setEffectsOpen] = useState(false);
+  const [effectsHeight, setEffectsHeight] = useState(340);
+  const toggleEffects = (): void => {
+    if (!effectsOpen) detail.close();
+    setEffectsOpen(!effectsOpen);
+  };
+  const openDetail = (focus: SheetFocus): void => {
+    setEffectsOpen(false);
+    detail.open(focus);
+  };
 
   const skills = doc.skills ?? [];
 
@@ -229,6 +246,8 @@ function SkillDamagePanel(): ReactNode {
       ),
   ).length;
   const rotating = derived.fullDps !== undefined && derived.fullDps.skills.length > 0;
+  // The same test `EffectsCard` renders nothing on, so the button never opens an empty pane.
+  const hasEffects = dps.effects.options.length > 0 || dps.model.blockedBy.length > 0;
 
   /**
    * Every stat that measurably touched this hit, off the trace the recorder already wrote.
@@ -375,7 +394,7 @@ function SkillDamagePanel(): ReactNode {
                     <span
                       title={
                         "The mob's evasion against your accuracy, as a share of hits that land. " +
-                        "Dodge takes physical attacks and magic dodge takes `magic` spells; the " +
+                        "Dodge takes every non-magic hit, whatever its element, and magic dodge takes `magic` spells; the " +
                         "figure above already has it folded in. Open the layer's row for the " +
                         "subtraction."
                       }
@@ -407,9 +426,8 @@ function SkillDamagePanel(): ReactNode {
                   <strong>{num((1 - shownHit.critChance) * 100)}%</strong> of the Hit branch&apos;s{" "}
                   {smart(shownHit.hit.total)} and{" "}
                   <strong>{num(shownHit.critChance * 100)}%</strong> of the Crit branch&apos;s{" "}
-                  {smart(shownHit.crit.total)}. A layer averaged between the two is a multiplier
-                  the game never applies — press <strong>Hit</strong> or <strong>Crit</strong> for
-                  the rows.
+                  {smart(shownHit.crit.total)}. The game never applies an averaged layer, so
+                  pick <strong>Hit</strong> or <strong>Crit</strong> to see the rows.
                 </div>
               ) : trace === undefined ? (
                 <div className="notice">No trace was recorded for this branch.</div>
@@ -440,6 +458,14 @@ function SkillDamagePanel(): ReactNode {
               <AilmentTrace ailment={ailment} target={shownHit.target} />
             </div>
           </div>
+
+          {hasEffects && (
+            <div className="row mt-5">
+              <button className={effectsOpen ? "primary" : ""} onClick={toggleEffects}>
+                Effects assumed up <span className="faint">· {assumedCount(derived)} up</span>
+              </button>
+            </div>
+          )}
         </Panel>
 
         {/*
@@ -453,11 +479,12 @@ function SkillDamagePanel(): ReactNode {
           **The order is read in pairs**, which is why `.card-columns` is a grid and not CSS
           columns: a row here is two cards side by side, and the first three rows are the three
           questions only answerable together. Full DPS beside the Rate the figure is divided by;
-          the Effects assumed up beside the Target they are assumed against, since an effect list
-          means nothing without the mob it is aimed at; the Damage sources beside the Sustain,
-          because what a cast produces and what it costs are the same trade. Everything
-          conditional comes after them, so a build with no combo and no summons does not push the
-          three pairs out of step.
+          the Damage sources beside the Sustain, because what a cast produces and what it costs
+          are the same trade. Everything conditional comes after them, so a build with no combo
+          and no summons does not push the pairs out of step.
+
+          The Effects assumed up are not a card here: they open from a button under the
+          breakdown, docked to the bottom of the tab, so ticking one shows the breakdown move.
         */}
         <div className="card-columns">
           <Panel
@@ -474,36 +501,16 @@ function SkillDamagePanel(): ReactNode {
             }
             defaultOpen={rotating}
           >
-            <FullDpsCard full={derived.fullDps} skills={skills} onToggle={setIncludeInFullDps} />
+            <FullDpsCard
+              full={derived.fullDps}
+              skills={skills}
+              onToggle={setIncludeInFullDps}
+              swingProcDps={derived.basic?.procDps ?? 0}
+            />
           </Panel>
 
           <Panel id="damage.rate" title="Rate" summary={`${num(dps.rate.cycleSeconds, 2)}s cycle · ${smart(dps.dps)} DPS`}>
             <RateCard dps={dps} />
-          </Panel>
-
-          <Panel
-            id="damage.effects"
-            title="Effects assumed up"
-            summary={`${assumedCount(derived)} up`}
-            defaultOpen={false}
-          >
-            <EffectsCard dps={dps} />
-          </Panel>
-
-          <Panel
-            id="damage.target"
-            title="Target position"
-            summary={`${num(dps.placement.distance, 1)} blocks · pack of ${doc.config?.packSize ?? 1}`}
-            defaultOpen={false}
-          >
-            <TargetCard
-              placement={dps.placement}
-              packSize={doc.config?.packSize ?? 1}
-              packDps={dps.packDps}
-              reach={dps.reachDistance}
-              onPlacement={setTargetPlacement}
-              onPackSize={setPackSize}
-            />
           </Panel>
 
           <Panel
@@ -532,6 +539,22 @@ function SkillDamagePanel(): ReactNode {
             <SustainCard dps={dps} />
           </Panel>
 
+          <Panel
+            id="damage.target"
+            title="Target position"
+            summary={`${num(dps.placement.distance, 1)} blocks · pack of ${doc.config?.packSize ?? 1}`}
+            defaultOpen={false}
+          >
+            <TargetCard
+              placement={dps.placement}
+              packSize={doc.config?.packSize ?? 1}
+              packDps={dps.packDps}
+              reach={dps.reachDistance}
+              onPlacement={setTargetPlacement}
+              onPackSize={setPackSize}
+            />
+          </Panel>
+
           {dps.procs.length > 0 && (
             <Panel
               id="damage.procs"
@@ -554,7 +577,7 @@ function SkillDamagePanel(): ReactNode {
               <ProcTable
                 procs={dps.procs}
                 total={dps.procDps}
-                hint="While this skill is the only one you press. Not part of the DPS above — the Full DPS card does count them."
+                hint="If this is the only skill you press. Not in the DPS above, but Full DPS counts them."
                 rotation={derived.fullDps?.procs}
               />
             </Panel>
@@ -577,7 +600,7 @@ function SkillDamagePanel(): ReactNode {
               <ProcTable
                 procs={dps.granted}
                 total={dps.grantedDps}
-                hint="Spells this skill's buff lets you cast — most on your swings. Already counted in Total DPS where they fire (the swing, or the skill you press); shown here because it is what this skill buys, and what its support gems are ranked on."
+                hint="Spells this skill's buff casts for you, mostly on your swings. Already in Total DPS; shown here because it's what this skill is for and what its support gems are ranked by."
               />
             </Panel>
           )}
@@ -586,7 +609,7 @@ function SkillDamagePanel(): ReactNode {
             <Panel
               id="damage.rotation-procs"
               title="Procs across the rotation"
-              summary={`${smart(derived.fullDps?.procDps ?? 0)}/s`}
+              summary={`${smart((derived.fullDps?.procDps ?? 0) + (derived.basic?.procDps ?? 0))}/s`}
               defaultOpen={false}
             >
               <ProcTable
@@ -594,6 +617,16 @@ function SkillDamagePanel(): ReactNode {
                 total={derived.fullDps?.procDps ?? 0}
                 hint="Already inside the Full DPS above. Every ticked skill's triggers against one shared proc cooldown."
               />
+              {(derived.basic?.procs.length ?? 0) > 0 && (
+                <>
+                  <div className="section-title">From your basic attacks</div>
+                  <ProcTable
+                    procs={derived.basic!.procs}
+                    total={derived.basic!.procDps}
+                    hint="Spells your swings cast during the rotation, at your swing rate, including those granted by buffs like Whiteout Sovereign and Ice-Tipped Blade. Included in Full DPS."
+                  />
+                </>
+              )}
             </Panel>
           )}
 
@@ -622,11 +655,15 @@ function SkillDamagePanel(): ReactNode {
             </Panel>
           )}
 
-          {dps.combo !== undefined && (
+          {(dps.combo !== undefined || dps.rotations !== undefined) && (
             <Panel
               id="damage.combo"
               title="Combo"
-              summary={`${dps.combo.steps.length} presses to fire`}
+              summary={
+                dps.combo === undefined
+                  ? "best fired on its own"
+                  : `${dps.combo.steps.length} presses to fire`
+              }
               defaultOpen={false}
             >
               <ComboCard dps={dps} />
@@ -670,7 +707,7 @@ function SkillDamagePanel(): ReactNode {
               statIds={hitStats}
               scope="skill"
               selected={detail.focus}
-              onSelect={detail.open}
+              onSelect={openDetail}
               empty="Nothing modified this hit, so no stat fed a layer."
             />
           </Panel>
@@ -678,7 +715,27 @@ function SkillDamagePanel(): ReactNode {
 
       </div>
 
-      {detail.pane}
+      {effectsOpen && hasEffects ? (
+        <DockedPane
+          height={effectsHeight}
+          onHeight={setEffectsHeight}
+          onClose={() => setEffectsOpen(false)}
+        >
+          <div className="breakdown">
+            <div className="row mb-3">
+              <strong className="grow ellipsis">Effects assumed up</strong>
+              <span className="badge">{assumedCount(derived)} up</span>
+            </div>
+            <p className="muted text-sm mt-0 mb-4 prose">
+              Tick an effect on or off and the damage breakdown above updates with it. This is the
+              same list as the Config tab&apos;s, so a change here changes the build.
+            </p>
+            <EffectsCard dps={dps} />
+          </div>
+        </DockedPane>
+      ) : (
+        detail.pane
+      )}
     </div>
   );
 }
@@ -716,7 +773,7 @@ const BRANCH_WORD: Record<Branch, string> = {
 function sourceChoice(entry: DpsResult["sources"][number]): string {
   const element = ELEMENTS[entry.source.element]?.displayName ?? entry.source.element;
   const name = entry.source.valueCalcId || entry.source.id;
-  const self = entry.source.target?.kind === "self" ? " — to yourself" : "";
+  const self = entry.source.target?.kind === "self" ? " (to yourself)" : "";
   return `${name} · ${element} · ${sourceLabel(entry.source)}${self}`;
 }
 
@@ -742,7 +799,6 @@ const DAMAGE_PANELS = [
   "damage.self",
   "damage.overlap",
   "damage.target",
-  "damage.effects",
   "damage.gaps",
   "damage.sources",
   "damage.summons",

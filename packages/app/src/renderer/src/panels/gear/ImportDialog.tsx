@@ -72,9 +72,9 @@ Epic Item`;
  * quietly implied its rolls had been inferred when they are exact.
  */
 const FORMAT_LABEL: Record<PasteResult["format"], string> = {
-  "copied-item": "copied in game — exact",
-  document: "this app's item JSON — exact",
-  nbt: "item NBT — exact",
+  "copied-item": "copied in game (exact)",
+  document: "this app's item JSON (exact)",
+  nbt: "item NBT (exact)",
   tooltip: "tooltip text",
   unknown: "nothing recognisable",
 };
@@ -190,18 +190,18 @@ export function ImportDialog({
         <>
         <Plain>
           <div className="notice info mb-5">
-            With the exporter mod installed, press Ctrl+Shift+C in game over any item — gear, a jewel, an omen, a Skill, a support gem or an Augment — and paste it here. That is exact and needs no permissions. Otherwise: hold Shift while hovering the item, then copy its tooltip. Without Shift the game merges every affix into one list with no ranges and no tiers, and two affixes granting the same stat arrive already added together, with no way to tell them apart afterwards.
+            With the exporter mod, press Ctrl+Shift+C over any item in game (gear, jewel, omen, Skill, support gem or Augment) and paste it here. That's exact. Otherwise, hold Shift while hovering the item and copy its tooltip. Without Shift, the game merges affixes and hides ranges and tiers, so they can't be separated.
           </div>
         </Plain>
         <Tech>
           <div className="notice info mb-5">
-            <strong>Ctrl+Shift+C in game is exact and reads all five item kinds</strong> — the
+            <strong>Ctrl+Shift+C in game is exact and reads all five item kinds</strong>: the
             mod writes the document shape straight out of the stack&apos;s own{" "}
             <code>StackSaving</code> data, so no roll is inverted out of a displayed value.
             Failing that: <strong>hold Shift over the item before copying its tooltip.</strong> Without it the
             game merges every affix into one list with no ranges and no tiers
             (<code>GearTooltipUtils</code> branches on <code>useInDepthStats()</code>), and two
-            affixes granting the same stat are already added together — there is nothing left to
+            affixes granting the same stat are already added together, with nothing left to
             take apart. <code>/data get entity @s SelectedItem</code> works whatever you are
             holding and is exact.
           </div>
@@ -222,7 +222,7 @@ export function ImportDialog({
             Paste the example
           </button>
           <button
-            title="Read whatever is on the clipboard — a tooltip, item NBT, or an item copied from another build"
+            title="Paste a tooltip, item NBT or an item copied from another build"
             onClick={() => void navigator.clipboard.readText().then(setText, () => undefined)}
           >
             Paste from clipboard
@@ -309,7 +309,7 @@ function Landing({ thing, name }: { thing: ImportedThing; name?: string | undefi
   return (
     <div className="notice info mt-4">
       Read as {KIND_LABEL[thing.kind]}: <strong>{detail}</strong>
-      {replaces && " — this replaces the omen this build already has."}
+      {replaces && ". This replaces your current omen."}
     </div>
   );
 }

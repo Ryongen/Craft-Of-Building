@@ -21,6 +21,7 @@
  * under it.
  */
 
+import type { LayerStep } from "@cte2/engine";
 import { spellName, statName, type ElementName } from "@cte2/schema";
 import type { ReactNode } from "react";
 
@@ -56,6 +57,8 @@ export type FigureId =
   | "combined-dps"
   /** The whole ticked rotation with its procs and ailments — no pets, no weapon swing. */
   | "full-dps"
+  /** What one pass through the ticked skills spends, skill by skill and pool by pool. */
+  | "rotation-cost"
   | "cost"
   | "cost-rate"
   /** What your own skill charges you, against the two regenerations that pay for it. */
@@ -113,6 +116,7 @@ export function SheetDetail({
         element={focus.element}
         unavoided={focus.kind === "max-hit"}
         derived={derived}
+        onFocus={onFocus}
       />
     );
   }
@@ -169,56 +173,204 @@ function Term({
 }
 
 /**
- * One element's two survival figures — whichever of them was asked for.
+ * One element's two survival figures — whichever of them was asked for — worked out on screen.
  *
- * The same component for both because they are the same arithmetic over two different sweeps,
- * and showing them side by side is the point: the difference between them is the share of your
- * defence that is a dice roll.
+ * The same component for both because they are the same arithmetic over two different sweeps:
+ * the pool, a reference hit walked through every layer that touched it, and the pool divided by
+ * whatever share of that hit survived. Laid out as those three steps rather than as the answer,
+ * so the reader can see which layer is doing the work and which one is letting the hit through.
  */
 function ElementDetail({
   element,
   unavoided,
   derived,
+  onFocus,
 }: {
   element: ElementName;
   /** The maximum hit rather than the average — avoidance assumed to fail. */
   unavoided: boolean;
   derived: DerivedBuild;
+  onFocus: (focus: SheetFocus) => void;
 }): ReactNode {
-  const row = derived.defence.byElement.find((e) => e.element === element);
+  const { snapshot } = useWorld();
+  const { defence } = derived;
+  const row = defence.byElement.find((e) => e.element === element);
   const name = elementLabel(element);
-  const title = unavoided ? `Maximum hit — ${name}` : `Effective HP — ${name}`;
+  const title = unavoided ? `Maximum hit · ${name}` : `Effective HP · ${name}`;
   if (row === undefined) {
     return <Detail title={title} lead="The defence pass reported nothing for this element." />;
   }
 
+  const stat = (statId: string): (() => void) => () => onFocus({ kind: "stat", statId });
+  const figureLabel = unavoided ? "Maximum hit" : "Effective HP";
+  const taken = unavoided ? row.takenUnavoided : row.taken;
+  const figure = unavoided ? row.maximumHit : row.effectiveHealth;
+  const hit = defence.hitSize;
+  const { health, magicShield } = defence.pools;
+  const bypassed = Math.max(0, health + magicShield - row.pool);
+
+  // Only the layers that moved the hit. The sweep also records layers that wrote to some other
+  // number — penetration, accuracy — and those are already inside the rows they fed.
+  const moved = (unavoided ? row.unavoidedSteps : row.steps).filter(
+    (step) => Math.abs(step.after - step.before) > 1e-6,
+  );
+  const reaches = hit * taken;
+  // A conversion layer takes its share off this element's chain and sweeps it again under the
+  // other element's own resists, so what lands is the chain's last row plus whatever that part
+  // came to. Shown as its own row so the column still adds up.
+  const chainEnd = moved.length > 0 ? moved[moved.length - 1]!.after : hit;
+  const converted = reaches - chainEnd;
+
+  const share = (step: LayerStep): number => (hit > 0 ? (step.before - step.after) / hit : 0);
+  // A layer's name alone does not say what to change — "Additive Damage" on an incoming hit is
+  // your own Damage Received — so the summary names the stats that fed it as well.
+  const named = (step: LayerStep): string => {
+    const biggest = [...step.contributions].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+    const layer = layerLabel(snapshot, step, element);
+    const stats = [...new Set(biggest.map((c) => statName(snapshot, c.statId)))]
+      .filter((stat) => stat !== layer)
+      .slice(0, 2);
+    return stats.length === 0 ? layer : `${layer} from ${stats.join(" and ")}`;
+  };
+  const savers = moved
+    .filter((step) => share(step) > 0.005)
+    .sort((a, b) => share(b) - share(a))
+    .slice(0, 3);
+  const hurts = moved.filter((step) => share(step) < -0.005).sort((a, b) => share(a) - share(b));
+
   const luck = row.takenUnavoided > 0 ? 1 - row.taken / row.takenUnavoided : 0;
+  const pct = (n: number, digits = 1): string => `${num(n * 100, digits)}%`;
+  const amount = (n: number): string => (Number.isFinite(n) ? smart(n) : "∞");
 
   return (
     <Detail
       title={title}
       lead={
         unavoided
-          ? `The largest single ${name.toLowerCase()} hit that does not kill you from full, with every dodge and block roll assumed to fail. Mitigation still applies — armour, the resists and flat reduction are not rolls.`
-          : `Raw ${name.toLowerCase()} damage you survive from full, on average: the pool divided by the share of a hit that reaches it. Dodge and block are folded in as expectation, which is what makes this an average rather than a guarantee.`
+          ? `The largest ${name.toLowerCase()} hit you survive from full health if every dodge and block fails. Armour, resists and flat reduction still apply.`
+          : `How much raw ${name.toLowerCase()} damage you can take from full health, on average. Dodge and block are averaged in, so it's not a guarantee.`
       }
     >
+      {/* The answer to "what is saving me and what is killing me", before the working. */}
+      <div className="notice">
+        {savers.length === 0 ? (
+          <>
+            <strong>Nothing stops a {name.toLowerCase()} hit.</strong> All of it reaches your pool,
+            so this figure is your pool and nothing more.
+          </>
+        ) : (
+          <>
+            <strong>Saving you most:</strong>{" "}
+            {savers
+              .map((step) => `${named(step)} (stops ${pct(share(step))})`)
+              .join(", ")}
+            .
+          </>
+        )}
+        {hurts.length > 0 && (
+          <>
+            {" "}
+            <strong style={{ color: "var(--bad)" }}>Working against you:</strong>{" "}
+            {hurts
+              .map((step) => `${named(step)} (adds ${pct(-share(step))})`)
+              .join(", ")}
+            .
+          </>
+        )}
+        {bypassed > 0.5 && (
+          <>
+            {" "}
+            <strong style={{ color: "var(--bad)" }}>Half of chaos skips your magic shield,</strong> which costs you{" "}
+            {smart(bypassed)} of pool here.
+          </>
+        )}
+      </div>
+
+      <div className="section-title">1 · Your pool</div>
       <div className="steps">
-        <Term
-          label="Pool"
-          value={smart(row.pool)}
-          hint="Health plus magic shield, except against chaos — chaos bypasses the shield, which is why its pool is smaller."
+        <Term label="Health" value={smart(health)} onSelect={stat("health")} />
+        {magicShield > 0 && (
+          <Term
+            label="Magic shield"
+            value={`+${smart(magicShield)}`}
+            hint="Absorbs before health does."
+            onSelect={stat("magic_shield")}
+          />
+        )}
+        {bypassed > 0.5 && (
+          <Term
+            label="Chaos skips half the shield"
+            value={`−${smart(bypassed)}`}
+            hint="Half of every chaos hit goes straight to health, so once your shield is bigger than your health, health runs out first. The pool is capped at twice your health."
+          />
+        )}
+        <Term label="Pool" value={smart(row.pool)} strong />
+      </div>
+
+      <div className="section-title">2 · A {smart(hit)} hit on the way in</div>
+      <div className="steps">
+        <StepRow
+          label={<span className="muted">Raw hit</span>}
+          value={smart(hit)}
+          title="A reference hit the size of your health plus shield. Only flat reduction cares how big it is."
         />
+        {moved.map((step, index) => {
+          const helps = step.after < step.before;
+          return (
+            <StepRow
+              key={`${step.layerId}-${index}`}
+              label={layerLabel(snapshot, step, element)}
+              badge={formatStep(step)}
+              value={`${helps ? "−" : "+"}${smart(Math.abs(step.before - step.after))} → ${smart(step.after)}`}
+              tone={helps ? "good" : "bad"}
+              title={`${helps ? "Stops" : "Adds"} ${pct(Math.abs(share(step)))} of the raw hit.`}
+            >
+              {step.contributions.length === 0
+                ? undefined
+                : () =>
+                    step.contributions.map((c, at) => (
+                      <StepRow
+                        key={`${c.statId}-${at}`}
+                        depth={1}
+                        label={statName(snapshot, c.statId)}
+                        value={`${c.value > 0 ? "+" : ""}${num(c.value, 1)}`}
+                        onClick={stat(c.statId)}
+                      />
+                    ))}
+            </StepRow>
+          );
+        })}
+        {Math.abs(converted) > 0.5 && (
+          <StepRow
+            label="Converted part, after its own resists"
+            value={`+${smart(converted)}`}
+            title="Damage a conversion moved to another element is mitigated by that element's resistances and still lands."
+          />
+        )}
         <Term
-          label={unavoided ? "Share that gets through, unavoided" : "Share of a hit that gets through"}
-          value={`${num((unavoided ? row.takenUnavoided : row.taken) * 100, 2)}%`}
-          hint="After every mitigation layer. 100% means nothing stops it."
-        />
-        <Term
-          label={unavoided ? "Maximum hit" : "Effective HP"}
-          value={smart(unavoided ? row.maximumHit : row.effectiveHealth)}
+          label="Reaches your pool"
+          value={`${smart(reaches)} (${pct(taken, 2)})`}
           strong
+          hint="After every layer. 100% would mean nothing stops it."
         />
+      </div>
+
+      <div className="section-title">3 · {figureLabel}</div>
+      <div className="steps">
+        <Term label="Pool" value={smart(row.pool)} />
+        <Term label="÷ share that gets through" value={pct(taken, 2)} />
+        <Term label={figureLabel} value={amount(figure)} strong />
+      </div>
+      <div className="muted text-sm mt-3 prose">
+        {taken > 0 ? (
+          <>
+            Every point of raw {name.toLowerCase()} damage costs you {num(taken, 3)} of a point, so
+            a pool of {smart(row.pool)} lasts {amount(figure)} of raw damage
+            {unavoided ? " in one hit." : ", on average."}
+          </>
+        ) : (
+          <>Nothing gets through, so no {name.toLowerCase()} hit can kill you.</>
+        )}
       </div>
 
       {luck > 0.005 && (
@@ -227,11 +379,12 @@ function ElementDetail({
           <div className="steps">
             <Term
               label={unavoided ? "Effective HP (averaged)" : "Maximum hit (unavoided)"}
-              value={smart(unavoided ? row.effectiveHealth : row.maximumHit)}
+              value={amount(unavoided ? row.effectiveHealth : row.maximumHit)}
+              onSelect={() => onFocus({ kind: unavoided ? "ehp" : "max-hit", element })}
             />
             <Term
               label="Of your mitigation here, this much is a roll"
-              value={`${num(luck * 100, 1)}%`}
+              value={pct(luck)}
               hint="Dodge zeroes a hit on a roll and block halves one on a roll. Averaged over a fight that is real damage prevented; against one particular hit it is nothing."
             />
           </div>
@@ -244,7 +397,8 @@ function ElementDetail({
       )}
 
       <div className="faint text-sm mt-4 prose">
-        The Defence tab takes the mitigation apart layer by layer, for both sweeps.
+        Open a layer for the stats behind it, and a stat for the gear, passives and buffs behind
+        that.
       </div>
     </Detail>
   );
@@ -268,6 +422,7 @@ function FigureDetail({
    */
   if (id === "total-dps") return <TotalDpsDetail derived={derived} onFocus={onFocus} />;
   if (id === "full-dps") return <FullDpsDetail derived={derived} onFocus={onFocus} />;
+  if (id === "rotation-cost") return <RotationCostDetail derived={derived} onFocus={onFocus} />;
 
   if (dps === undefined || damage === undefined) {
     return <Detail title="No skill" lead="Nothing is set as the main skill, so there is no figure to take apart." />;
@@ -283,8 +438,8 @@ function FigureDetail({
     case "hit":
       return (
         <Detail
-          title={`Hit — ${spell}`}
-          lead="What one landing press puts on the target, averaged across the crit branch and the non-crit one. This is a single damage source; a skill with several is summed on the Damage tab."
+          title={`Hit · ${spell}`}
+          lead="Average damage of one press that lands, crits included. Skills with several damage sources are summed on the Damage tab."
         >
           <div className="steps">
             <Term label="Non-crit" value={smart(damage.hit.total)} />
@@ -306,11 +461,11 @@ function FigureDetail({
     case "rate":
       return (
         <Detail
-          title={rate.channelled ? `Pulse rate — ${spell}` : `Cast rate — ${spell}`}
+          title={rate.channelled ? `Pulse rate · ${spell}` : `Cast rate · ${spell}`}
           lead={
             rate.channelled
-              ? "A held channel re-arms itself every cast time and never goes through a cooldown, so this is the pulse interval rather than a cast-and-recover cycle."
-              : "One cycle is the cast plus the recovery after it, because recovery starts when the cast finishes rather than alongside it. The rate is one over that."
+              ? "A channel pulses once per cast time and has no cooldown."
+              : "One cycle is the cast plus the recovery after it. The rate is one divided by that."
           }
         >
           <div className="steps">
@@ -356,7 +511,7 @@ function FigureDetail({
       const multi = damage.hit.total > 0 ? damage.crit.total / damage.hit.total : 0;
       return (
         <Detail
-          title={`Crit multiplier — ${spell}`}
+          title={`Crit multiplier · ${spell}`}
           lead={STATS_COPY.critMultiLead}
         >
           <div className="steps">
@@ -377,14 +532,14 @@ function FigureDetail({
     case "hit-chance":
       return (
         <Detail
-          title={`Chance to hit — ${spell}`}
+          title={`Chance to hit · ${spell}`}
           lead={STATS_COPY.hitChanceLead}
         >
           <div className="steps">
             <Term
               label="Chance to hit"
               value={`${num(damage.hitChance * 100, 2)}%`}
-              hint="1 wherever nothing can dodge the hit: dodge takes physical attacks and magic dodge takes magic spells."
+              hint="1 wherever nothing can dodge the hit: dodge takes every non-magic hit, whatever its element, and magic dodge takes magic spells."
               strong
             />
             <Term
@@ -405,8 +560,8 @@ function FigureDetail({
     case "hit-dps":
       return (
         <Detail
-          title={`Hit DPS — ${spell}`}
-          lead="This skill on its own button, with nothing else pressed. Steady state: a cast's whole output is amortised over the cast interval however long it takes to arrive."
+          title={`Hit DPS · ${spell}`}
+          lead="This skill alone, with nothing else pressed. Each cast's damage is spread over its cast interval."
         >
           <div className="steps">
             <Term
@@ -435,8 +590,8 @@ function FigureDetail({
     case "ailment-hit":
       return (
         <Detail
-          title={`Ailment hit — ${spell}`}
-          lead="Freeze and Electrify deal nothing when they land. Each one adds to a pool on the target, and a hit carrying Shatter or Shock chance releases the whole of it at once — so a cold build's real hit is this one, on its own schedule."
+          title={`Ailment hit · ${spell}`}
+          lead="Freeze and Electrify deal no damage when applied. They build up a pool on the target, and Shatter or Shock releases it all at once. For a cold build, this is the big hit."
         >
           <div className="steps">
             <Term
@@ -454,10 +609,9 @@ function FigureDetail({
             />
           </div>
           <div className="faint text-sm mt-4 prose">
-            The pool is a leaking bucket: every freeze or electrify you inflict fills it, 10% a
-            second drains away while it waits, and a proc empties it. So the figure depends on how
-            fast you cast as well as on the two chances — a slow rotation has a smaller spike as
-            well as a rarer one. The Damage tab lists what each ailment accumulates.
+            Every freeze or electrify adds to the pool, it loses 10% a second, and a proc empties it.
+            So casting faster means bigger and more frequent spikes. The Damage tab shows what each
+            ailment builds up.
           </div>
         </Detail>
       );
@@ -465,8 +619,8 @@ function FigureDetail({
     case "ailment-proc-dps":
       return (
         <Detail
-          title={`Ailment hit DPS — ${spell}`}
-          lead="What Shatter and Shock are worth per second: the pool you accumulate, times the share of it that reaches a proc instead of leaking away."
+          title={`Ailment hit DPS · ${spell}`}
+          lead="Shatter and Shock damage per second: the pool you build up, minus what decays before a proc."
         >
           <div className="steps">
             <Term
@@ -484,7 +638,7 @@ function FigureDetail({
           <>
           <Plain>
             <div className="faint text-sm mt-4 prose">
-              Both components operate on ailment timing and are included in Combined DPS. They occupy separate rows because they function differently: damage over time is a continuous rate, while shatter damage accumulates into a pool that either detonates or expires, driven by freeze chance and shatter activation chance rather than damage over time speed.
+              Both are included in Combined DPS. They're separate rows because damage over time is a steady rate, while Shatter builds a pool that either bursts or decays, driven by freeze and shatter chance rather than DoT speed.
             </div>
           </Plain>
           <Tech>
@@ -503,8 +657,8 @@ function FigureDetail({
     case "ailment-dps":
       return (
         <Detail
-          title={`Ailment DPS — ${spell}`}
-          lead="Bleed, ignite, poison and the rest, on their own clock. Never part of the hit and never part of Hit DPS — an ailment ticks whether or not you cast again."
+          title={`Ailment DPS · ${spell}`}
+          lead="Bleed, ignite, poison and other damage over time. Separate from Hit DPS, since they keep ticking between casts."
         >
           <div className="steps">
             <Term label="Ailment DPS" value={smart(dps.ailmentDps - dps.ailmentProcDps)} strong />
@@ -532,8 +686,8 @@ function FigureDetail({
     case "combined-dps":
       return (
         <Detail
-          title={`Combined DPS — ${spell}`}
-          lead="The hit plus its ailments — this skill's whole output while it is the only thing you press. Procs, summons and the weapon swing are not in it; the topbar's Total DPS is the figure that has everything."
+          title={`Combined DPS · ${spell}`}
+          lead="Hits plus ailments, if this is the only skill you press. Doesn't include procs, summons or weapon swings; Total DPS in the top bar does."
         >
           <div className="steps">
             <Term
@@ -573,8 +727,8 @@ function FigureDetail({
       }
       return (
         <Detail
-          title={`Self-damage — ${spell}`}
-          lead="A hit you inflict on yourself. It carries none of your own offence and cannot crit, and it cannot be dodged or blocked — but your mitigation still applies. It is never netted off your DPS."
+          title={`Self-damage · ${spell}`}
+          lead="Damage this skill deals to you. It can't crit and can't be dodged or blocked, but your mitigation applies. It isn't subtracted from your DPS."
         >
           <div className="steps">
             <Term
@@ -641,8 +795,8 @@ function FigureDetail({
 
       return (
         <Detail
-          title={`${statName(snapshot, pool)} cost — ${spell}`}
-          lead="What the spell declares, multiplied by every linked support gem's cost multiplier, then paced by how often you can press it."
+          title={`${statName(snapshot, pool)} cost · ${spell}`}
+          lead="The spell's cost times each linked support gem's multiplier, per press."
         >
           <div className="steps">
             <Term
@@ -689,7 +843,7 @@ function FigureDetail({
       return (
         <Detail
           title="Effective HP"
-          lead={`The worst of the five elements, because that is what actually kills you — here, ${elementLabel(derived.defence.weakest.element)}. Expand the row to compare the others.`}
+          lead={`Your weakest element, since that's what kills you. Here it's ${elementLabel(derived.defence.weakest.element)}. Expand a row to compare.`}
         >
           <div className="steps">
             {derived.defence.byElement.map((row) => (
@@ -713,7 +867,7 @@ function FigureDetail({
       return (
         <Detail
           title="Maximum hit"
-          lead={`The largest single hit you survive from full with every avoidance roll failing — here a ${elementLabel(fragile.element)} one. Mitigation is in it; dodge and block are not, because you cannot spend a chance on one particular hit.`}
+          lead={`The largest single hit you survive from full health if you don't dodge or block it. Here it's ${elementLabel(fragile.element)}. Mitigation counts; avoidance doesn't.`}
         >
           <div className="steps">
             {derived.defence.byElement.map((row) => (
@@ -737,9 +891,9 @@ function FigureDetail({
             <div className="notice">
               <strong>{num(luck * 100, 0)}% of your mitigation against {elementLabel(fragile.element)} is a
               roll.</strong>{" "}
-              Averaged over a fight that is real — your effective HP of{" "}
-              {smart(fragile.effectiveHealth)} counts it. Against the one hit that kills you it is
-              worth nothing, which is why this figure is {smart(fragile.maximumHit)}.
+              Over a whole fight it helps, and your effective HP of{" "}
+              {smart(fragile.effectiveHealth)} counts it. Against one big hit it doesn&apos;t, so
+              this is {smart(fragile.maximumHit)}.
             </div>
           ) : (
             <div className="muted text-sm mt-3 prose">
@@ -797,6 +951,7 @@ function FullDpsDetail({
   }
 
   const dots = full.ailmentDps - full.ailmentProcDps;
+  const swingProcDps = derived.basic?.procDps ?? 0;
 
   return (
     <Detail
@@ -830,10 +985,17 @@ function FullDpsDetail({
             onSelect={() => onFocus({ kind: "figure", id: "ailment-proc-dps" })}
           />
         )}
-        <Term label="Full DPS" value={smart(full.dps + full.ailmentDps)} strong />
+        {swingProcDps > 0 && (
+          <Term
+            label="Swing procs"
+            value={smart(swingProcDps)}
+            hint="What your basic attacks cast while you run the rotation, at your swing rate: Whiteout Sovereign's storms, Ice-Tipped Blade and the like."
+          />
+        )}
+        <Term label="Full DPS" value={smart(full.dps + full.ailmentDps + swingProcDps)} strong />
       </div>
       <div className="faint text-sm mt-4 prose">
-        Your pets and the weapon swing are not in this. They are on clocks of their own and run
+        Your pets and the swing&apos;s own hits are not in this. They are on clocks of their own and run
         whether or not you press anything, so they belong to the topbar&apos;s{" "}
         <span className="link-ish" onClick={() => onFocus({ kind: "figure", id: "total-dps" })}>
           Total DPS
@@ -841,6 +1003,131 @@ function FullDpsDetail({
         rather than to what the rotation is worth. The Damage tab&apos;s Full DPS card lists the
         pass skill by skill.
       </div>
+    </Detail>
+  );
+}
+
+/** One ticked skill's share of a pass's cost. */
+export type RotationCostEntry = {
+  spellId: string;
+  pool: string;
+  perCast: number;
+  presses: number;
+  perPass: number;
+};
+
+/**
+ * What one pass through the ticked skills spends.
+ *
+ * A rotation step is pressed once a pass and an upkeep buff `pressesPerRotation` times, so a
+ * toggle costs nothing. Costs go to the pool that pays them (`manaSpentAs`), which is how a
+ * Blood Magic build's mana and energy costs end up on one blood row. The sidebar row and the
+ * detail below both read this, so they cannot disagree.
+ */
+export function rotationCost(derived: DerivedBuild): {
+  entries: RotationCostEntry[];
+  pools: { pool: string; perPass: number; perSecond: number; regen: number }[];
+  seconds: number;
+} {
+  const full = derived.fullDps;
+  const seconds = full?.rotationSeconds ?? 0;
+  const entries: RotationCostEntry[] = [];
+  for (const entry of full?.skills ?? []) {
+    const presses = entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+    const { cost } = entry.result;
+    const spends: [string, number][] = [
+      [cost.manaSpentAs, cost.manaPerCast],
+      [cost.energySpentAs, cost.energyPerCast],
+    ];
+    for (const [pool, perCast] of spends) {
+      if (perCast <= 0) continue;
+      entries.push({ spellId: entry.skill.spellId, pool, perCast, presses, perPass: perCast * presses });
+    }
+  }
+  const totals = new Map<string, number>();
+  for (const e of entries) totals.set(e.pool, (totals.get(e.pool) ?? 0) + e.perPass);
+  const pools = [...totals].map(([pool, perPass]) => ({
+    pool,
+    perPass,
+    perSecond: seconds > 0 ? perPass / seconds : 0,
+    regen: derived.resources.byResource.find((r) => r.resource === pool)?.inCombatPerSecond ?? 0,
+  }));
+  return { entries, pools, seconds };
+}
+
+function RotationCostDetail({
+  derived,
+  onFocus,
+}: {
+  derived: DerivedBuild;
+  onFocus: (focus: SheetFocus) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const { entries, pools, seconds } = rotationCost(derived);
+  if (derived.fullDps === undefined || derived.fullDps.dps <= 0) {
+    return (
+      <Detail
+        title="Rotation cost"
+        lead="Nothing is ticked into Full DPS, so there is no rotation to cost. The checkbox is on each skill's card on the Skills tab."
+      />
+    );
+  }
+  if (entries.length === 0) {
+    return <Detail title="Rotation cost" lead="None of the ticked skills declares a mana or energy cost." />;
+  }
+
+  return (
+    <Detail
+      title="Rotation cost"
+      lead={`What one ${num(seconds, 2)}s pass through the ticked skills spends. Skills are pressed once a pass; buffs count for how often you re-press them, so a toggle is free.`}
+    >
+      <div className="steps">
+        {entries.map((e, i) => (
+          <Term
+            key={`${e.spellId}-${e.pool}-${i}`}
+            label={`${spellName(snapshot, e.spellId)} · ${statName(snapshot, e.pool)}`}
+            value={
+              e.presses === 1
+                ? smart(e.perCast)
+                : `${smart(e.perCast)} × ${num(e.presses, 2)} = ${smart(e.perPass)}`
+            }
+            hint={
+              e.presses === 1
+                ? "Per cast, with every linked support gem's cost multiplier applied. Pressed once a pass."
+                : `Per cast, with every linked support gem's cost multiplier applied, times ${num(e.presses, 2)} presses a pass.`
+            }
+          />
+        ))}
+      </div>
+      {pools.map((p) => {
+        const net = p.regen - p.perSecond;
+        return (
+          <div key={p.pool} className="steps mt-4">
+            <Term label={`${statName(snapshot, p.pool)} per pass`} value={smart(p.perPass)} />
+            <Term
+              label="Pass"
+              value={`${num(seconds, 2)}s`}
+              onSelect={() => onFocus({ kind: "figure", id: "full-dps" })}
+            />
+            <Term label="Spent per second" value={`${smart(p.perSecond)}/s`} strong />
+            <Term
+              label="Regeneration, in combat"
+              value={`${smart(p.regen)}/s`}
+              hint={STATS_COPY.inCombat}
+              onSelect={() => onFocus({ kind: "stat", statId: `${p.pool}_regen` })}
+            />
+            <Term
+              label="Net"
+              value={`${net >= 0 ? "+" : ""}${smart(net)}/s`}
+              hint={
+                net >= 0
+                  ? "Regeneration covers the rotation, so you can keep it up."
+                  : "More than your regeneration, so you can't keep this rotation up. Leech isn't counted here; the Damage tab's Sustain card has it per skill."
+              }
+            />
+          </div>
+        );
+      })}
     </Detail>
   );
 }
@@ -892,9 +1179,9 @@ function TotalDpsDetail({
         )}
         {rates.inRotation && rates.procDps > 0 && (
           <Term
-            label="Procs — already counted"
+            label="Procs (already counted)"
             value={smart(rates.procDps)}
-            hint="Inside the rotation figure above, not added to it. Shown so the sum below adds up on screen."
+            hint="Already part of the rotation number above. Shown so the sum below adds up."
           />
         )}
         {rates.ailmentDps > 0 && (

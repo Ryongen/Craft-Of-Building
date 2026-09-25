@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 /** Where the fold state lives. One key for every card, so a rename is a reset and nothing worse. */
-const STORE_KEY = "cte2.panels.open";
+const STORE_KEY = "cob.panels.open";
 
 function readStore(): Record<string, boolean> {
   try {

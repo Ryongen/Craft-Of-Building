@@ -253,7 +253,7 @@ const ACCOUNTED = {
   // debuffs. Named on the build as `config.enemy.affixes`, the shape the Training Dummy mod
   // uses — ids rather than numbers, so a planner figure and a dummy figure ask one question.
   "mmorpg_mob_affix": ["elsewhere", "damage/mob-affixes.ts — `config.enemy.affixes` on the target"],
-  "mmorpg_map_affix": ["gap", "77 map modifiers, most of which buff the mobs you are measuring against"],
+  "mmorpg_map_affix": ["elsewhere", "damage/map.ts — `config.map`: Mobs affixes on the target and the attacker, Players affixes on your sheet"],
   "mmorpg_prophecy_modifier": ["gap", "64 more map-side modifiers"],
   "mmorpg_weapon_type": ["gap", "13 weapon types; pairs with `castingWeapon`"],
   "mmorpg_mercenary": ["gap", "a whole companion feature"],

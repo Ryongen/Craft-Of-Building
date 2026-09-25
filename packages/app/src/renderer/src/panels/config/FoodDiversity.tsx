@@ -80,13 +80,12 @@ export function FoodDiversity(): ReactNode {
         {captured && (
           <div className="notice mt-3">
             <Plain>
-              This build carries attributes captured from the game. Those win wherever the game
-              actually reported a value — so a captured maximum health keeps its number and is
-              not counted twice.{" "}
+              This build has attributes captured from the game, and those take priority, so a
+              captured maximum health isn't counted twice.{" "}
             </Plain>
             <Tech>
               This build carries <code>character.attributes</code> captured from the game. Those win
-              wherever the game actually reported a value — so a captured{" "}
+              wherever the game actually reported a value, so a captured{" "}
               <code>max_health</code> keeps its number and is not counted twice.{" "}
             </Tech>
             {filled === undefined ? (
@@ -103,13 +102,13 @@ export function FoodDiversity(): ReactNode {
         <>
         <Plain>
           <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
-            These grant vanilla attributes, which the game converts into real stats like health, magic shield, dodge, and weapon damage. Gear stats do not reveal them, and exported character files ignore custom script attributes, which is why this section remains necessary on imported builds. {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}
+            These grant vanilla attributes that the game turns into health, magic shield, dodge and weapon damage. The exporter can't read them, so set them here even on imported builds. {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}
           </div>
         </Plain>
         <Tech>
           <div className="faint text-sm mt-3" style={{ lineHeight: 1.5 }}>
             These grant vanilla attributes, which <code>mmorpg_stat_compat</code> converts into real
-            stats — health, magic shield, dodge and weapon damage among them. Nothing about your gear
+            stats (health, magic shield, dodge and weapon damage among them). Nothing about your gear
             reveals them, and the in-game exporter reads the <code>kubejs:</code> ones as zero, which
             is why this box still matters on an imported build.
             {config.resetOnDeath ? " Diversity resets on death in this pack." : ""}

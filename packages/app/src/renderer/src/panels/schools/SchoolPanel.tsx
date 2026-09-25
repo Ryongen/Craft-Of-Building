@@ -258,7 +258,7 @@ export function SchoolPanel(): ReactNode {
               disabled={isPinned}
               title={
                 isPinned
-                  ? "Your main class — the one with the most points in it. It stays on the left."
+                  ? "Your main class (most points spent). It stays on the left."
                   : locked
                     ? "You already have two classes. The game refuses a third: MAX_2_CLASSES."
                     : undefined
@@ -318,12 +318,11 @@ export function SchoolPanel(): ReactNode {
             ))}
           <br />
           <Plain>
-            Each of those sets that spell&apos;s base rank, which your bonuses to spell level are
-            then added on top of — the sheet carries those separately.
+            Each sets that spell&apos;s base rank. Bonus spell levels are added on top.
           </Plain>
           <Tech>
             Each of those is a <code>learn_{"<spell>"}</code> stat on the sheet, which is where{" "}
-            <code>SpellCastingData.calcSpellLevels</code> reads a spell&apos;s rank from — plus any
+            <code>SpellCastingData.calcSpellLevels</code> reads a spell&apos;s rank from, plus any
             bonus ranks from <code>+ to spell level</code> stats, which the sheet carries
             separately.
           </Tech>
@@ -514,8 +513,8 @@ function SchoolGrid({
         <Tech>
           <div className="notice">
             {missing.length} perk id(s) in this school&apos;s grid have no{" "}
-            <code>mmorpg_perk</code> entry: <code>{missing.join(", ")}</code>. That is a pack bug —
-            the game renders nothing for them too.
+            <code>mmorpg_perk</code> entry: <code>{missing.join(", ")}</code>. That is a pack bug;
+            the game shows nothing for them either.
           </div>
         </Tech>
         </>
@@ -576,7 +575,7 @@ function PerkCell({
     `[calc:]` placeholders and a cost curve to produce one. Seventy of those on every keystroke,
     all but one of them thrown away unhovered, is what the laziness is for.
   */
-  const note = `${why}. Click to add, right-click to remove — shift for ${SHIFT_STEP} at a time.`;
+  const note = `${why}. Click to add, right-click to remove, hold Shift for ${SHIFT_STEP} at a time.`;
   const hover = useHoverCard((at) => (
     <CellCard
       perkId={perkId}

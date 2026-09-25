@@ -98,7 +98,7 @@ export function ProcTable({
                       procReason(proc, world.snapshot)
                     ) : (
                       <>
-                        {procReason(proc, world.snapshot)} &mdash;{" "}
+                        {procReason(proc, world.snapshot)}, but{" "}
                         <strong>your rotation does</strong>, for {smart(live.dps)}/s
                       </>
                     )}
@@ -126,7 +126,7 @@ function procReason(proc: Proc, snapshot: Snapshot): string {
     case "when-hit":
       return "fires when you are hit, blocked or dodged";
     case "on-kill":
-      return "fires on a kill — no rate a single-target figure can give it";
+      return "fires on kill, which single-target DPS can't rate";
     case "basic-attack":
       return "only a basic attack triggers it";
     case "wrong-skill":
@@ -169,7 +169,7 @@ function paceNote(snapshot: Snapshot, proc: Proc): string | undefined {
   if (proc.competes !== undefined) {
     return (
       `needs ${exileEffectName(snapshot, proc.competes.effectId)}, which ` +
-      `${proc.competes.spentBy} spends — only the swings that find it roll`
+      `${proc.competes.spentBy} uses up, so only swings that still find it can roll`
     );
   }
   return undefined;

@@ -393,7 +393,7 @@ function liveCount(
     note:
       `Uncapped, so they pile up: each pet lives ${round(lifeSeconds)}s and the skill comes back ` +
       `every ${round(cycleSeconds)}s, which is ${round(waves)} wave(s) of ${act.count} alive at ` +
-      `once — and that assumes every press goes on this rather than on anything else.`,
+      `once, assuming every press goes on this rather than on anything else.`,
   };
 }
 

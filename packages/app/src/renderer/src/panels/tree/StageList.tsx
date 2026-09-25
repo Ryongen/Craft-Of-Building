@@ -65,7 +65,7 @@ export function StageList(): ReactNode {
       <button
         className="stage-head"
         onClick={() => setOpen((v) => !v)}
-        title="The saved stages of this build — trees, points and the level they were planned at"
+        title="Saved stages of this build: trees, points and the level each was planned at"
       >
         <span className="caret">{open ? "▾" : "▸"}</span>
         <span className="stage-label">Stage</span>

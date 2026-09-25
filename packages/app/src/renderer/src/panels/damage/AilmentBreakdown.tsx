@@ -157,7 +157,7 @@ export function AilmentSummary({
       <div className="faint text-sm">
         {dot ? (
           <>
-            each, for {num(ailment.durationSeconds, 1)}s — {smart(ailment.totalDamage)} over its life
+            each, for {num(ailment.durationSeconds, 1)}s ({smart(ailment.totalDamage)} total)
           </>
         ) : ailment.procChance > 0 ? (
           // The pool is only worth something if something tips it. Naming the proc and its chance
@@ -165,7 +165,7 @@ export function AilmentSummary({
           // into the Shatter it is waiting for.
           <>
             released by {PROC_NAME[ailment.ailment] ?? "a proc"} at{" "}
-            {num(ailment.procChance * 100, 1)}% — the pool leaks{" "}
+            {num(ailment.procChance * 100, 1)}%. The pool decays{" "}
             {num(ailment.poolDecayPerSecond * 100, 0)}%/s while it waits
           </>
         ) : (
@@ -183,7 +183,7 @@ export function AilmentSummary({
       <div className="mt-3 mb-4">
         <div
           className="ele-row"
-          title={`${ailment.ailment}_chance — the odds this hit inflicts it at all`}
+          title={`${ailment.ailment}_chance: the chance this hit applies it`}
         >
           <span className="faint">Chance</span>
           <span className="num">{num(ailment.chance * 100, 1)}%</span>
@@ -197,7 +197,7 @@ export function AilmentSummary({
         </div>
         <div
           className="ele-row"
-          title="What the ailment's own DamageEvent turned that into — the gap between the two is what your ailment stats are worth"
+          title="What the ailment's own damage event made of that. The difference is what your ailment stats add"
         >
           <span className="faint">Its event made</span>
           <span className="num">{smart(ailment.eventDamage)}</span>
@@ -206,7 +206,7 @@ export function AilmentSummary({
           <>
             <div
               className="ele-row"
-              title={`Landing hits per second times the chance each one inflicts it — ${num(stack.applicationsPerSecond, 1)} a second, each lasting ${num(stack.durationSeconds, 1)}s. They stack without limit.`}
+              title={`${num(stack.applicationsPerSecond, 1)} applied per second (hits times chance), each lasting ${num(stack.durationSeconds, 1)}s. No stack limit.`}
             >
               <span className="faint">Stacks up at once</span>
               <span className="num">{num(stack.stacks, 1)}</span>

@@ -1,6 +1,7 @@
-import { type DpsResult } from "@cte2/engine";
+import { type ComboChain, type ComboRotation, type DpsResult } from "@cte2/engine";
 import { type ReactNode } from "react";
 
+import { useBuild } from "../../state/build-store.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
 
@@ -15,10 +16,20 @@ import { num, smart } from "../../ui/fields.js";
  */
 export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
   const combo = dps.combo;
-  if (combo === undefined) return null;
+  if (combo === undefined && dps.rotations === undefined) return null;
 
   return (
     <div className="card">
+      {combo !== undefined && <Chain dps={dps} combo={combo} />}
+      {dps.rotations !== undefined && <Rotations rotations={dps.rotations} />}
+    </div>
+  );
+}
+
+function Chain({ dps, combo }: { dps: DpsResult; combo: ComboChain }): ReactNode {
+  const setEffect = useBuild((s) => s.setEffect);
+  return (
+    <>
       <div className="row wrap" style={{ gap: 18, alignItems: "flex-start" }}>
         {combo.castsPerSecond !== undefined && (
           <Figure
@@ -31,14 +42,14 @@ export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
           <Figure
             label="Per combo"
             value={`${num(combo.secondsPerCast, 2)}s`}
-            hint="One pass: every step pressed once, each costing its cast plus the global cooldown it arms"
+            hint="One pass: each step costs its cast plus the global cooldown it arms, and a skill whose own cooldown is not back by the time you return to it makes the pass wait (marked cd)"
           />
         )}
         {dps.comboDps !== undefined && (
           <Figure
             label="Combo DPS"
             value={smart(dps.comboDps)}
-            hint="This skill at the chain's rate rather than its own. The other presses do damage too — tick them into Full DPS for the rotation's total"
+            hint="This skill's DPS at the combo's pace. The other presses deal damage too; tick them in Full DPS to get the rotation's total"
           />
         )}
         {combo.resources.length > 0 && (
@@ -47,15 +58,35 @@ export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
             value={combo.holds.length === 0 ? "nothing" : combo.holds.join(" + ")}
             hint={
               `This skill spends ${combo.resources.join(", ")}, and branches on which of them ` +
-              `are up — the pack writes one branch per combination, each with its own damage. ` +
-              `The figures above are the branch this rotation actually reaches` +
+              `are up. Each combination has its own damage. ` +
+              `The numbers above are for the one this rotation reaches` +
               (combo.holds.length === combo.resources.length
                 ? "."
-                : `; the rest of the table is what you are not getting.`)
+                : `; the rest of the table is what you're missing.`)
             }
           />
         )}
       </div>
+
+      {combo.fixed.length > 0 && (
+        <div className="faint text-sm mt-4">
+          <strong>Set by hand in Effects:</strong>{" "}
+          {combo.fixed
+            .map((id) => `${id} ${combo.holds.includes(id) ? "on" : "off"}`)
+            .join(", ")}
+          . The rotation takes {combo.fixed.length === 1 ? "it" : "them"} as given and only
+          chooses the rest.{" "}
+          <button
+            className="text-xs"
+            style={{ padding: "0 6px" }}
+            onClick={() => {
+              for (const id of combo.fixed) setEffect(id, undefined);
+            }}
+          >
+            Let the rotation choose
+          </button>
+        </div>
+      )}
 
       <table className="grid mt-4">
         <thead>
@@ -116,7 +147,63 @@ export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
           {combo.steps.find((step) => step.seconds === undefined)?.note}
         </div>
       )}
-    </div>
+    </>
+  );
+}
+
+/**
+ * Every charge state the bar can reach, priced, so the choice the figures rest on is visible.
+ *
+ * `phase_dive` holding all three charges is three extra presses away; holding two is one. The
+ * engine keeps whichever lands more damage per second, and this is the table it chose from.
+ */
+function Rotations({ rotations }: { rotations: ComboRotation[] }): ReactNode {
+  return (
+    <>
+      <div className="faint text-sm mt-4">
+        Rotations compared. The numbers above are for the highlighted one. Each counts only this
+        skill's damage, not the presses before it.
+      </div>
+      <table className="grid mt-4">
+        <thead>
+          <tr>
+            <th>Fires holding</th>
+            <th>Presses</th>
+            <th className="num">Per pass</th>
+            <th className="num">DPS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rotations.map((rotation, i) => (
+            <tr key={i} style={rotation.chosen ? { fontWeight: 600 } : undefined}>
+              <td>
+                {rotation.holds.length === 0 ? "nothing" : rotation.holds.join(" + ")}
+                {rotation.chosen && (
+                  <span className="badge text-xs" style={{ marginLeft: 4 }}>
+                    used
+                  </span>
+                )}
+              </td>
+              <td className="faint">
+                {rotation.presses.map((id) => id ?? "basic attack").join(" → ")}
+              </td>
+              <td className="num">
+                {rotation.secondsPerCast === undefined ? "—" : `${num(rotation.secondsPerCast, 2)}s`}
+              </td>
+              <td className="num">
+                {rotation.broken ? (
+                  <span className="badge warn text-xs">broken</span>
+                ) : rotation.dps === undefined ? (
+                  "?"
+                ) : (
+                  smart(rotation.dps)
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 }
 

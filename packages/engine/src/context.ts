@@ -16,8 +16,8 @@ import type { ExactMod } from "./modifier.js";
 import type { StatIndex } from "./stat-def.js";
 
 /**
- * `StatContext.StatCtxType`, minus the ones a build document cannot describe (mob affixes,
- * tools, bonus XP per character).
+ * `StatContext.StatCtxType`, minus the ones a build document cannot describe (tools, bonus XP
+ * per character).
  */
 export const CTX_TYPES = [
   "BASE_STAT",
@@ -53,6 +53,9 @@ export const CTX_TYPES = [
   // `mmorpg_sets` — a Diablo-style gear set's tier bonuses. Its own `StatCtxType` in the game
   // too, because the contribution belongs to the *combination* rather than to any one item.
   "ITEM_SET",
+  // A map's `Players` affixes. `MapItemData.getStatAndContext` files them under `MOB_AFFIX` for
+  // players too — the name is the game's, and it is the type a context modifier would target.
+  "MOB_AFFIX",
   "STAT_CTX_MODIFIER_BONUS",
   "MISC",
 ] as const;

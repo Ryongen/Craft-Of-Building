@@ -31,7 +31,7 @@ asar: true
 publish:
   provider: github
   owner: Ryongen
-  repo: cte2-pob
+  repo: Craft-Of-Building
   releaseType: draft
 
 win:

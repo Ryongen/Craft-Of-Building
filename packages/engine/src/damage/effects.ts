@@ -381,7 +381,7 @@ function reportInexactAveraging(ctx: DamageCtx, layerId: string, statId: string,
     degenerate ? "chance-averaging-inexact" : "chance-averaged",
     statId,
     degenerate
-      ? `\`${statId}\` writes to \`${layerId}\`, whose multiplier is pinned to ${layer.minMulti}x, at ${(weight * 100).toFixed(1)}% chance. Averaging a pinned layer is not exact — the real outcomes are "fires" and "does not", and this figure is neither.`
+      ? `\`${statId}\` writes to \`${layerId}\`, whose multiplier is pinned to ${layer.minMulti}x, at ${(weight * 100).toFixed(1)}% chance. Averaging a pinned layer is not exact: the real outcomes are "fires" and "does not", and this figure is neither.`
       : `\`${statId}\` fires on ${(weight * 100).toFixed(1)}% of hits and contributed at that fraction.`,
   );
 }

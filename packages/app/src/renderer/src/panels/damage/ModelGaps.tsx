@@ -23,8 +23,8 @@ export function ModelGaps({ model }: { model: DpsResult["model"] }): ReactNode {
       {unmodelledActs.length > 0 && (
         <div className="text-sm mb-2">
           <span className="badge warn">acts</span> Uses <CodeList ids={unmodelledActs} />, which
-          this model does not interpret. It may do nothing to damage — the model cannot tell you
-          that it does not.
+          this app doesn&apos;t model. It might not affect damage, but there&apos;s no way to
+          tell.
         </div>
       )}
       {unreachableGroups.length > 0 && (
@@ -36,8 +36,8 @@ export function ModelGaps({ model }: { model: DpsResult["model"] }): ReactNode {
             ({unreachableGroups.slice(0, 4).join(", ")}
             {unreachableGroups.length > 4 ? ", …" : ""})
           </span>
-          . Usually a branch waiting on an effect you do not have — the blocked gates above say
-          which.
+          . Usually a branch that needs an effect you don&apos;t have. The blocked list above
+          shows which.
         </div>
       )}
     </div>

@@ -350,7 +350,7 @@ export function resolveProcs(input: ProcInput): Proc[] {
             `depends on the pack rather than on the build. It is listed and not counted.`
           : `\`${proc.statId}\` casts \`${proc.spellId}\` when you are hit, and this build does not ` +
             `say how often that is. State the enemy's attack damage and how often it swings on ` +
-            `the Config tab — an attacker profile fills both — and this gets a real rate. It is ` +
+            `the Config tab (an attacker profile fills both) and this gets a real rate. It is ` +
             `listed and not counted until then.`,
     });
   }

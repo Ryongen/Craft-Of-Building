@@ -230,7 +230,7 @@ function reportStaleWeaponAttribute(
     `\`${ATTACK_DAMAGE}\` is ${total === undefined ? "absent" : `${total}`}, which is the ` +
       `bare-handed value, but ${weapons.join(", ")} is equipped. \`attack_damage_compat\` ` +
       `turns that attribute into \`total_damage\` at 0.5x, and \`total_damage\` is additive ` +
-      `damage with no condition on it, so every element of every hit reads low — the weapon's ` +
+      `damage with no condition on it, so every element of every hit reads low. The weapon's ` +
       `own attribute modifier is a Minecraft item property no registry carries. Capture again ` +
       `with the weapon in hand, or set the attribute yourself.`,
   );
@@ -279,7 +279,7 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
           "character.foodDiversity",
           `The capture reported no value for ${filled.join(", ")}, so \`foodDiversity: ` +
             `${diversity}\` supplied ${filled.length === 1 ? "it" : "them"}. Every other ` +
-            `attribute is the captured one — a food benefit the game did report is not ` +
+            `attribute is the captured one, so a food benefit the game did report is not ` +
             `counted twice.`,
         );
       }
@@ -357,7 +357,7 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
       "character.attributes",
       `${entries.length} \`${CATEGORY.statCompat}\` entries turn vanilla attributes into stats ` +
         `and no \`character.attributes\` was recorded, so none of them apply. In this pack that ` +
-        `is Solonion's food-diversity benefits, Mine and Meals and the KubeJS attributes — ` +
+        `is Solonion's food-diversity benefits, Mine and Meals and the KubeJS attributes, and ` +
         `health, magic shield, dodge and armour all read low without them.`,
     );
   }

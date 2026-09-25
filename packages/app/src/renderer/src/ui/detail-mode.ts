@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 /** Where the preference lives. A rename is a reset to plain, which is the safe direction. */
-const STORE_KEY = "cte2.detail.technical";
+const STORE_KEY = "cob.detail.technical";
 
 /** Fires on every write, so each `useTechnical` in the tree re-reads the one key. */
 const DETAIL_CHANGED = "cte2:detail-changed";

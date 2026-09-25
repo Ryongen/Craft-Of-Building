@@ -56,9 +56,8 @@ export function ComparePanel(): ReactNode {
       <div className="panel">
         <div className="prose">
           <div className="notice info">
-            <strong>Nothing is pinned.</strong> Pin the build you have now and every change you
-            make afterwards is measured against it — the whole re-gearing session, not one click
-            at a time. Or open a saved build to compare the current one against that.
+            <strong>Nothing is pinned.</strong> Pin your current build and every change after that
+            is compared against it. Or open a saved build to compare against.
           </div>
           <div className="row gap-4 mt-4">
             <button className="primary" onClick={() => pinBaseline()}>
@@ -274,9 +273,8 @@ function StatList({ against }: { against: BaselineComparison }): ReactNode {
   if (all.length === 0) {
     return (
       <div className="faint text-sm">
-        No sheet stat moved. Everything above comes from the skill, the rotation or the target
-        rather than from the character — a support gem&rsquo;s stats go onto the spell unit, never
-        onto the sheet.
+        No sheet stat moved. The changes above come from the skill, rotation or target. Support
+        gem stats apply to the spell, not the character sheet.
       </div>
     );
   }
