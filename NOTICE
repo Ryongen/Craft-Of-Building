@@ -1,0 +1,44 @@
+cte2-pob — CTE2 Build Planner
+Copyright (c) 2026 Ryongen
+
+This project is unofficial fan-made software. It is not affiliated with, endorsed
+by, or supported by the authors of Craft to Exile 2, Mine and Slash, Mojang, or
+Grinding Gear Games.
+
+
+What the MIT license covers
+---------------------------
+
+The MIT license in LICENSE covers the source code in this repository: the
+planner, the stat engine, the schema, the extractor, the build tools, and the
+Forge exporter mod under mod/.
+
+It does not cover game data or art belonging to anyone else. Specifically:
+
+  * Registry data, stat values and textures extracted from a Craft to Exile 2
+    install remain the property of their respective authors. Mine and Slash is
+    by robertx22; Craft to Exile 2 is by the CTE team.
+
+  * The `site-data` branch of this repository carries a copy of that data and
+    those textures so the GitHub Pages build has something to load. Those files
+    are redistributed with the permission of the Craft to Exile 2 and Mine and
+    Slash authors, for this project's published site. That permission was given
+    to this project and is not sublicensed to you: forking the code does not
+    carry a right to redistribute the art.
+
+  * The `main` branch contains no extracted game data at all, and the desktop
+    app redistributes none — it reads from the install on the machine it runs
+    on. See .gitignore.
+
+No Mine and Slash, Library of Exile or Minecraft code is included or vendored
+here. The exporter mod under mod/ compiles against those jars with `compileOnly`
+and never bundles them.
+
+
+Third-party components
+----------------------
+
+Nothing is vendored into this repository; the build resolves its dependencies
+from npm. The packaged desktop application additionally bundles Electron, which
+carries Chromium, Node.js and V8. Their licenses ship inside the packaged
+application, as produced by electron-builder.

@@ -148,6 +148,27 @@ try {
     ].join("\n"),
   );
 
+  /*
+   * The branch carries its own LICENSE because it is cloned and mirrored independently of
+   * `main`, and what is on it is not what the MIT license covers. Rewritten on every
+   * publish so it cannot drift from the note in the repository root.
+   */
+  writeFileSync(
+    join(worktree, "LICENSE"),
+    [
+      "The files on this branch are not covered by the MIT license on `main`.",
+      "",
+      "They are game data and art extracted from Craft to Exile 2 and Mine and Slash, and",
+      "they remain the property of their authors. Mine and Slash is by robertx22; Craft to",
+      "Exile 2 is by the CTE team. They are redistributed here with those authors' permission,",
+      "so that the GitHub Pages build of this project has data to load.",
+      "",
+      "That permission was given to this project. It is not sublicensed to you: forking the",
+      "planner does not carry a right to redistribute the art. See NOTICE on `main`.",
+      "",
+    ].join("\n"),
+  );
+
   git(["add", "-A"], { cwd: worktree });
   const staged = git(["status", "--porcelain"], { cwd: worktree });
   if (staged === "") {

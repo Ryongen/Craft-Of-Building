@@ -84,3 +84,15 @@ install and redistributes nothing.
 Once, in the repository's settings: **Settings → Pages → Build and deployment → Source →
 GitHub Actions**. The workflow in `.github/workflows/pages.yml` does the rest, and will fail with
 a clear message if `site-data` has not been published yet.
+
+## License
+
+The source code is MIT licensed — see [LICENSE](LICENSE).
+
+That covers the code only. Game data and art extracted from Craft to Exile 2 and
+Mine and Slash belong to their authors, and the copies on the `site-data` branch are
+redistributed with their permission for this project's site — not sublicensed to forks.
+[NOTICE](NOTICE) sets out exactly what falls on which side of that line.
+
+Unofficial fan-made software. Mine and Slash is by robertx22; Craft to Exile 2 is by
+the CTE team.
