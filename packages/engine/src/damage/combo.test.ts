@@ -659,3 +659,81 @@ test("a pass for one charge presses the supplier that hands over only that one",
   assert.ok(alphaOnly, "alpha alone is one of the rotations priced");
   assert.deepEqual(alphaOnly.presses, ["zap", "rich"]);
 });
+
+test("a resource you get by hitting yourself splits the casts between the two branches", () => {
+  // `dark_pact`'s shape: a plain hit below three `sacrifice`, a big hit at three that spends
+  // them, a self-hit every cast, and `sacrifice_when_hit` rolling on every hit you take. Nothing
+  // on the bar grants `sacrifice`, so there is no pass to press; an aura hitting you once a
+  // second and the pact's own self-hit supply 2 stacks a second against the 3 a cast spends.
+  const atThree = { type: "caster_has_mns_effect", map: { exile_potion_id: "sac", effect_stacks: 3 } };
+  const belowThree = { ...atThree, map: { ...atThree.map, is_false: true } };
+  const enemies = [{ type: "aoe", map: { radius: 3, selection_type: "RADIUS", en_predicate: "enemies" } }];
+  const self = [{ type: "self", map: {} }];
+  const cast = { type: "on_spell_cast", map: {} };
+  const hurtSelf = { type: "damage", map: { element: "Physical", value_calculation: "hit100", allow_self_damage: true } };
+
+  const pact = comboSpell("pact");
+  (pact["attached"] as Record<string, unknown>)["on_cast"] = [
+    { acts: [{ type: "damage", map: { element: "Physical", value_calculation: "hit100" } }], ifs: [cast, belowThree], targets: enemies, en_preds: [] },
+    { acts: [hurtSelf], ifs: [cast], targets: self, en_preds: [] },
+    { acts: [{ type: "damage", map: { element: "Physical", value_calculation: "hit300" } }], ifs: [cast, atThree], targets: enemies, en_preds: [] },
+    {
+      acts: [{ type: "exile_effect", map: { exile_potion_id: "sac", potion_action: "REMOVE_STACKS", count: 3, potion_dur: 200 } }],
+      ifs: [cast, atThree],
+      targets: self,
+      en_preds: [],
+    },
+  ];
+
+  const snapshot = engineSnapshot({
+    ...REGISTRIES,
+    mmorpg_value_calc: {
+      ...REGISTRIES.mmorpg_value_calc,
+      hit300: valueCalcEntry("hit300", { min: 300, max: 300 }),
+    },
+    mmorpg_exile_effect: {
+      sac: effectEntry("sac", { max_stacks: 5 }),
+      torment: effectEntry("torment", {
+        spell: {
+          entity_components: {
+            default_entity_name: [
+              { acts: [hurtSelf], ifs: [{ type: "x_ticks_condition", map: { tick_rate: 20 } }], targets: self, en_preds: [] },
+            ],
+          },
+          on_cast: [],
+        },
+      }),
+    },
+    mmorpg_spells: { pact, torment: comboSpell("torment", { grants: "torment" }) },
+    mmorpg_stat: {
+      sac_when_hit: statEntry("sac_when_hit", {
+        is_perc: true,
+        effect: [{ effects: ["give_sac"], events: ["on_damage"], ifs: ["random_roll"], order: "final_damage", side: "Target" }],
+      }),
+    },
+    mmorpg_stat_effect: {
+      give_sac: { id: "give_sac", ser: "give_exile_effect", effect: "sac", give_to: "Target", seconds: 10 },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [exact("sac_when_hit", "FLAT", 100)]),
+    },
+  });
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "pact", main: true }, { spellId: "torment" }],
+  } as BuildDoc;
+
+  const result = simulateDps(build, snapshot, {});
+  assert.ok(result);
+  const share = (valueCalcId: string): number | undefined =>
+    result.sources.find((s) => s.source.valueCalcId === valueCalcId && !s.hit.selfHit)?.source.castShare;
+  // One stack a second from the aura and one per cast, against three a cast spends.
+  const casts = result.rate.castsPerCycle / result.rate.cycleSeconds;
+  const expected = (1 + casts) / (3 * casts);
+  closeTo(share("hit300")!, expected, "the gated hit lands on the casts the stacks pay for");
+  closeTo(share("hit100")!, 1 - expected, "and the plain one on the rest");
+  assert.ok(result.diagnostics.some((d) => d.code === "self-hit-supply"));
+  assert.ok(!result.diagnostics.some((d) => d.code === "cast-requires-effect"));
+  assert.ok(!result.diagnostics.some((d) => d.code === "branch-gated-off" && d.message.includes("`sac`")));
+});

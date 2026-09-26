@@ -103,6 +103,7 @@ import {
   type ResourceId,
 } from "./resources.js";
 import { casterBuffUpkeep, targetDebuffUpkeep, type EffectState } from "./effect-state.js";
+import { gatedShare, selfHitSupply } from "./self-hit-supply.js";
 import {
   procDps,
   procSourcesFor,
@@ -881,10 +882,75 @@ export function simulateDps(
     cycleTicks: rate.cycleSeconds * TICKS_PER_SECOND,
     conditions: build.config?.conditions,
   });
-  const model: SkillModel =
+  const withAuras: SkillModel =
     auras.sources.length === 0
       ? walked
       : { ...walked, sources: [...walked.sources, ...auras.sources] };
+
+  // A resource you hit yourself for is neither up nor down: the skill fires whichever branch the
+  // stacks say, so a share of its casts land the gated hit. See `self-hit-supply.ts`.
+  const selfHit = selfHitBlend();
+  const model: SkillModel = selfHit?.model ?? withAuras;
+  function selfHitBlend(): { model: SkillModel; effectId: string; share: number } | undefined {
+    const open = plan.resources.filter((id) => !plan.holds.includes(id) && !plan.fixed.includes(id));
+    if (open.length !== 1) return undefined;
+    const effectId = open[0]!;
+    const option = effects.options.find((o) => o.id === effectId);
+    // A skill on the bar that grants it is a press, and the combo planner prices those.
+    if (option === undefined || option.grantedBy.some((g) => g.kind !== "stat")) return undefined;
+    const supply = selfHitSupply(snapshot, spell, characterRun.stats, effects, effectId);
+    if (supply === undefined) return undefined;
+    const castsPerSecond = rate.cycleSeconds > 0 ? rate.castsPerCycle / rate.cycleSeconds : 0;
+    const share = gatedShare(supply, castsPerSecond);
+    if (share <= 0) return undefined;
+
+    const held: EffectState = {
+      ...effects,
+      active: new Map(effects.active).set(effectId, option.maxStacks),
+    };
+    const heldWalk = skillModel(spell, declared, calc, held, options.entryGroup ?? "on_cast", build.config?.conditions);
+    const gatedOn = (source: DamageSource, negated: boolean): boolean =>
+      source.requires.some((r) => r.kind === "exile_effect" && r.effectId === effectId && r.negated === negated);
+    const scaled = (source: DamageSource, by: number): DamageSource => ({
+      ...source,
+      castShare: source.castShare * by,
+      instancesPerCast: source.instancesPerCast * by,
+    });
+
+    diagnostics.push({
+      severity: "info",
+      code: "self-hit-supply",
+      path: "skills",
+      message:
+        `\`${skill.spellId}\` spends ${supply.spentPerCast} \`${effectId}\` on its gated hit, and you get ` +
+        `them by being hit (${supply.fromStats.map((s) => `\`${s}\``).join(", ")}, ` +
+        `${Math.round(supply.chance * 100)}% a hit). Hitting yourself supplies ` +
+        [
+          ...(supply.periodicHitsPerSecond > 0
+            ? [`${supply.periodicHitsPerSecond.toFixed(2)} hits/s from ${supply.fromEffects.map((e) => `\`${e}\``).join(", ")}`]
+            : []),
+          ...(supply.ownHitsPerCast > 0 ? [`${supply.ownHitsPerCast} per cast of its own`] : []),
+        ].join(" and ") +
+        `, so ${(share * 100).toFixed(0)}% of casts land the gated hit and the rest the plain one. ` +
+        `A cast's own self-hit is assumed to feed the next cast, not itself. Enemy hits, other ` +
+        `skills that hit you and other skills that spend it are not counted.`,
+    });
+
+    return {
+      effectId,
+      share,
+      model: {
+        ...withAuras,
+        sources: [
+          ...withAuras.sources.flatMap((s) => (gatedOn(s, true) ? (share < 1 ? [scaled(s, 1 - share)] : []) : [s])),
+          ...heldWalk.sources.filter((s) => gatedOn(s, false)).map((s) => scaled(s, share)),
+        ],
+        blockedBy: withAuras.blockedBy.filter(
+          (b) => !(b.requirement.effectId === effectId && !b.requirement.negated),
+        ),
+      },
+    };
+  }
 
   for (const id of auras.gaps) {
     diagnostics.push({
@@ -956,7 +1022,7 @@ export function simulateDps(
 
   for (const source of model.sources) {
     for (const need of source.requires) {
-      if (!need.negated) requires.add(need.effectId);
+      if (!need.negated && need.effectId !== selfHit?.effectId) requires.add(need.effectId);
     }
 
     const hit = simulateHit(build, snapshot, {
@@ -1164,7 +1230,7 @@ export function simulateDps(
       });
     }
   }
-  if (picked !== undefined && plan.holds.length < plan.resources.length) {
+  if (picked !== undefined && plan.holds.length < plan.resources.length && selfHit === undefined) {
     const full = picked.rotations.find((r) => r.holds.length === plan.resources.length);
     diagnostics.push({
       severity: "info",
