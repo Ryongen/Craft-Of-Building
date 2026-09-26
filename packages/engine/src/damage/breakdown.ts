@@ -196,8 +196,19 @@ export type EventTrace = {
 export class Recorder {
   statId: string | undefined;
   effectId: string | undefined;
+  /**
+   * Which half of the event the running stat belongs to, set by the sweep alongside `statId`.
+   *
+   * Not the layer's side. The game keeps one accumulator per layer for both halves and labels it
+   * after whichever wrote first, so the mob's `dmg_received` lands in a `[Source]` additive
+   * layer. Stamping the contribution with that label sent the panel looking for the stat on
+   * your sheet, where nothing grants it.
+   */
+  side: EffectSide | undefined;
 
   readonly contributions: LayerContribution[] = [];
+  /** The accumulator label each contribution was written into, parallel to `contributions`. */
+  private readonly layerSides: EffectSide[] = [];
 
   write(
     layerId: string,
@@ -217,13 +228,14 @@ export class Recorder {
       effectId: this.effectId,
       layerId,
       numberId,
-      side,
+      side: this.side ?? side,
       element,
       kind,
       value,
       before,
       after,
     });
+    this.layerSides.push(side);
   }
 
   /**
@@ -273,10 +285,10 @@ export class Recorder {
     element: string | undefined,
   ): LayerContribution[] {
     return this.contributions.filter(
-      (c) =>
+      (c, i) =>
         c.layerId === layerId &&
         c.numberId === numberId &&
-        c.side === side &&
+        this.layerSides[i] === side &&
         (element === undefined || c.element === element),
     );
   }

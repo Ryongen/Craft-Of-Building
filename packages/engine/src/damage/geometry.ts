@@ -111,6 +111,9 @@ const MIN_SPEED = 1e-4;
  */
 const HITBOX_INFLATE = 0.3;
 
+/** Half a block: how far a placed block's face is from its centre. */
+const HALF_BLOCK = 0.5;
+
 /** A cap on how long a flight is integrated, so a 12000-tick totem cannot stall a UI thread. */
 const MAX_SIMULATED_TICKS = 2400;
 
@@ -496,10 +499,17 @@ function resolveSites(
         for (let i = 0; i < step.count; i++) {
           const ring = ringOffset(step, i);
           for (const offset of scatter) {
-            const at = { x: launch.at.x + ring.x + offset.x, z: launch.at.z + ring.z + offset.z };
+            let at = { x: launch.at.x + ring.x + offset.x, z: launch.at.z + ring.z + offset.z };
+            let heading = 0;
+            if (step.carrier.kind === "projectile" && step.carrier.motion.enemySearchRadius !== undefined) {
+              const aim = aimAtEnemy(at, step.carrier.motion.enemySearchRadius, placement, target);
+              if (aim === undefined) continue;
+              at = aim.from;
+              heading = aim.yaw;
+            }
             const weight = site.weight * launch.weight * offset.weight;
             const path =
-              step.carrier.kind === "projectile" ? flightFrom(step.carrier, at, i) : undefined;
+              step.carrier.kind === "projectile" ? flightFrom(step.carrier, at, i, heading) : undefined;
             const spawned: Site = {
               at,
               bornAt: launch.tick,
@@ -716,17 +726,67 @@ function scatterOffsets(step: SpawnStep): { x: number; z: number; weight: number
   return out;
 }
 
-/** One projectile of a mid-chain spawn, launched from `from` on the caster's heading. */
+/**
+ * One projectile of a mid-chain spawn, launched from `from` — on the caster's heading, or turned
+ * by `headingDegrees` when it was aimed at the enemy.
+ */
 function flightFrom(
   carrier: Extract<Carrier, { kind: "projectile" }>,
   from: Point,
   index: number,
+  headingDegrees = 0,
 ): Point[] {
   const ticks = Math.min(carrier.lifeTicks, MAX_SIMULATED_TICKS);
   const { motion, count } = carrier;
   if (motion.orbitsCaster) return orbitPath(motion, ticks, index, count);
   const path = integrate(motion, ticks, initialYaw(motion, index, count), sidewaysOffset(motion, index, count));
-  return path.map((p) => ({ x: p.x + from.x, z: p.z + from.z }));
+  if (headingDegrees === 0) return path.map((p) => ({ x: p.x + from.x, z: p.z + from.z }));
+  // `integrate` flies in the caster's frame, facing +Z; turn the whole flight, barrage offset
+  // included, onto the aim. Maps +Z to (-sin h, cos h), the same forward `integrate` uses.
+  const h = headingDegrees * DEG;
+  const cos = Math.cos(h);
+  const sin = Math.sin(h);
+  return path.map((p) => ({ x: from.x + p.x * cos - p.z * sin, z: from.z + p.x * sin + p.z * cos }));
+}
+
+/**
+ * `shoot_way: FIND_ENEMY` — where the shot leaves from and which way it points, or undefined when
+ * the enemy is out of range and nothing is fired. `ProjectileCastHelper.cast()` in the 6.4.13 jar:
+ *
+ *     target = EntityFinder...radius(calculateRadius()).getClosest();
+ *     if (target == null) return;
+ *     Vec3 dir = positionToVelocity(new MyPosition(pos), new MyPosition(target.getEyePosition()));
+ *     pitch = asin(-dir.y) * RAD_TO_DEG;  yaw = atan2(-dir.x, dir.z) * RAD_TO_DEG;
+ *
+ * The yaw is that `atan2`, in the frame `integrate` already uses. The pitch toward the eyes is not
+ * modelled, so a shot from close by reads as flat and a little quicker across the ground than it
+ * is.
+ *
+ * Every shooter here is a totem, and a totem placed at sight lands on the target — which as a
+ * point is inside the mob, where `hitTick` rightly finds nothing, because a flight that starts
+ * inside the box never enters it. That is not the fight: the totem is a solid block and the mob
+ * cannot stand in it, so the shot starts from the block's face beside the mob, on the caster's
+ * side. Only the aimed shooters are moved; a pulsing totem's area does not care.
+ */
+function aimAtEnemy(
+  from: Point,
+  searchRadius: number,
+  placement: TargetPlacement,
+  target: Point,
+): { from: Point; yaw: number } | undefined {
+  if (horizontalGap(from, target) > searchRadius) return undefined;
+  const beside = placement.radius + HITBOX_INFLATE + HALF_BLOCK;
+  let start = from;
+  if (horizontalGap(from, target) < beside) {
+    // Back toward the caster; a target on the caster's own spot has no such side, so use -Z.
+    const len = Math.hypot(target.x, target.z);
+    const ux = len > 0 ? target.x / len : 0;
+    const uz = len > 0 ? target.z / len : 1;
+    start = { x: target.x - ux * beside, z: target.z - uz * beside };
+  }
+  const dx = target.x - start.x;
+  const dz = target.z - start.z;
+  return { from: start, yaw: Math.atan2(-dx, dz) / DEG };
 }
 
 /** Keeps at most `limit` entries, evenly spaced, so a sampled list still has the right shape. */

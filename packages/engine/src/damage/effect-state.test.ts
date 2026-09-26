@@ -12,7 +12,7 @@ import test from "node:test";
 import type { BuildDoc } from "@cte2/schema";
 
 import { calculate } from "../calculate.js";
-import { baseStats, closeTo, engineSnapshot, exact, spellEntry, statEntry } from "../test-support.js";
+import { baseStats, closeTo, condition, engineSnapshot, exact, spellEntry, statEntry } from "../test-support.js";
 import { resolveEffectState } from "./effect-state.js";
 
 /** An exile effect as the pack ships them, with only the fields this file reads. */
@@ -142,6 +142,25 @@ test("an area that searches for allies is still the caster's own buff", () => {
   }, { skills: [{ spellId: "protection", main: true }] });
 
   assert.equal(state.options[0]!.side, "caster");
+});
+
+test("a curse with no stats is still offered, because is_target_cursed reads it by tag", () => {
+  // `curse_of_damnation` applies `damnation`, which carries no stats, beside `impending_doom`,
+  // which is not a curse. Dropping the statless one left every `damage_to_cursed` unread.
+  const noStats = { type: "negative", stats: [] };
+  const state = stateOf({
+    mmorpg_exile_effect: {
+      damnation: effectEntry("damnation", { ...noStats, tags: { tags: ["negative", "curse"] } }),
+      smoulder: effectEntry("smoulder", noStats),
+    },
+    mmorpg_spells: {
+      hex: grantingTo({ type: "aoe", map: { radius: 4, en_predicate: "enemies" } }, "hex", "damnation", "smoulder"),
+    },
+    mmorpg_stat_condition: { is_target_cursed: condition("is_target_cursed", "is_target_cursed") },
+  }, { skills: [{ spellId: "hex", main: true }] });
+
+  assert.deepEqual(state.options.map((o) => o.id), ["damnation"]);
+  assert.equal(state.options[0]!.side, "target");
 });
 
 test("the cap is max_stacks plus the max_<id>_charges stat", () => {

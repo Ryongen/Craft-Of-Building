@@ -108,6 +108,12 @@ export type ProjectileMotion = {
   orbitSpeed: number;
   /** `tracks_enemies` — the projectile steers itself at whatever it finds. */
   tracksEnemies: boolean;
+  /**
+   * `shoot_way: FIND_ENEMY` — aimed once, at launch, at the closest enemy within this many
+   * blocks of where it is fired from, and not fired at all when there is none. Undefined for
+   * every other `shoot_way`, which fly on the caster's heading. Every totem that shoots is this.
+   */
+  enemySearchRadius?: number;
   /** True when the projectile is affected by gravity, which curves it down 0.05 blocks a tick. */
   gravity: boolean;
 };
@@ -883,6 +889,14 @@ function carrierFor(act: RawAct, calc: SpellCalc): Spawn | undefined {
           tracksEnemies: map["tracks_enemies"] === true,
           // `getOrDefault(GRAVITY, true)`, then `setNoGravity(!gravity)`.
           gravity: map["gravity"] !== false,
+          ...(map["shoot_way"] === "FIND_ENEMY"
+            ? {
+                enemySearchRadius: enemySearchRadius(
+                  (num(map["proj_speed"]) ?? 0) * calc.projectileSpeedMulti,
+                  life,
+                ),
+              }
+            : {}),
         },
       },
       count,
@@ -1323,4 +1337,19 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/**
+ * `ProjectileCastHelper.calculateRadius` in the 6.4.13 jar — how far a `FIND_ENEMY` shot looks.
+ *
+ *     if (lifespanTicks == -1) return 15;
+ *     return travelDistance(shootSpeed, lifespanTicks);   // speed * (1 - 0.99^life) / 0.01
+ *
+ * The fork's checkout says `lifespanTicks * shootSpeed`, which ignores the drag; the jar is what
+ * ships. `lifespanTicks` is the act's raw `life_ticks`, before any duration multiplier.
+ */
+function enemySearchRadius(speed: number, lifeTicks: number): number {
+  if (lifeTicks === -1) return 15;
+  if (speed <= 0 || lifeTicks <= 0) return 0;
+  return (speed * (1 - Math.pow(0.99, lifeTicks))) / 0.01;
 }

@@ -275,12 +275,18 @@ a {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 380px;
+  /* The tab row across both columns, then the panel and the sheet side by side under it. */
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
+}
+
+.body > .tabs {
+  grid-column: 1 / -1;
 }
 
 .main-pane {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: 1fr;
   /* The column has to be told it may be narrower than its contents. A grid's implicit column is
      `auto`, which means max-content, so a panel wider than the window did not scroll inside its
      own `overflow: auto` — it widened this pane and slid under the stat sheet, which is drawn
@@ -3135,6 +3141,12 @@ textarea.paste:focus {
  * block sat beside the three tree buttons and squeezed the point counter next to it. 254px is
  * the width three stat rows need: a name, a stepper pair, a number box and a total.
  */
+/* The dismissible tip in the tree HUD: room on the right for its `.pane-close`. */
+.tree-tip {
+  position: relative;
+  padding-right: 32px;
+}
+
 .tree-hud-column {
   display: flex;
   flex-direction: column;

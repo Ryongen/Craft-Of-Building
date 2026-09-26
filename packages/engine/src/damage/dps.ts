@@ -2071,7 +2071,7 @@ export function simulateFullDps(
     // What one press of this skill takes out of the pass: its cast, then the shared arm it puts
     // on everything else. A skill off the global cooldown contributes only its cast time.
     const pressSeconds = result.rate.castSeconds + result.rate.globalCooldownSeconds;
-    const buff = upkeepOf(result);
+    const buff = upkeepOf(result, skill.fullDpsAsBuff === true);
 
     if (buff === undefined) {
       entries.push({ skill, result, rotationSeconds: pressSeconds, pressSeconds, role: "rotation" });
@@ -2302,7 +2302,7 @@ export function simulateFullDps(
  * with Effect Duration, the cycle with Cooldown — which is what makes either one worth linking
  * to one of these at all.
  */
-function upkeepOf(result: DpsResult):
+function upkeepOf(result: DpsResult, asBuff = false):
   | {
       role: Exclude<FullDpsRole, "rotation">;
       seconds: number;
@@ -2313,8 +2313,9 @@ function upkeepOf(result: DpsResult):
   | undefined {
   const aura = result.declared.tags.includes("aura");
   // A toggle that hits is still a toggle. Everything else earns its way out of the rotation by
-  // putting nothing on the target.
-  if (!aura && result.damagePerCast > 0) return undefined;
+  // putting nothing on the target — or by the build saying it is pressed for its buff, in which
+  // case the hit rides along once per re-cast (`fullDpsAsBuff`).
+  if (!aura && !asBuff && result.damagePerCast > 0) return undefined;
 
   // `result.buff` / `result.debuff` rather than a second walk of the spell: they are the same
   // upkeep answers with the `eff_dur_u_cast` sweep already applied, and the rotation has to be

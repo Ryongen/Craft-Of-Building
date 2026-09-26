@@ -498,75 +498,77 @@ export function App(): ReactNode {
       )}
 
       <div className={`body${sheetOpen ? "" : " no-sheet"}`}>
-        <div className="main-pane">
-          <div className="tabs">
-            {TABS.filter((entry) => technical || !("technical" in entry)).map((entry) => (
-              <button
-                key={entry.id}
-                className={tab === entry.id ? "active" : ""}
-                onClick={() => setTab(entry.id)}
-              >
-                <PackIcon path={entry.icon} size={14} />
-                {entry.label}
-                {entry.id === "diagnostics" && errors + warnings > 0 && (
-                  <span className={`badge ${errors > 0 ? "bad" : "warn"}`} style={{ marginLeft: 6 }}>
-                    {errors > 0 ? errors : warnings}
-                  </span>
-                )}
-              </button>
-            ))}
-
-            {/*
-              Which stage the character is showing, where a build has more than one.
-
-              On the tab row rather than in the topbar for two reasons. It belongs to the same
-              rank as the tabs — both answer "what am I looking at" — and the topbar is full: an
-              eighth field there pushed the Save buttons onto a second row at 1600px.
-
-              It has to be visible from every tab, not just the Tree one where the list lives,
-              because the stage owns the **level** and the point spends too. A build with four
-              stages where you cannot see which one is loaded is a character sheet you cannot
-              account for. Absent entirely for a build with one stage, which is most of them.
-            */}
-            {(doc.stages?.length ?? 0) > 1 && (
-              <div className="tab-stage">
-                <label htmlFor="stage-switch">Stage</label>
-                <select
-                  id="stage-switch"
-                  value={doc.activeStage ?? ""}
-                  onChange={(event) => switchStage(event.target.value)}
-                  title="Saved stages of this build. Manage them on the Tree tab"
-                >
-                  {doc.stages?.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.name}
-                      {stage.main === true ? " ★" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/*
-              Whether the hover text explains the number or explains where it came from, and
-              whether the Capture and Diagnostics tabs show.
-
-              Most of this app's hints were written during the port and name the stat they read
-              rather than the thing it means. That wording is how you audit a figure and noise
-              when you are building a character, so both exist and this picks - see
-              `ui/detail-mode.ts`. A picture rather than a labelled checkbox so it reads as
-              decoration and players leave it alone; whoever needs it knows where it is.
-            */}
+        {/* The tab row spans both columns, so the stat sheet starts under it rather than
+            beside it. */}
+        <div className="tabs">
+          {TABS.filter((entry) => technical || !("technical" in entry)).map((entry) => (
             <button
-              type="button"
-              className={`technical-toggle${technical ? " on" : ""}`}
-              aria-pressed={technical}
-              aria-label="Technical"
-              onClick={toggleTechnical}
+              key={entry.id}
+              className={tab === entry.id ? "active" : ""}
+              onClick={() => setTab(entry.id)}
             >
-              <img src={raiden} alt="" draggable={false} />
+              <PackIcon path={entry.icon} size={14} />
+              {entry.label}
+              {entry.id === "diagnostics" && errors + warnings > 0 && (
+                <span className={`badge ${errors > 0 ? "bad" : "warn"}`} style={{ marginLeft: 6 }}>
+                  {errors > 0 ? errors : warnings}
+                </span>
+              )}
             </button>
-          </div>
+          ))}
+
+          {/*
+            Which stage the character is showing, where a build has more than one.
+
+            On the tab row rather than in the topbar for two reasons. It belongs to the same
+            rank as the tabs — both answer "what am I looking at" — and the topbar is full: an
+            eighth field there pushed the Save buttons onto a second row at 1600px.
+
+            It has to be visible from every tab, not just the Tree one where the list lives,
+            because the stage owns the **level** and the point spends too. A build with four
+            stages where you cannot see which one is loaded is a character sheet you cannot
+            account for. Absent entirely for a build with one stage, which is most of them.
+          */}
+          {(doc.stages?.length ?? 0) > 1 && (
+            <div className="tab-stage">
+              <label htmlFor="stage-switch">Stage</label>
+              <select
+                id="stage-switch"
+                value={doc.activeStage ?? ""}
+                onChange={(event) => switchStage(event.target.value)}
+                title="Saved stages of this build. Manage them on the Tree tab"
+              >
+                {doc.stages?.map((stage) => (
+                  <option key={stage.id} value={stage.id}>
+                    {stage.name}
+                    {stage.main === true ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/*
+            Whether the hover text explains the number or explains where it came from, and
+            whether the Capture and Diagnostics tabs show.
+
+            Most of this app's hints were written during the port and name the stat they read
+            rather than the thing it means. That wording is how you audit a figure and noise
+            when you are building a character, so both exist and this picks - see
+            `ui/detail-mode.ts`. A picture rather than a labelled checkbox so it reads as
+            decoration and players leave it alone; whoever needs it knows where it is.
+          */}
+          <button
+            type="button"
+            className={`technical-toggle${technical ? " on" : ""}`}
+            aria-pressed={technical}
+            aria-label="Technical"
+            onClick={toggleTechnical}
+          >
+            <img src={raiden} alt="" draggable={false} />
+          </button>
+        </div>
+        <div className="main-pane">
 
           {/*
             Keyed on the tab so switching away from a panel that threw and back again gives it a

@@ -705,7 +705,7 @@ export function sweep(
    */
   flushLayers = true,
 ): void {
-  type Entry = { priority: number; statId: string; run: () => void };
+  type Entry = { priority: number; statId: string; side?: EffectSide; run: () => void };
   const queue: Entry[] = [];
 
   for (const { side, sheet } of sides) {
@@ -720,6 +720,7 @@ export function sweep(
         queue.push({
           priority: datapackPriority(block.order) ?? UNKNOWN_ORDER_PRIORITY,
           statId,
+          side,
           run: () => runBlock(ctx, statId, stat, def?.element, block, side),
         });
       }
@@ -732,6 +733,7 @@ export function sweep(
         queue.push({
           priority: effect.priority,
           statId,
+          side,
           run: () => effect.run(ctx, stat.value, stat.dmgMulti),
         });
       }
@@ -757,6 +759,7 @@ export function sweep(
     if (recorder !== undefined) {
       recorder.statId = item.statId;
       recorder.effectId = undefined;
+      recorder.side = item.side;
     }
     // An avoided hit zeroes the number; the remaining stats still run, exactly as in game.
     item.run();
@@ -764,6 +767,7 @@ export function sweep(
   if (recorder !== undefined) {
     recorder.statId = undefined;
     recorder.effectId = undefined;
+    recorder.side = undefined;
   }
 }
 

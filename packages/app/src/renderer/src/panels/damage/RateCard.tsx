@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { Fact } from "../../ui/Fact.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
+import { ticksAsTime } from "../../ui/format.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**
@@ -60,17 +61,17 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
       </div>
 
       <div className="row wrap gap-8 mt-5 text-sm">
-        <Fact label="Cast" value={`${calc.castTicks}t`} was={declared.castTimeTicks} />
+        <Fact label="Cast" value={ticksAsTime(calc.castTicks)} was={ticksAsTime(declared.castTimeTicks)} />
         <Fact
           label={rate.chargeBased ? "Charge regen" : "Recovery"}
-          value={`${rate.chargeBased ? calc.chargeCooldownTicks : calc.effectiveCooldownTicks}t`}
-          was={rate.chargeBased ? declared.chargeRegenTicks : declared.cooldownTicks}
+          value={ticksAsTime(rate.chargeBased ? calc.chargeCooldownTicks : calc.effectiveCooldownTicks)}
+          was={ticksAsTime(rate.chargeBased ? declared.chargeRegenTicks : declared.cooldownTicks)}
         />
         {!calc.offGlobalCooldown && (
           <Fact
             label="Cast speed"
-            value={`${num(calc.castSpeedTicks, 1)}t`}
-            was={declared.castSpeedTicks}
+            value={ticksAsTime(calc.castSpeedTicks)}
+            was={ticksAsTime(declared.castSpeedTicks)}
           />
         )}
         <Fact label="Casts per cycle" value={String(rate.castsPerCycle)} />

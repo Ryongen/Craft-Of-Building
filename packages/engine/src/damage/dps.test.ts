@@ -801,6 +801,34 @@ test("a buff that damages stays a rotation step, because that is why you press i
   assert.equal(entry.role, "rotation");
 });
 
+test("a damaging buff marked fullDpsAsBuff is pressed when it runs out, and its hit rides along", () => {
+  // Whiteout Sovereign's shape: pressed for the buff, and the hit is a bonus. 200 ticks of buff
+  // is one press every 10s, so the hit counts a tenth of a press per second of pass, not one.
+  const snapshot = buffScenario({ potionDur: 200, buffDamages: true });
+  const asStep = simulateFullDps(build({ skills: [ROTATION, BUFF] } as Partial<BuildDoc>), snapshot);
+  const asBuff = simulateFullDps(
+    build({ skills: [ROTATION, { ...BUFF, fullDpsAsBuff: true }] } as Partial<BuildDoc>),
+    snapshot,
+  );
+
+  const entry = asBuff.skills.find((e) => e.skill.spellId === "stance");
+  assert.ok(entry);
+  assert.equal(entry.role, "upkeep");
+  closeTo(entry.upkeepSeconds ?? 0, 10);
+  const presses = entry.pressesPerRotation ?? 0;
+  assert.ok(presses > 0 && presses < 1);
+  assert.ok(asBuff.rotationSeconds < asStep.rotationSeconds);
+
+  // Its damage is still in the pass, at the upkeep rate rather than dropped.
+  const strike = asBuff.skills.find((e) => e.skill.spellId === "strike");
+  assert.ok(strike);
+  closeTo(
+    asBuff.damagePerRotation,
+    strike.result.damagePerCast * strike.result.rate.castsPerCycle +
+      entry.result.damagePerCast * entry.result.rate.castsPerCycle * presses,
+  );
+});
+
 test("ticking only buffs is a rotation of presses rather than a division by zero", () => {
   const snapshot = buffScenario({ potionDur: -1 });
   const full = simulateFullDps(

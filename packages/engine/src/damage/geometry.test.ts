@@ -449,3 +449,46 @@ test("a hit that never happens spawns nothing at the target", () => {
   const onHit = chained(chain, { trigger: { kind: "on_hit" } });
   assert.equal(coverageOf(onHit, { ...DEFAULT_PLACEMENT, distance: 2 }).hitsPerCast, 0);
 });
+
+/**
+ * `arrow_totem`'s chain: a sight point, the totem block it drops, and an arrow the block fires
+ * every 15 ticks that bursts in a small area when it expires — which it does on the first mob it
+ * touches.
+ */
+function totem(enemySearchRadius: number | undefined): DamageSource {
+  const sight: Carrier = { kind: "summon_at_sight", count: 1, lifeTicks: 1 };
+  const arrow: Carrier = {
+    kind: "projectile",
+    count: 1,
+    baseCount: 1,
+    bonusCount: 0,
+    lifeTicks: 20,
+    motion: motion({ speed: 2.5, ...(enemySearchRadius === undefined ? {} : { enemySearchRadius }) }),
+  };
+  return chained(
+    [
+      step(sight, { from: { kind: "sight", maxDistance: 12 } }),
+      step(block(160), { spawnedOn: { kind: "expire" } }),
+      step(arrow, { spawnedOn: { kind: "tick", rate: 15, firstTick: 0 } }),
+    ],
+    { target: { kind: "aoe", radius: 1.5, selectionChance: 1 }, carriersPerCast: 10 },
+  );
+}
+
+test("a totem's FIND_ENEMY shot is aimed at the target, not along the caster's heading", () => {
+  // The totem lands on the target. Flown on the caster's heading, its arrow starts inside the mob
+  // and leaves without entering the box — zero, which is what every shooting totem used to read.
+  // Aimed from the block face beside the mob, all ten arrows over its life land.
+  for (const distance of [0, 2, 6, 10]) {
+    const placement = { ...DEFAULT_PLACEMENT, distance };
+    assert.equal(coverageOf(totem(undefined), placement).hitsPerCast, 0);
+    assert.equal(coverageOf(totem(46), placement).hitsPerCast, 10, `at ${distance} blocks`);
+  }
+});
+
+test("a FIND_ENEMY shot with no enemy in its search radius is never fired", () => {
+  // Past the sight distance the totem stops 12 blocks out; a 3-block search cannot see a mob 8
+  // blocks further on, and `cast()` returns before spawning anything.
+  assert.equal(coverageOf(totem(3), { ...DEFAULT_PLACEMENT, distance: 20 }).hitsPerCast, 0);
+  assert.equal(coverageOf(totem(46), { ...DEFAULT_PLACEMENT, distance: 20 }).hitsPerCast, 10);
+});

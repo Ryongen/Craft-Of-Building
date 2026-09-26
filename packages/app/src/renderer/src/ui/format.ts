@@ -62,6 +62,19 @@ export function smart(value: number): string {
 }
 
 /**
+ * A tick count as time first, ticks second — `0.30s/6t`.
+ *
+ * The mod counts in server ticks (20 a second) and so does the engine, but a player reads
+ * seconds. The ticks stay beside it because every `_ticks` field in the pack is written in them.
+ * Fractional ticks (cast speed after scaling) keep one decimal.
+ */
+export function ticksAsTime(ticks: number): string {
+  if (!Number.isFinite(ticks)) return "∞";
+  const t = Number.isInteger(ticks) ? String(ticks) : num(ticks, 1);
+  return `${num(ticks / 20, 2)}s/${t}t`;
+}
+
+/**
  * The sign on its own, as typography rather than arithmetic.
  *
  * Zero gets nothing. The old `percent` helpers wrote `pct > 0 ? "+" : MINUS`, which labelled an

@@ -32,15 +32,18 @@ export function Fact({
   label: string;
   /** Null means the fact has no answer, and nothing is rendered. */
   value: string | null;
-  /** The declared value, shown only when a stat changed it. */
-  was?: number;
+  /** The declared value, shown only when a stat changed it. A string is compared to `value` as
+   *  written, so pass it through the same formatter. */
+  was?: number | string;
   /** Where the change came from, listed under the fact. */
   sources?: { source: string; value: number }[];
   layout?: FactLayout;
 }): ReactNode {
   if (value === null) return null;
 
-  const changed = was !== undefined && String(was) !== value.replace(/t$/, "");
+  const changed =
+    was !== undefined &&
+    (typeof was === "string" ? was !== value : String(was) !== value.replace(/t$/, ""));
   const body = (
     <>
       <span className={layout === "block" ? "faint text-sm" : "faint"}>

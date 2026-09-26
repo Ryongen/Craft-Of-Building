@@ -148,6 +148,62 @@ test("a trace names the stat behind every layer, which the game's own log cannot
   );
 });
 
+test("a target stat in a [Source]-labelled layer is still marked as the target's", () => {
+  // The game keeps one accumulator for both halves and labels it after the first writer, so the
+  // mob's `dmg_received` from `impending_doom` lands in your `[Source] Additive Damage`. The row
+  // has to say whose stat it was, or the panel looks for it on your sheet and finds nothing.
+  const strike = spellEntry("strike", "Physical", "hit100");
+  const onCast = (strike["attached"] as { on_cast: Record<string, unknown>[] }).on_cast;
+  onCast.push({
+    acts: [{ type: "exile_effect", map: { exile_potion_id: "doom", potion_action: "GIVE_STACKS", count: 1 } }],
+    ifs: [],
+    targets: [{ type: "aoe", map: { radius: 3, selection_type: "RADIUS", en_predicate: "enemies" } }],
+    en_preds: [],
+  });
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: { strike },
+    mmorpg_exile_effect: {
+      doom: {
+        id: "doom",
+        type: "negative",
+        max_stacks: 1,
+        stacks_affect_stats: true,
+        stats: [{ type: "FLAT", min: 10, max: 10, stat: "dmg_received" }],
+        tags: { tags: ["negative"] },
+      },
+    },
+    mmorpg_stat: {
+      area_damage: damageStat("area_damage", {
+        effect: [effectBlock("damage_layers", ["add_additive"])],
+      }),
+      dmg_received: damageStat("dmg_received", {
+        effect: [effectBlock("damage_layers", ["add_additive"], [], "Target")],
+      }),
+    },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [exact("area_damage", "FLAT", 20)]),
+    },
+  });
+
+  const trace = simulateHit(build(), snapshot, { breakdown: true })?.hit.trace;
+  assert.ok(trace);
+  const additive = trace.steps.filter((s) => s.layerId === "additive_damage");
+  assert.equal(additive.length, 1, "one accumulator for both halves");
+  assert.equal(additive[0]!.side, "Source");
+  closeTo(additive[0]!.multiplier!, 1.3);
+  assert.deepEqual(
+    additive[0]!.contributions.map((c) => ({ statId: c.statId, side: c.side })),
+    [
+      { statId: "area_damage", side: "Source" },
+      { statId: "dmg_received", side: "Target" },
+    ],
+  );
+  assertBalances(trace);
+});
+
 test("a MORE multiplier is its own row, after every layer, and names its stat", () => {
   const snapshot = scenario(
     {

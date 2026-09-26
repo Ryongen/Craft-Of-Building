@@ -2,6 +2,7 @@ import { type FullDpsResult, type FullDpsSkill } from "@cte2/engine";
 import { type SkillSetup } from "@cte2/schema";
 import { type ReactNode } from "react";
 
+import { useBuild } from "../../state/build-store.js";
 import { useWorld } from "../../state/snapshot.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
@@ -50,6 +51,7 @@ export function FullDpsCard({
   swingProcDps?: number;
 }): ReactNode {
   const world = useWorld();
+  const setFullDpsAsBuff = useBuild((s) => s.setFullDpsAsBuff);
   if (full === undefined) return null;
 
   // The toggles and the timed re-presses share one table: both answer "how often do I press this
@@ -128,29 +130,49 @@ export function FullDpsCard({
       <div className="row wrap gap-6 mt-5">
         {skills.map((skill, index) => {
           const entry = full.skills.find((e) => e.skill === skill);
+          // Offered only where it changes something: a skill that hits *and* has an effect to
+          // wait on. A pure buff is already upkeep, and a pure hit has nothing to wait for.
+          const canBeBuff =
+            skill.fullDpsAsBuff === true ||
+            (entry !== undefined &&
+              entry.role === "rotation" &&
+              (entry.result.buff !== undefined || entry.result.debuff !== undefined));
           return (
-            <label
-              key={`${skill.spellId}-${index}`}
-              className="row gap-3 text-sm"
-            >
-              <input
-                type="checkbox"
-                checked={skill.includeInFullDps === true}
-                onChange={(event) => onToggle(index, event.target.checked)}
-              />
-              <span>{spellName(world.snapshot, skill.spellId)}</span>
-              {entry !== undefined && entry.role !== "rotation" ? (
-                <span className="badge" title={upkeepTitle(entry)}>
-                  {upkeepBadge(entry)}
-                </span>
-              ) : (
-                entry && (
-                  <span className="faint">
-                    {num(entry.rotationSeconds, 2)}s {"·"} {smart(entry.result.damagePerCast)}
+            <span key={`${skill.spellId}-${index}`} className="row gap-3 text-sm">
+              <label className="row gap-3">
+                <input
+                  type="checkbox"
+                  checked={skill.includeInFullDps === true}
+                  onChange={(event) => onToggle(index, event.target.checked)}
+                />
+                <span>{spellName(world.snapshot, skill.spellId)}</span>
+                {entry !== undefined && entry.role !== "rotation" ? (
+                  <span className="badge" title={upkeepTitle(entry)}>
+                    {upkeepBadge(entry)}
                   </span>
-                )
+                ) : (
+                  entry && (
+                    <span className="faint">
+                      {num(entry.rotationSeconds, 2)}s {"·"} {smart(entry.result.damagePerCast)}
+                    </span>
+                  )
+                )}
+              </label>
+              {canBeBuff && (
+                <button
+                  className={`nudge word${skill.fullDpsAsBuff === true ? " primary" : ""}`}
+                  aria-pressed={skill.fullDpsAsBuff === true}
+                  title={
+                    skill.fullDpsAsBuff === true
+                      ? "Pressed only when its buff runs out; its hit counts once per re-cast. Click to put it back in the rotation."
+                      : "It deals damage, so it is pressed every pass. Click to press it only when its buff runs out instead."
+                  }
+                  onClick={() => setFullDpsAsBuff(index, skill.fullDpsAsBuff !== true)}
+                >
+                  buff only
+                </button>
               )}
-            </label>
+            </span>
           );
         })}
       </div>

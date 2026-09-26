@@ -147,6 +147,7 @@ export function TreePanel(): ReactNode {
   const overLevel = !points.recorded && budget !== undefined && spent > budget.fromLevel;
   const overCeiling = spent > (points.recorded ? points.total : (budget?.ceiling ?? Infinity));
   const needsStart = ![...allocated].some((key) => graph.nodes.get(key)?.perk?.isEntry === true);
+  const [tipDismissed, dismissTip] = useDismissedTip();
   const startNames = [...new Set(graph.entries.map((e) => perkName(world.snapshot, e.perkId)))];
 
   return (
@@ -247,10 +248,20 @@ export function TreePanel(): ReactNode {
             </span>
           </div>
         ) : (
-          <div className="tree-hud faint text-sm" style={{ maxWidth: 320 }}>
-            Click any reachable node to buy the shortest path to it. Clicking an allocated node
-            gives back everything it was holding up.
-          </div>
+          !tipDismissed && (
+            <div className="tree-hud tree-tip faint text-sm" style={{ maxWidth: 320 }}>
+              Click any reachable node to buy the shortest path to it. Clicking an allocated node
+              gives back everything it was holding up.
+              <button
+                className="pane-close"
+                title="Hide this tip"
+                aria-label="Hide this tip"
+                onClick={dismissTip}
+              >
+                ×
+              </button>
+            </div>
+          )
         )}
       </div>
 
@@ -482,4 +493,32 @@ function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): Reac
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the "click any reachable node" tip has been closed.
+ *
+ * `localStorage`, like the card folds in `Panel.tsx`: it is a preference about the app, not the
+ * build. Once read it never needs to come back. "Pick a start" is not covered — that one is a
+ * blocker, not a tip.
+ */
+const TIP_KEY = "cob.tree.tipDismissed";
+
+function useDismissedTip(): [boolean, () => void] {
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(TIP_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismiss = (): void => {
+    setDismissed(true);
+    try {
+      window.localStorage.setItem(TIP_KEY, "1");
+    } catch {
+      // Still hidden for this session.
+    }
+  };
+  return [dismissed, dismiss];
 }

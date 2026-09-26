@@ -1117,15 +1117,26 @@ function gatedEffects(snapshot: Snapshot): Set<string> {
 
   // Stat conditions test for effects too — `is_target_under_scorched` is how a damage bonus
   // reads a debuff, and `elemental_weakness` would otherwise never be offered.
+  let testsForCurses = false;
   for (const condition of Object.values(snapshot.registries[CATEGORY.statCondition] ?? {})) {
     const data = asObject(condition.data);
     if (!data) continue;
     const ser = stringAt(data, "ser");
+    if (ser === "is_target_cursed") testsForCurses = true;
     if (ser !== "is_under_exile_effect" && ser !== "is_mns_effect_max_charges" && ser !== "is_effect") {
       continue;
     }
     const id = stringAt(data, "effect");
     if (id !== undefined) found.add(id);
+  }
+
+  // `is_target_cursed` asks by tag rather than by id, so every curse is tested for. `damnation`
+  // has no stats of its own, and dropping it left `damage_to_cursed` unread on a cursed pack.
+  if (testsForCurses) {
+    for (const effect of Object.values(snapshot.registries[CATEGORY.exileEffect] ?? {})) {
+      const data = asObject(effect.data);
+      if (data && tagsOf(data).includes("curse")) found.add(effect.id);
+    }
   }
 
   GATED_CACHE.set(snapshot as unknown as object, found);

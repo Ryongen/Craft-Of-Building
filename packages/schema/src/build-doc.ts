@@ -387,6 +387,16 @@ export type SkillSetup = {
    */
   includeInFullDps?: boolean;
   /**
+   * Press this skill only when its buff runs out, even though it also deals damage.
+   *
+   * Full DPS reads a skill that hits as a rotation step, pressed every pass. Some are pressed
+   * for the effect and the hit is a bonus — Whiteout Sovereign is the case that asked for it —
+   * and for those, "every pass" both overcharges the pass and overcounts the hit. With this set
+   * the skill is charged its upkeep like a pure buff, and its damage lands once per re-cast.
+   * Ignored for a skill with no buff or debuff to wait on.
+   */
+  fullDpsAsBuff?: boolean;
+  /**
    * Whether this skill counts at all. Defaults to true; read it through `isSkillEnabled`.
    *
    * A disabled skill keeps everything it has — its level, its support gems, its place in the

@@ -312,6 +312,8 @@ export type BuildState = {
   setEnemyLevel(level: number | undefined): void;
   /** Tick a skill into the Full DPS rotation, or untick it. */
   setIncludeInFullDps(index: number, include: boolean): void;
+  /** Charge a skill that hits as a buff in Full DPS: pressed when its effect runs out. */
+  setFullDpsAsBuff(index: number, asBuff: boolean): void;
   /** Fill the enemy block from a built-in target, and record which one it came from. */
   applyTargetPreset(id: TargetPresetId, snapshot: Snapshot, level: number): void;
   /** Fills `enemy.offence`'s hit from a built-in attacker profile. */
@@ -774,6 +776,7 @@ export const useBuild = create<BuildState>((set) => ({
       };
       delete copy.main;
       delete copy.includeInFullDps;
+      delete copy.fullDpsAsBuff;
       skills.splice(index + 1, 0, copy);
       return prune(doc, "skills", skills);
     }),
@@ -815,6 +818,16 @@ export const useBuild = create<BuildState>((set) => ({
         if (i !== index) return skill;
         const { includeInFullDps: _drop, ...rest } = skill;
         return include ? { ...rest, includeInFullDps: true } : rest;
+      });
+      return prune(doc, "skills", skills);
+    }),
+
+  setFullDpsAsBuff: (index, asBuff) =>
+    edit(set, (doc) => {
+      const skills = (doc.skills ?? []).map((skill, i) => {
+        if (i !== index) return skill;
+        const { fullDpsAsBuff: _drop, ...rest } = skill;
+        return asBuff ? { ...rest, fullDpsAsBuff: true } : rest;
       });
       return prune(doc, "skills", skills);
     }),
