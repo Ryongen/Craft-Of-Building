@@ -88,6 +88,7 @@ import { ItemEditor } from "./ItemEditor.js";
 import { OmenEditor, omenWord } from "./OmenEditor.js";
 import { JewelList } from "./JewelList.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
+import { useRevealOnNarrow } from "../../ui/narrow.js";
 
 /**
  * One row of the paperdoll.
@@ -223,6 +224,10 @@ export function GearPanel(): ReactNode {
   const derived = useDerived();
 
   const [editing, setEditing] = useState<ItemRef | null>(null);
+  const editorColRef = useRef<HTMLDivElement>(null);
+  useRevealOnNarrow(editing === null ? null : `${editing.where}:${editing.index}`, () =>
+    editorColRef.current?.querySelector(".items-editing"),
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [omenOpen, setOmenOpen] = useState(false);
 
@@ -658,7 +663,7 @@ export function GearPanel(): ReactNode {
       </div>
 
       {/* -- middle: find, keep, craft ------------------------------------ */}
-      <div className="items-col">
+      <div className="items-col" ref={editorColRef}>
         <ItemFinder onCreate={create} onImport={() => setImportOpen(true)} />
 
         <ItemPool
@@ -1467,7 +1472,7 @@ function EditorCard({
 
   return (
     <>
-      <div className="section-title">
+      <div className="section-title items-editing">
         Editing <span className="faint">{itemName(world.snapshot, item)}</span>{" "}
         {where === "pool" && (
           <span className="badge" title="Not equipped, so it does nothing yet">

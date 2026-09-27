@@ -48,7 +48,18 @@ export type HoverInfo = {
   action: "allocate" | "deallocate" | "blocked";
   /** The nodes the click would add, or the branch it would take back. */
   affected: readonly NodeKey[];
+  /** Set when a tap opened this rather than a hover, so a second tap on the node commits it. */
+  touch?: boolean;
 };
+
+/** Finger movement allowed before a tap becomes a pan. Fingers wobble more than a mouse. */
+const TOUCH_SLOP = 8;
+/** How long after a touch the mouse events a browser emulates for it are ignored. */
+const TOUCH_MOUSE_GUARD_MS = 800;
+
+type TouchGesture =
+  | { mode: "pan"; startX: number; startY: number; originX: number; originY: number; moved: boolean }
+  | { mode: "pinch"; startDist: number; startMidX: number; startMidY: number; start: Transform };
 
 export function TreeCanvas({
   graph,
@@ -210,6 +221,62 @@ export function TreeCanvas({
     onHover(info);
   };
 
+  // Touch runs beside the mouse handlers rather than through them, so the desktop path is the
+  // one it always was. A touchscreen has no hover, so a tap previews a node and a second tap on
+  // the same node commits it; one finger pans and two pinch-zoom.
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestureRef = useRef<TouchGesture | null>(null);
+  const lastTouchRef = useRef(0);
+  const touchedRecently = (): boolean => Date.now() - lastTouchRef.current < TOUCH_MOUSE_GUARD_MS;
+
+  const beginTouchGesture = (): void => {
+    const points = [...pointersRef.current.values()];
+    const t = transformRef.current;
+    if (points.length >= 2) {
+      const [a, b] = points as [{ x: number; y: number }, { x: number; y: number }];
+      gestureRef.current = {
+        mode: "pinch",
+        startDist: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+        startMidX: (a.x + b.x) / 2,
+        startMidY: (a.y + b.y) / 2,
+        start: t,
+      };
+    } else if (points.length === 1) {
+      const [p] = points as [{ x: number; y: number }];
+      // A finger left behind by a pinch pans from where it is, and is never a tap.
+      const afterPinch = gestureRef.current?.mode === "pinch";
+      gestureRef.current = {
+        mode: "pan",
+        startX: p.x,
+        startY: p.y,
+        originX: t.x,
+        originY: t.y,
+        moved: afterPinch,
+      };
+    } else {
+      gestureRef.current = null;
+    }
+  };
+
+  const tapAt = (clientX: number, clientY: number): void => {
+    const { x, y } = pointerToLocal({ clientX, clientY });
+    const { row, col } = cellAtPoint(transformRef.current, x, y);
+    const key = nodeKey(row, col);
+    const node = graph.nodes.get(key);
+    if (node === undefined) {
+      setHover(null);
+      return;
+    }
+    const plan = planFor(key);
+    if (preview?.key === key && preview.touch === true) {
+      if (plan.action === "allocate") onAllocate(plan.affected);
+      else if (plan.action === "deallocate") onDeallocate(plan.affected);
+      setHover(null);
+      return;
+    }
+    setHover({ key, row, col, perkId: node.perkId, x, y, ...plan, touch: true });
+  };
+
   return (
     <div className="tree-wrap" ref={wrapRef}>
       <canvas
@@ -229,6 +296,7 @@ export function TreeCanvas({
           redrawRef.current();
         }}
         onMouseDown={(event) => {
+          if (touchedRecently()) return;
           if (event.button !== 0) return;
           const t = transformRef.current;
           dragState.current = {
@@ -241,6 +309,7 @@ export function TreeCanvas({
           setDragging(true);
         }}
         onMouseMove={(event) => {
+          if (touchedRecently()) return;
           const drag = dragState.current;
           if (drag !== null) {
             const dx = event.clientX - drag.startX;
@@ -273,6 +342,7 @@ export function TreeCanvas({
           setHover({ key, row, col, perkId: node.perkId, x, y, ...plan });
         }}
         onMouseUp={(event) => {
+          if (touchedRecently()) return;
           const drag = dragState.current;
           dragState.current = null;
           setDragging(false);
@@ -288,9 +358,84 @@ export function TreeCanvas({
           else if (plan.action === "deallocate") onDeallocate(plan.affected);
         }}
         onMouseLeave={() => {
+          // A tap ends with the browser sending the emulated mouse back to wherever the real
+          // one is, which would close the preview the tap just opened.
+          if (touchedRecently()) return;
           dragState.current = null;
           setDragging(false);
           setHover(null);
+        }}
+        onPointerDown={(event) => {
+          if (event.pointerType === "mouse") return;
+          // Stops the browser emulating mousedown/mouseup for this touch, which would otherwise
+          // run the desktop click path and allocate on the first tap.
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          lastTouchRef.current = Date.now();
+          pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          beginTouchGesture();
+        }}
+        onPointerMove={(event) => {
+          if (event.pointerType === "mouse") return;
+          if (!pointersRef.current.has(event.pointerId)) return;
+          lastTouchRef.current = Date.now();
+          pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          const gesture = gestureRef.current;
+          if (gesture === null) return;
+
+          if (gesture.mode === "pinch") {
+            const [a, b] = [...pointersRef.current.values()] as [
+              { x: number; y: number },
+              { x: number; y: number },
+            ];
+            const dist = Math.hypot(b.x - a.x, b.y - a.y);
+            const rect = wrapRef.current!.getBoundingClientRect();
+            const midX = (a.x + b.x) / 2 - rect.left;
+            const midY = (a.y + b.y) / 2 - rect.top;
+            const startX = gesture.startMidX - rect.left;
+            const startY = gesture.startMidY - rect.top;
+            const s = gesture.start;
+            const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s.scale * (dist / gesture.startDist)));
+            // The world point that was under the fingers' midpoint stays under it, and follows
+            // it, so a pinch can pan and zoom at once.
+            transformRef.current = {
+              scale,
+              x: midX - ((startX - s.x) / s.scale) * scale,
+              y: midY - ((startY - s.y) / s.scale) * scale,
+            };
+            redrawRef.current();
+            return;
+          }
+
+          const dx = event.clientX - gesture.startX;
+          const dy = event.clientY - gesture.startY;
+          if (Math.abs(dx) > TOUCH_SLOP || Math.abs(dy) > TOUCH_SLOP) gesture.moved = true;
+          if (!gesture.moved) return;
+          transformRef.current = {
+            ...transformRef.current,
+            x: gesture.originX + dx,
+            y: gesture.originY + dy,
+          };
+          redrawRef.current();
+        }}
+        onPointerUp={(event) => {
+          if (event.pointerType === "mouse") return;
+          if (!pointersRef.current.delete(event.pointerId)) return;
+          lastTouchRef.current = Date.now();
+          const gesture = gestureRef.current;
+          if (pointersRef.current.size === 0 && gesture?.mode === "pan" && !gesture.moved) {
+            gestureRef.current = null;
+            tapAt(event.clientX, event.clientY);
+            return;
+          }
+          beginTouchGesture();
+        }}
+        onPointerCancel={(event) => {
+          if (event.pointerType === "mouse") return;
+          pointersRef.current.delete(event.pointerId);
+          lastTouchRef.current = Date.now();
+          if (pointersRef.current.size === 0) gestureRef.current = null;
+          else beginTouchGesture();
         }}
       />
     </div>

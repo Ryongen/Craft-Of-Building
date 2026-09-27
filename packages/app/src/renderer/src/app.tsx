@@ -32,6 +32,7 @@ import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
 import { useTechnical } from "./ui/detail-mode.js";
+import { useNarrow } from "./ui/narrow.js";
 import { resolveHint, type Hint } from "./ui/copy/hint.js";
 import raiden from "./assets/raiden.png";
 
@@ -164,6 +165,12 @@ export function App(): ReactNode {
   // somebody who made room to read one breakdown wants the same room for the next.
   const [breakdownHeight, setBreakdownHeight] = useState(320);
   const [sheetOpen, setSheetOpen] = useState(true);
+  // On a phone the sheet is a drawer over the panel rather than a column beside it, and starts
+  // closed: a 380px column leaves nothing of a 390px screen. Separate from `sheetOpen` so turning
+  // a phone sideways and back does not lose the desktop preference. Never true on desktop.
+  const narrow = useNarrow();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const sheetShown = narrow ? drawerOpen : sheetOpen;
   const [technical, setTechnical] = useTechnical();
 
   // Going to a technical tab turns technical on, so the tab strip always shows the tab you are
@@ -436,7 +443,16 @@ export function App(): ReactNode {
           {/* Clicking a headline figure opens its breakdown in the sidebar, and opens the
               sidebar's pane from wherever you were — the figure that made you ask is in the
               chrome, so the answer should not be on a tab. */}
-          <Headline onFocus={setFocus} />
+          <Headline
+            onFocus={
+              narrow
+                ? (next) => {
+                    setFocus(next);
+                    setDrawerOpen(true);
+                  }
+                : setFocus
+            }
+          />
         </ErrorBoundary>
 
         <div className="spacer" />
@@ -497,7 +513,7 @@ export function App(): ReactNode {
         </div>
       )}
 
-      <div className={`body${sheetOpen ? "" : " no-sheet"}`}>
+      <div className={`body${sheetOpen && !narrow ? "" : " no-sheet"}`}>
         {/* The tab row spans both columns, so the stat sheet starts under it rather than
             beside it. */}
         <div className="tabs">
@@ -505,7 +521,10 @@ export function App(): ReactNode {
             <button
               key={entry.id}
               className={tab === entry.id ? "active" : ""}
-              onClick={() => setTab(entry.id)}
+              onClick={() => {
+                setTab(entry.id);
+                setDrawerOpen(false);
+              }}
             >
               <PackIcon path={entry.icon} size={14} />
               {entry.label}
@@ -558,6 +577,17 @@ export function App(): ReactNode {
             `ui/detail-mode.ts`. A picture rather than a labelled checkbox so it reads as
             decoration and players leave it alone; whoever needs it knows where it is.
           */}
+          {narrow && (
+            <button
+              type="button"
+              className={`sheet-toggle${drawerOpen ? " active" : ""}`}
+              aria-pressed={drawerOpen}
+              onClick={() => setDrawerOpen((open) => !open)}
+            >
+              Sheet
+            </button>
+          )}
+
           <button
             type="button"
             className={`technical-toggle${technical ? " on" : ""}`}
@@ -593,8 +623,11 @@ export function App(): ReactNode {
           </ErrorBoundary>
         </div>
 
-        {sheetOpen && (
-        <div className="sidebar">
+        {narrow && drawerOpen && (
+          <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />
+        )}
+        {sheetShown && (
+        <div className={narrow ? "sidebar drawer" : "sidebar"}>
           {/* The sheet and the breakdown read the same engine result the panels do, so they can
               fail on their own and must not take the panel with them. */}
           <ErrorBoundary what="the stat sheet">

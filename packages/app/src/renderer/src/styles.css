@@ -1393,6 +1393,9 @@ table.grid td.num {
   width: 100%;
   height: 100%;
   cursor: grab;
+  /* Pan and pinch are the canvas's own (TreeCanvas's pointer handlers), not the browser's
+     scroll and page zoom. Has no effect on a mouse. */
+  touch-action: none;
 }
 
 .tree-wrap canvas.dragging {
@@ -4141,4 +4144,254 @@ button.stage-pick {
 
 .map-clear {
   margin-left: auto;
+}
+
+
+/* -- small screens --------------------------------------------------------
+
+   Everything below applies to the web build on a phone or small tablet and nothing else. The
+   desktop window cannot be narrower than 1100px (`minWidth` in `main/index.ts`), so none of it
+   can match there. The breakpoint is `NARROW_QUERY` in `ui/narrow.ts`; change both together.
+*/
+
+/* Phones in "request desktop site" mode lay the page out about 980px wide, just under what the
+   tree HUD's single row needs. Still well clear of the desktop window, which the OS frame takes
+   to about 1084px of content at its minimum. */
+@media (max-width: 1000px) {
+  .tree-overlay {
+    flex-wrap: wrap;
+  }
+
+  .tree-overlay .tree-tip {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    gap: var(--space-3) var(--space-5);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* The tab row scrolls sideways instead of pushing the page wider than the screen. */
+  .tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    padding: 0 var(--space-2);
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tabs > * {
+    flex: 0 0 auto;
+  }
+
+  /* Pinned to the right edge of the scrolling row, so the sheet is one tap away from any tab. */
+  .tabs .sheet-toggle {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    margin-left: auto;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .tabs .sheet-toggle.active {
+    border-bottom-color: var(--accent);
+  }
+
+  .tabs .tab-stage + .sheet-toggle,
+  .tabs .sheet-toggle + .technical-toggle {
+    margin-left: 0;
+  }
+
+  /* The stat sheet as a drawer over the panel. */
+  .sidebar.drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    width: min(380px, 88vw);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  .sidebar.drawer .sheet {
+    overflow: auto;
+  }
+
+  .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 44;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  /* The perk tooltip docks along the bottom rather than chasing a finger off the screen. The
+     inline left/top it is placed with are for a cursor. */
+  .tree-tooltip,
+  .tree-tooltip.with-delta {
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: 8px !important;
+    max-width: none;
+    max-height: 55%;
+    overflow: auto;
+  }
+
+  /* The tree's HUD wraps instead of running off the right edge, and folds behind its toggle
+     (TreePanel) until asked for. */
+  .tree-overlay {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    top: 6px;
+    left: 6px;
+    right: 6px;
+  }
+
+  .tree-overlay.hud-folded > :not(.tree-hud-toggle) {
+    display: none;
+  }
+
+  .tree-overlay .grow {
+    display: none;
+  }
+
+  .tree-hud-toggle {
+    flex-basis: 100%;
+    max-width: max-content;
+    background: rgba(24, 27, 35, 0.94);
+    border-color: var(--border-strong);
+  }
+
+  .tree-overlay .tree-hud-column {
+    width: auto;
+    max-width: 100%;
+  }
+
+  /* One line that scrolls, rather than four rows of snapshot path and counters. */
+  .statusbar {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .statusbar > * {
+    flex: 0 0 auto;
+  }
+
+  .statusbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Items and Skills: the two columns stack and the panel scrolls as one. Picking a row scrolls
+     the editor into view (`useRevealOnNarrow`), since it is now below the list, not beside it. */
+  .items-panel,
+  .skills-panel {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: auto;
+    align-items: start;
+  }
+
+  .items-col,
+  .skills-col {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  /* The editor's search, pool and gem lists were sized for a desktop column. */
+  .gem-rank-list {
+    width: min(520px, calc(100vw - 32px));
+  }
+
+  /* A roll control (slider, nudges, min/avg/max, range) wraps rather than clipping its range. */
+  .row:has(> .nudge) {
+    flex-wrap: wrap;
+  }
+
+  /* Classes: one school per row, as wide as the screen allows. */
+  .school-pane {
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  /* Card pairs (Defence, Damage) drop to one column instead of overflowing it. */
+  .card-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The damage trace. With one column its band has one grid row, and a three-row subgrid inside
+     it laid the working, the total and the children on top of each other. There is no second
+     column to line up with here, so the card is a plain block. */
+  .bd-band-4,
+  .bd-band-4 > .card {
+    display: block;
+  }
+
+  /* Modals take the whole screen: 92vw of a phone leaves no room for their padding. */
+  .modal-backdrop {
+    align-items: stretch;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+    padding: var(--space-6) var(--space-5);
+  }
+
+  /* A hover card opened by a tap docks along the bottom (see `useHoverCard`). The card inside
+     was placed for a cursor, so its own position and width are cancelled. */
+  .touch-dock {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 9999;
+    max-height: 60vh;
+    overflow: auto;
+  }
+
+  .touch-dock > * {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    pointer-events: auto;
+  }
+}
+
+/* Fingers on a phone: controls at least 40px tall. Gated on width as well as the pointer, since
+   a touchscreen laptop can report a coarse pointer and must keep the desktop sizing. */
+@media (max-width: 900px) and (pointer: coarse) {
+  .tabs button,
+  .panel button:not(.school-cell):not(.badge),
+  .panel select,
+  .panel input:not([type="checkbox"]):not([type="radio"]) {
+    min-height: 40px;
+  }
+
+  .skill-row,
+  .slot-row {
+    min-height: 40px;
+  }
+}
+
+@media (max-width: 600px) {
+  /* The app's name and the epilogue's fine print are the first things a phone can spare. */
+  .topbar .title,
+  .topbar .field .faint.text-xs {
+    display: none;
+  }
 }

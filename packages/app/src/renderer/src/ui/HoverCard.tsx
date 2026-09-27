@@ -12,8 +12,10 @@
  * only decides whether one is up and where it goes.
  */
 
-import { useCallback, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+
+import { useNarrow } from "./narrow.js";
 
 export type At = { x: number; y: number };
 
@@ -50,6 +52,7 @@ export function useHoverCard(render: ((at: At) => ReactNode) | undefined): {
     onMouseEnter?: (event: React.MouseEvent) => void;
     onMouseMove?: (event: React.MouseEvent) => void;
     onMouseLeave?: () => void;
+    onPointerDown?: (event: React.PointerEvent) => void;
   };
   /**
    * Take the card down without the pointer having left.
@@ -62,17 +65,68 @@ export function useHoverCard(render: ((at: At) => ReactNode) | undefined): {
   node: ReactNode;
 } {
   const [at, setAt] = useState<At | null>(null);
+  // A tap on a phone. The browser's emulated mouseenter opens the card as it would for a mouse;
+  // this only changes where it goes (docked along the bottom, see `.touch-dock`) and that a
+  // scroll takes it down, since no mouseleave ever comes from a finger that has lifted.
+  // A mouse never sets it, and nor does anything on a desktop-sized window.
+  const narrow = useNarrow();
+  const [touch, setTouch] = useState(false);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const lastTouchRef = useRef(0);
 
   const track = useCallback((event: React.MouseEvent) => {
     setAt({ x: event.clientX, y: event.clientY });
   }, []);
-  const clear = useCallback(() => setAt(null), []);
+  const clear = useCallback(() => {
+    setAt(null);
+    setTouch(false);
+  }, []);
+  const pointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      if (event.pointerType === "mouse" || !narrow) return;
+      lastTouchRef.current = Date.now();
+      setTouch(true);
+    },
+    [narrow],
+  );
+
+  // The end of a tap can send the emulated mouse back to wherever a real one is, and with it a
+  // mouseleave that would close the card the tap just opened. Same guard as `TreeCanvas`.
+  const leave = useCallback(() => {
+    if (Date.now() - lastTouchRef.current < 800) return;
+    clear();
+  }, [clear]);
+
+  const open = at !== null;
+  useEffect(() => {
+    if (!touch || !open) return;
+    const onScroll = (event: Event): void => {
+      // Reading a long card scrolls the dock itself, which must not close it.
+      if (event.target instanceof Node && dockRef.current?.contains(event.target)) return;
+      clear();
+    };
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [touch, open, clear]);
 
   if (render === undefined) return { props: {}, clear, node: null };
 
+  const card = at === null ? null : render(at);
   return {
-    props: { onMouseEnter: track, onMouseMove: track, onMouseLeave: clear },
+    props: { onMouseEnter: track, onMouseMove: track, onMouseLeave: leave, onPointerDown: pointerDown },
     clear,
-    node: at === null ? null : createPortal(render(at), document.body),
+    node:
+      card === null
+        ? null
+        : createPortal(
+            touch && narrow ? (
+              <div className="touch-dock" ref={dockRef}>
+                {card}
+              </div>
+            ) : (
+              card
+            ),
+            document.body,
+          ),
   };
 }

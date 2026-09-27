@@ -46,7 +46,7 @@ import {
   type SkillSetup,
   type SupportLink,
 } from "@cte2/schema";
-import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { Snapshot } from "@cte2/extractor";
 import { balance, parseRolledMod, rollToExact, simulateDps, spellRanks, statIndex } from "@cte2/engine";
@@ -70,6 +70,7 @@ import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 import { resolveHint } from "../../ui/copy/hint.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
+import { useRevealOnNarrow } from "../../ui/narrow.js";
 
 /** Which row of the left column is open. The basic attack is not a document index. */
 type Selection = { kind: "skill"; index: number } | { kind: "basic" };
@@ -102,6 +103,11 @@ export function SkillsPanel(): ReactNode {
    * damage figure is about. Clicking a row pins it; nothing else moves it.
    */
   const [selection, setSelection] = useState<Selection | null>(null);
+  const detailColRef = useRef<HTMLDivElement>(null);
+  useRevealOnNarrow(
+    selection === null ? null : selection.kind === "basic" ? "basic" : `skill:${selection.index}`,
+    () => detailColRef.current,
+  );
   const [sortByDps, setSortByDps] = useState(false);
   const [gemFilter, setGemFilter] = useState<GemFilter>("compatible");
 
@@ -312,7 +318,7 @@ export function SkillsPanel(): ReactNode {
       </div>
 
       {/* -- right: the one you picked ----------------------------------- */}
-      <div className="skills-col">
+      <div className="skills-col" ref={detailColRef}>
         {selected.kind === "basic" ? (
           <BasicAttackCard />
         ) : skills[selected.index] === undefined ? (

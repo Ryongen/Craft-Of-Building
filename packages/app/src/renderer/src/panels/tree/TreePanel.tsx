@@ -34,6 +34,7 @@ import { useWhatIf } from "../../state/compare.js";
 import { useWorld } from "../../state/snapshot.js";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { SearchInput } from "../../ui/SearchInput.js";
+import { useNarrow } from "../../ui/narrow.js";
 
 import { StatPoints } from "../character/StatPoints.js";
 import { StageList } from "./StageList.js";
@@ -59,6 +60,10 @@ export function TreePanel(): ReactNode {
   const [tree, setTree] = useState<TreeKey>("talents");
   const [query, setQuery] = useState("");
   const [hover, setHover] = useState<HoverInfo | null>(null);
+  // On a phone the HUD below is taller than the screen, so it folds behind one button and the
+  // tree gets the room. Desktop never folds it.
+  const narrow = useNarrow();
+  const [hudOpen, setHudOpen] = useState(false);
 
   const graph = world.graph(tree);
   const coords = doc.tree?.[tree] ?? [];
@@ -161,7 +166,12 @@ export function TreePanel(): ReactNode {
         onHover={setHover}
       />
 
-      <div className="tree-overlay">
+      <div className={`tree-overlay${narrow && !hudOpen ? " hud-folded" : ""}`}>
+        {narrow && (
+          <button className="tree-hud-toggle" onClick={() => setHudOpen((open) => !open)}>
+            {hudOpen ? "Hide" : needsStart ? "Pick a start ›" : `${spent} / ${available} points ›`}
+          </button>
+        )}
         {/*
           The tree buttons, and the level-up points under them.
 
@@ -420,13 +430,13 @@ function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): Reac
       <div className="mt-3 text-sm">
         {hover.action === "allocate" && (
           <span>
-            Click to allocate <strong>{hover.affected.length}</strong>{" "}
+            {hover.touch === true ? "Tap again to allocate" : "Click to allocate"} <strong>{hover.affected.length}</strong>{" "}
             {hover.affected.length === 1 ? "point" : "points"}.
           </span>
         )}
         {hover.action === "deallocate" && (
           <span>
-            Click to refund <strong>{hover.affected.length}</strong>{" "}
+            {hover.touch === true ? "Tap again to refund" : "Click to refund"} <strong>{hover.affected.length}</strong>{" "}
             {hover.affected.length === 1 ? "point" : "points"}
             {hover.affected.length > 1 && ", including the nodes that depend on this one"}.
           </span>
