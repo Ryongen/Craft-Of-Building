@@ -64,7 +64,7 @@ import { GemRarityRoll, bestGemPreset, gemBand, gemRarities, type GemPreset } fr
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { smart } from "../../ui/format.js";
-import { SupportGemPicker } from "./SupportGemPicker.js";
+import { SupportGemPicker, type GemSort } from "./SupportGemPicker.js";
 import { BasicAttackCard } from "./BasicAttackCard.js";
 import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";
@@ -110,6 +110,7 @@ export function SkillsPanel(): ReactNode {
   );
   const [sortByDps, setSortByDps] = useState(false);
   const [gemFilter, setGemFilter] = useState<GemFilter>("compatible");
+  const [gemSort, setGemSort] = useState<GemSort>("skill");
 
   /**
    * The rarity every gem this panel hands you arrives at, and is ranked at.
@@ -292,6 +293,16 @@ export function SkillsPanel(): ReactNode {
         </div>
 
         <div className="field mt-2">
+          <label title="Skill DPS ranks gems by this skill's own damage. Total DPS ranks them by the whole build's, for gems whose value lands elsewhere: Cooldown on a skill that applies a debuff keeps the debuff up more, which raises every other skill's damage.">
+            Sort support gems by
+          </label>
+          <select value={gemSort} onChange={(event) => setGemSort(event.target.value as GemSort)}>
+            <option value="skill">Skill DPS</option>
+            <option value="total">Total DPS</option>
+          </select>
+        </div>
+
+        <div className="field mt-2">
           <label title="The rarity and roll for newly added gems, and for ranking the list. Gems already socketed keep their own roll.">
             New gems roll at
           </label>
@@ -332,6 +343,7 @@ export function SkillsPanel(): ReactNode {
             index={selected.index}
             spellOptions={spellOptions}
             gemFilter={gemFilter}
+            gemSort={gemSort}
             gemPreset={gemPreset}
             barFull={full}
           />
@@ -434,6 +446,9 @@ function ResolvedFacts({ index }: { index: number }): ReactNode {
           key={`${proc.statId}:${proc.spellId}`}
           title={
             `${proc.perSecond.toFixed(2)} a second at ${smart(proc.damagePerProc)} each` +
+            (proc.critChance === undefined
+              ? ""
+              : `, ${(proc.critChance * 100).toFixed(1)}% to crit`) +
             (proc.boundBy === "supply" && proc.consumes !== undefined
               ? `, paced by ${exileEffectName(snapshot, proc.consumes.effectId)} arriving at ` +
                 `${proc.consumes.supply.stacksPerSecond.toFixed(2)}/s`
@@ -546,6 +561,7 @@ function SkillCard({
   index,
   spellOptions,
   gemFilter,
+  gemSort,
   gemPreset,
   barFull,
 }: {
@@ -553,6 +569,7 @@ function SkillCard({
   index: number;
   spellOptions: PickerOption[];
   gemFilter: GemFilter;
+  gemSort: GemSort;
   /** What a gem linked from this card arrives at — see the panel's own note. `null` leaves it unset. */
   gemPreset: GemPreset | null;
   /** Eight Skills are already on. A disabled one here cannot be switched back on.  */
@@ -1001,10 +1018,21 @@ function SkillCard({
       </div>
 
       <div className="notice info">
-        A support gem changes this skill.
-        <strong>The gem list is ordered by what each one would add to this skill</strong>, its
-        damage where it has any, and otherwise its cooldown and the duration of the buff it
-        applies, which is what Cooldown and Effect Duration grants on a skill that hits nothing.
+        A support gem changes this skill.{" "}
+        {gemSort === "total" ? (
+          <>
+            <strong>The gem list is ordered by what each one would add to Total DPS</strong>, the
+            whole build&apos;s damage. That counts gems whose value lands on other skills, like
+            Cooldown on a skill that applies a debuff. Tick this skill into Full DPS so its
+            debuffs are counted.
+          </>
+        ) : (
+          <>
+            <strong>The gem list is ordered by what each one would add to this skill</strong>, its
+            damage where it has any, and otherwise its cooldown and the duration of the buff it
+            applies, which is what Cooldown and Effect Duration grants on a skill that hits nothing.
+          </>
+        )}
       </div>
 
       {/*
@@ -1022,6 +1050,7 @@ function SkillCard({
           slot={gemIndex}
           level={level}
           gemFilter={gemFilter}
+          gemSort={gemSort}
           gemPreset={gemPreset}
           onPatch={(next) => patchSupport(gemIndex, next)}
           onRemove={() => patch({ supports: supports.filter((_, i) => i !== gemIndex) })}
@@ -1043,6 +1072,7 @@ function SkillCard({
               slot={undefined}
               value={undefined}
               compatibleOnly={gemFilter === "compatible"}
+              sortBy={gemSort}
               preset={gemPreset ?? undefined}
               onChange={(id) => {
                 // The same link `SupportGemPicker.apply` priced, so the figure you clicked is
@@ -1081,6 +1111,7 @@ function SupportGemRow({
   slot,
   level,
   gemFilter,
+  gemSort,
   gemPreset,
   onPatch,
   onRemove,
@@ -1091,6 +1122,7 @@ function SupportGemRow({
   slot: number;
   level: number;
   gemFilter: GemFilter;
+  gemSort: GemSort;
   gemPreset: GemPreset | null;
   onPatch: (next: {
     id?: string;
@@ -1142,6 +1174,7 @@ function SupportGemRow({
               slot={slot}
               value={link.id}
               compatibleOnly={gemFilter === "compatible"}
+              sortBy={gemSort}
               preset={gemPreset ?? undefined}
               // Swapping the gem swaps the gem: a different id is a different physical item, so
               // it arrives at the preset rather than inheriting the roll of the one it replaced.

@@ -28,7 +28,8 @@ import { spellConfig, type SpellCalc } from "./spell-calc.js";
 
 function calc(): SpellCalc {
   return {
-    castTicks: 1, castSpeedTicks: 0, effectiveCooldownTicks: 20, castSpeedPercent: 0, speedMulti: 1,
+    castTicks: 1, castSpeedTicks: 0, castTicksBeforeSpeed: 1, castSpeedTicksBeforeSpeed: 0,
+    effectiveCooldownTicks: 20, castSpeedPercent: 0, speedMulti: 1,
     offGlobalCooldown: true, cooldownTicks: 20, chargeCooldownTicks: 0, manaCost: 0, energyCost: 0,
     bonusProjectiles: 0, bonusChains: 0, areaMulti: 1, durationMulti: 1, projectileSpeedMulti: 1,
     projectileYawSpeedMulti: 1, pierce: false, nova: false, barrage: false, maxTotems: 1,

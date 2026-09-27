@@ -82,6 +82,7 @@ import {
   CATEGORY,
   affixesFor,
   baseGearType,
+  corruptionSockets,
   gearRarity,
   has,
   ids,
@@ -288,6 +289,9 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
 
   const sockets = list(node["sockets"], CATEGORY.gem, "Socketed gem");
   if (sockets.length > 0) item.sockets = sockets;
+  if (typeof node["bonusSockets"] === "number" && node["bonusSockets"] > 0) {
+    item.bonusSockets = Math.round(node["bonusSockets"]);
+  }
 
   const runes = list(node["runes"], CATEGORY.rune, "Rune");
   if (runes.length > 0) {
@@ -550,6 +554,15 @@ function readSockets(snapshot: Snapshot, node: unknown, item: Item): void {
   const runeword = asString(obj["rw"]);
   if (runeword !== undefined && has(snapshot, CATEGORY.runeword, runeword)) {
     item.runeword = runeword;
+  }
+
+  // `sl` above the rarity's `sockets.max` is the corruption's socket: nothing else adds one
+  // past `canAddSocket`, and a rarity upgrade trims back down to the new rarity's max.
+  const total = obj["sl"];
+  const max = gearRarity(snapshot, item.rarity)?.sockets.max;
+  if (typeof total === "number" && max !== undefined) {
+    const bonus = Math.min(total - max, corruptionSockets(snapshot, item.rarity));
+    if (bonus > 0) item.bonusSockets = bonus;
   }
 }
 

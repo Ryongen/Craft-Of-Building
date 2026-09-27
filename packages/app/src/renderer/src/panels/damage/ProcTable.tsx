@@ -65,6 +65,9 @@ export function ProcTable({
             <th>From</th>
             <th className="num">Chance</th>
             <th className="num">Per second</th>
+            <th className="num" title="The procced spell's own crit chance, not the chance to proc">
+              Crit
+            </th>
             <th className="num">Per proc</th>
             <th className="num">DPS</th>
           </tr>
@@ -107,7 +110,17 @@ export function ProcTable({
               </td>
               <td className="num">{num(proc.chance * 100, 1)}%</td>
               <td className="num">{num(proc.perSecond, 2)}</td>
-              <td className="num">{smart(proc.damagePerProc)}</td>
+              <td className="num">
+                {proc.critChance === undefined ? "–" : `${num(proc.critChance * 100, 1)}%`}
+              </td>
+              <td className="num">
+                {smart(proc.damagePerProc)}
+                {/* Per proc is the crit-blended average; the crit itself is what a player sees
+                    land, so it goes underneath. */}
+                {proc.critDamagePerProc !== undefined && (proc.critChance ?? 0) > 0 && (
+                  <div className="faint text-xs">{smart(proc.critDamagePerProc)} on crit</div>
+                )}
+              </td>
               <td className="num">{smart(proc.dps)}</td>
             </tr>
             );

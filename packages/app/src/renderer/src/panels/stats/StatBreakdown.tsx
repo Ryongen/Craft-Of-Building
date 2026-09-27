@@ -46,7 +46,7 @@ import {
 } from "@cte2/schema";
 import type { Snapshot } from "@cte2/extractor";
 import type { EffectState } from "@cte2/engine";
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useProvenance } from "../../ui/Provenance.js";
@@ -57,6 +57,7 @@ import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import { StepRow } from "../../ui/StepRow.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
+import { SkillSheetContext } from "./skill-sheet.js";
 
 /**
  * The kinds a contribution rolls up into, in the order they are shown.
@@ -146,7 +147,10 @@ export function StatBreakdown({
 }): ReactNode {
   const { snapshot } = useWorld();
   const derived = useDerived();
-  const skill = scope === "skill" ? derived.skillBreakdown(statId) : undefined;
+  // The Stats tab's picked skill where it provides one, the main skill everywhere else.
+  const skillSheet = useContext(SkillSheetContext);
+  const skillBreakdown = skillSheet?.breakdown ?? derived.skillBreakdown;
+  const skill = scope === "skill" ? skillBreakdown(statId) : undefined;
   // A skill scope with no skill set falls back rather than rendering nothing: the character's
   // own number is still the honest answer to "where did this come from", and the banner below
   // says which sheet is on screen so the two can never be mistaken for each other.
@@ -170,7 +174,7 @@ export function StatBreakdown({
     .map((d) => d.from);
 
   const groups = groupContributions(breakdown.contributions);
-  const spellId = derived.damage?.spellId;
+  const spellId = skillSheet?.spellId ?? derived.damage?.spellId;
 
   /*
    * What the main skill resolves this same stat to, when that is a different number.
@@ -180,7 +184,7 @@ export function StatBreakdown({
    * hundred rows would bury the handful where it matters. The epsilon is float noise from two
    * separate container runs, not a tolerance.
    */
-  const skillValue = onSkillSheet ? undefined : derived.skillBreakdown(statId)?.stat.value;
+  const skillValue = onSkillSheet ? undefined : skillBreakdown(statId)?.stat.value;
   const differs =
     skillValue !== undefined && Math.abs(skillValue - stat.value) > 1e-6;
 

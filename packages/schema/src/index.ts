@@ -175,6 +175,8 @@ export {
   runewordFitsBase,
   runewordMatches,
   runewordsForItem,
+  corruptionSockets,
+  socketCap,
   socketFamily,
   socketFamilyOfBase,
   statsForFamily,

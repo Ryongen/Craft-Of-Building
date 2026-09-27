@@ -183,6 +183,13 @@ export const BALANCE: Record<string, unknown> = {
 export function standardSnapshot(): Snapshot {
   return makeSnapshot({
     mmorpg_gear_rarity: RARITIES,
+    // The pack's "Ascended" outcome is the only one with a socket; the rest add affixes only.
+    mmorpg_chaos_stat: {
+      normal_high: { id: "normal_high", name: "Ascended", affix_number: 1, bonus_sockets: 1,
+        for_item_rarities: ["common", "uncommon", "rare", "epic", "legendary", "mythic"] },
+      normal_low: { id: "normal_low", name: "Upgraded", affix_number: 1, bonus_sockets: 0,
+        for_item_rarities: ["common", "uncommon", "rare", "epic", "legendary", "mythic"] },
+    },
     mmorpg_base_gear_types: {
       bow: baseGear("bow", "bow", ["dexterity", "ranged_weapon", "weapon_family", "bow"], [
         { type: "FLAT", stat: "weapon_damage", min: 6, max: 12 },

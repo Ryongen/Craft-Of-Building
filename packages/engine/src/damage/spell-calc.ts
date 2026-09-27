@@ -111,8 +111,18 @@ export type SpellConfig = {
 /** The numbers after the caster's stats have had their say. */
 export type SpellCalc = {
   castTicks: number;
-  /** `CAST_SPEED_TICKS` after the sweep — the shared global-cooldown arm, floored at the GCD. */
+  /**
+   * `CAST_SPEED_TICKS` after the sweep — the shared global-cooldown arm, floored at the GCD and
+   * ceiled to a whole tick, because every reader goes through `Spell.getCastSpeedTicks`, which
+   * is `(int) Math.ceil(number)` (6.4.13 jar).
+   */
   castSpeedTicks: number;
+  /**
+   * `CAST_TICKS` and `CAST_SPEED_TICKS` as the sweep left them, before the speed multiplier
+   * divided them. {@link nextSpeedStep} re-divides these to find the next tick boundary.
+   */
+  castTicksBeforeSpeed: number;
+  castSpeedTicksBeforeSpeed: number;
   /** `max(cooldownTicks, castSpeedTicks)` — `Spell.getEffectiveCooldownTicks`. */
   effectiveCooldownTicks: number;
   /** The raw `cast_speed_perc` the sweep produced, before it becomes a multiplier. */
@@ -380,34 +390,18 @@ function clampSpellCalc(event: DamageEventState, declared: SpellConfig, balance:
   // or turning the cast around: at -99% a cast takes 100x as long, never negative time.
   const speedMulti = 1 + Math.max(-99, percent) / 100;
 
-  const castSpeedTicks = Math.max(
-    balance.globalCooldownTicks,
-    event.data.getNumber(EVENT.CAST_SPEED_TICKS) / speedMulti,
-  );
   const cooldownTicks = Math.trunc(
     clamp(event.data.getNumber(EVENT.COOLDOWN_TICKS), floorFor(declared.cooldownTicks), 1_000_000),
   );
-  // `Spell.getCastTimeTicks` reads the number the event divided, then clamps and ceils it.
-  const castTicks = clamp(
-    Math.ceil(event.data.getNumber(EVENT.CAST_TICKS) / speedMulti),
-    declared.timesToCast,
-    10000,
-  );
-  // `SpellConfiguration.isOffGlobalCooldown()` — the *declared* field, not the calculated one,
-  // which matters because the calculated one is floored at the GCD and so is never 0.
-  const offGlobalCooldown = declared.castSpeedTicks <= 0;
+  const castTicksBeforeSpeed = event.data.getNumber(EVENT.CAST_TICKS);
+  const castSpeedTicksBeforeSpeed = event.data.getNumber(EVENT.CAST_SPEED_TICKS);
 
   return {
-    castTicks,
-    castSpeedTicks: offGlobalCooldown ? 0 : castSpeedTicks,
-    // `Spell.getEffectiveCooldownTicks` — `Math.max(getCooldownTicks(ctx), getCastSpeedTicks(ctx))`.
-    // `getCastSpeedTicks` ceils, so the max is taken against the ceiling.
-    effectiveCooldownTicks: offGlobalCooldown
-      ? cooldownTicks
-      : Math.max(cooldownTicks, Math.ceil(castSpeedTicks)),
+    ...speedTicks(castTicksBeforeSpeed, castSpeedTicksBeforeSpeed, speedMulti, cooldownTicks, declared, balance),
+    castTicksBeforeSpeed,
+    castSpeedTicksBeforeSpeed,
     castSpeedPercent: percent,
     speedMulti,
-    offGlobalCooldown,
     cooldownTicks,
     chargeCooldownTicks: Math.trunc(
       clamp(event.data.getNumber(EVENT.CHARGE_COOLDOWN_TICKS), floorFor(declared.chargeRegenTicks), 1_000_000),
@@ -431,6 +425,38 @@ function clampSpellCalc(event: DamageEventState, declared: SpellConfig, balance:
     extraBanners: Math.trunc(event.data.getNumber(EVENT.EXTRA_BANNERS)),
     bonusTotalSummons: Math.trunc(event.data.getNumber(EVENT.BONUS_TOTAL_SUMMONS)),
     summonType: event.data.getString(EVENT.SUMMON_TYPE) || "none",
+  };
+}
+
+/**
+ * The tick counts the speed multiplier decides, each a whole tick.
+ *
+ * `Spell.getCastTimeTicks` and `getCastSpeedTicks` both return `(int) Math.ceil(number)` in the
+ * 6.4.13 jar, so skill speed moves nothing until it carries a count past a tick boundary —
+ * which is what {@link nextSpeedStep} searches for.
+ */
+function speedTicks(
+  castTicksBeforeSpeed: number,
+  castSpeedTicksBeforeSpeed: number,
+  speedMulti: number,
+  cooldownTicks: number,
+  declared: SpellConfig,
+  balance: Balance,
+): Pick<SpellCalc, "castTicks" | "castSpeedTicks" | "effectiveCooldownTicks" | "offGlobalCooldown"> {
+  const castSpeedTicks = Math.ceil(
+    Math.max(balance.globalCooldownTicks, castSpeedTicksBeforeSpeed / speedMulti),
+  );
+  // `Spell.getCastTimeTicks` reads the number the event divided, then clamps and ceils it.
+  const castTicks = clamp(Math.ceil(castTicksBeforeSpeed / speedMulti), declared.timesToCast, 10000);
+  // `SpellConfiguration.isOffGlobalCooldown()` — the *declared* field, not the calculated one,
+  // which matters because the calculated one is floored at the GCD and so is never 0.
+  const offGlobalCooldown = declared.castSpeedTicks <= 0;
+  return {
+    castTicks,
+    castSpeedTicks: offGlobalCooldown ? 0 : castSpeedTicks,
+    // `Spell.getEffectiveCooldownTicks` — `Math.max(getCooldownTicks(ctx), getCastSpeedTicks(ctx))`.
+    effectiveCooldownTicks: offGlobalCooldown ? cooldownTicks : Math.max(cooldownTicks, castSpeedTicks),
+    offGlobalCooldown,
   };
 }
 
@@ -538,6 +564,79 @@ export function rateOf(calc: SpellCalc, declared: SpellConfig): CastRate {
     channelled,
     globalCooldownSeconds: channelled ? 0 : calc.castSpeedTicks / TICKS_PER_SECOND,
   };
+}
+
+/** How much more skill speed the next faster cycle costs. */
+export type SpeedStep = {
+  /**
+   * More `cast_speed_perc` (Skill Speed, or any of the school cast speed stats), in percentage
+   * points, that shortens the cycle by at least one tick. Rounded up to a tenth.
+   */
+  morePercent: number;
+  /** The cycle now, in ticks. */
+  cycleTicks: number;
+  /** The cycle once {@link SpeedStep.morePercent} is added, in ticks. */
+  nextCycleTicks: number;
+};
+
+/**
+ * The next skill speed threshold, or `undefined` when skill speed cannot shorten this cycle.
+ *
+ * The cast and the global-cooldown arm are both ceiled to whole ticks, so between thresholds
+ * extra speed changes nothing. Each count `ceil(X / multi)` drops to `k` once
+ * `multi >= X / k`; those are the only multipliers worth trying, and the first one whose
+ * {@link rateOf} cycle is shorter is the answer. A threshold can move nothing — the global
+ * cooldown dropping a tick under a longer cooldown — which is why each is checked against the
+ * whole cycle rather than taken as found.
+ *
+ * `undefined` when the spell is `not_affected_by_cast_speed`, is proc-paced, or has a cycle no
+ * amount of speed shortens (a cooldown that outlasts the cast and global cooldown at their
+ * floors).
+ */
+export function nextSpeedStep(calc: SpellCalc, declared: SpellConfig, balance: Balance): SpeedStep | undefined {
+  if (declared.tags.includes("not_affected_by_cast_speed")) return undefined;
+  const now = rateOf(calc, declared);
+  if (now.procPaced || (!now.castable && !now.channelled)) return undefined;
+
+  const cycleAt = (multi: number): number => {
+    const ticks = speedTicks(
+      calc.castTicksBeforeSpeed,
+      calc.castSpeedTicksBeforeSpeed,
+      multi,
+      calc.cooldownTicks,
+      declared,
+      balance,
+    );
+    return Math.round(rateOf({ ...calc, ...ticks, speedMulti: multi }, declared).cycleSeconds * TICKS_PER_SECOND);
+  };
+  const current = cycleAt(calc.speedMulti);
+
+  const candidates: number[] = [];
+  const thresholds = (beforeSpeed: number, floor: number): void => {
+    if (beforeSpeed <= 0) return;
+    const top = Math.ceil(beforeSpeed / calc.speedMulti) - 1;
+    for (let k = top; k >= Math.max(1, floor) && top - k < 200; k--) candidates.push(beforeSpeed / k);
+  };
+  thresholds(calc.castTicksBeforeSpeed, declared.timesToCast);
+  if (!calc.offGlobalCooldown) thresholds(calc.castSpeedTicksBeforeSpeed, Math.ceil(balance.globalCooldownTicks));
+  candidates.sort((a, b) => a - b);
+
+  // A channel's multiplier moves by `transfer` per point of cast speed — see `clampSpellCalc`.
+  const transfer = declared.tags.includes("channel") ? balance.channelSpeedTransfer : 1;
+  if (transfer <= 0) return undefined;
+  for (const multi of candidates) {
+    if (multi <= calc.speedMulti) continue;
+    // Rounded up to the tenth a tooltip shows, then re-checked: the game divides in float, so
+    // landing exactly on a boundary is not a promise of crossing it.
+    let more = Math.ceil((((multi - calc.speedMulti) * 100) / transfer) * 10 - 1e-6) / 10;
+    let next = cycleAt(calc.speedMulti + (more * transfer) / 100);
+    if (next >= current) {
+      more = Math.round((more + 0.1) * 10) / 10;
+      next = cycleAt(calc.speedMulti + (more * transfer) / 100);
+    }
+    if (next < current) return { morePercent: more, cycleTicks: current, nextCycleTicks: next };
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

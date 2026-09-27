@@ -345,6 +345,97 @@ test("a stat that grants an effect makes it available, and says which stat", () 
   );
 });
 
+test("an element-gated grant needs a hit of that element somewhere in the build", () => {
+  // Hemorrhager: `hemorrhage_to_source_on_crit` is a Physical stat whose block asks
+  // `ele_match_stat`, so only a physical crit stacks Hemorrhage. A build that hits with nothing
+  // physical was being handed the buff anyway.
+  const registries = (flatPhysical: number, converted = 0) => ({
+    mmorpg_exile_effect: {
+      hemorrhage: effectEntry("hemorrhage", {
+        max_stacks: 10,
+        stats: [{ type: "FLAT", min: 4, max: 4, stat: "critical_damage" }],
+      }),
+    },
+    mmorpg_spells: {
+      bolt: spellEntry("bolt", "Nature", "hit100"),
+      strike: spellEntry("strike", "Physical", "hit100"),
+    },
+    mmorpg_stat: {
+      hemorrhage_to_source_on_crit: statEntry("hemorrhage_to_source_on_crit", {
+        ele: "Physical",
+        effect: [
+          {
+            effects: ["give_hemorrhage_to_source"],
+            events: ["on_damage"],
+            ifs: ["ele_match_stat"],
+            side: "Source",
+          },
+        ],
+      }),
+      flat_physical_added_damage: statEntry("flat_physical_added_damage"),
+      phys_to_chaos: statEntry("phys_to_chaos"),
+      phys_to_lightning: statEntry("phys_to_lightning"),
+    },
+    mmorpg_stat_condition: { ele_match_stat: condition("ele_match_stat", "ele_match_stat") },
+    mmorpg_stat_effect: {
+      give_hemorrhage_to_source: {
+        id: "give_hemorrhage_to_source",
+        ser: "give_exile_effect",
+        effect: "hemorrhage",
+        give_to: "Source",
+        seconds: 30,
+      },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("hemorrhage_to_source_on_crit", "FLAT", 100),
+        ...(flatPhysical > 0 ? [exact("flat_physical_added_damage", "FLAT", flatPhysical)] : []),
+        ...(converted > 0
+          ? [
+              exact("phys_to_chaos", "FLAT", converted / 2),
+              exact("phys_to_lightning", "FLAT", converted / 2),
+            ]
+          : []),
+      ]),
+    },
+  });
+  const hemorrhage = (state: ReturnType<typeof stateOf>) => state.options.find((o) => o.id === "hemorrhage")!;
+
+  const lightning = stateOf(registries(0), { skills: [{ spellId: "bolt", main: true }] });
+  assert.equal(hemorrhage(lightning).stacks, 0, "a lightning-only bar never crits physically");
+  assert.deepEqual(hemorrhage(lightning).needs, ["a physical hit"]);
+
+  const mixed = stateOf(registries(0), {
+    skills: [{ spellId: "bolt", main: true }, { spellId: "strike" }],
+  });
+  assert.equal(hemorrhage(mixed).stacks, 10, "a physical skill anywhere on the bar keeps it up");
+
+  const added = stateOf(registries(5), { skills: [{ spellId: "bolt", main: true }] });
+  assert.equal(hemorrhage(added).stacks, 10, "flat added physical arrives as a bonus physical event");
+
+  const swinging = stateOf(registries(0), {
+    skills: [{ spellId: "bolt" }],
+    config: { mainIsBasicAttack: true },
+  });
+  assert.equal(hemorrhage(swinging).stacks, 10, "a weapon swing is physical");
+
+  const ticked = stateOf(registries(0), {
+    skills: [{ spellId: "bolt", main: true }],
+    config: { effects: { hemorrhage: true } },
+  });
+  assert.equal(hemorrhage(ticked).stacks, 10, "and ticking it on still wins");
+
+  // `ElementMatchesStat` refuses an event with nothing left unconverted, so a physical skill
+  // whose physical is converted away entirely is no physical hit. The AFK capture's 153.5% is
+  // the case: every one of its physical procs crits and none of them stacks Hemorrhage.
+  const strike = [{ spellId: "strike", main: true }];
+  const partly = stateOf(registries(0, 60), { skills: strike });
+  assert.equal(hemorrhage(partly).stacks, 10, "60% converted still leaves a physical event");
+  const fully = stateOf(registries(5, 153.5), { skills: strike });
+  assert.equal(hemorrhage(fully).stacks, 0, "past 100% nothing physical is left, flat added included");
+  assert.deepEqual(hemorrhage(fully).needs, ["a physical hit"]);
+});
+
 test("a support gem that grants an effect offers it, though the sheet never holds its stat", () => {
   // The real shape of Fortify in this pack: the stat is on the *support gem*, so it is a
   // `SUPPORT_GEM` context belonging to the linked Skill and `sheet.get("fortify_on_melee_hit")`

@@ -58,7 +58,7 @@ import { DEFAULT_PLACEMENT } from "./geometry.js";
 import type { Sheet } from "./ctx.js";
 import type { EffectState } from "./effect-state.js";
 import { effectSupply, type EffectSupply } from "./effect-supply.js";
-import { resolveProcs, type Proc } from "./procs.js";
+import { procCastOf, resolveProcs, type Proc } from "./procs.js";
 import { simulateBasicAttack, type DamageOptions, type DamageResult } from "./simulate.js";
 
 /** Vanilla's own attribute id for how fast a weapon swings. */
@@ -220,7 +220,7 @@ export function basicAttack(
               // origin when the proc is cast from it.
               placement: procPlacement(build.config?.target ?? DEFAULT_PLACEMENT, position),
             });
-            return result?.damagePerCast ?? 0;
+            return procCastOf(result);
           },
           supplyOf: (effectId) => supplyFor(build, snapshot, effectId, options),
           diagnostics,

@@ -19,6 +19,8 @@ function calc(overrides: Partial<SpellCalc> = {}): SpellCalc {
   return {
     castTicks: 1,
     castSpeedTicks: 0,
+    castTicksBeforeSpeed: 1,
+    castSpeedTicksBeforeSpeed: 0,
     effectiveCooldownTicks: 20,
     castSpeedPercent: 0,
     speedMulti: 1,

@@ -119,6 +119,8 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
         </div>
       )}
 
+      <SpeedStepRow dps={dps} />
+
       {dps.requires.length > 0 && (
         <div className="row wrap mt-4 text-sm">
           <span className="badge warn">requires {dps.requires.join(", ")}</span>
@@ -153,13 +155,52 @@ export function RateCard({ dps }: { dps: DpsResult }): ReactNode {
 }
 
 /**
- * Which items, buffs and perks fed one stat, read off the spell unit's own contexts.
+ * How much more skill speed the next faster cycle needs.
  *
- * Projectile count is the case that needs it: a build gets its extra projectiles from several
- * unrelated places at once — a unique weapon, a self-buff whose own strength is scaled by the
- * capture&apos;s `strMulti` — and "9 projectiles" with nothing behind it looks like a number the
- * engine invented. `calculate` already records every write with its source; this only reads it.
+ * The game ceils the cast and the global-cooldown arm to whole ticks (`Spell.getCastTimeTicks`,
+ * `getCastSpeedTicks`), so skill speed does nothing between thresholds. Saying where the next one
+ * is turns "more skill speed" from a vague good into a number to aim for.
  */
+function SpeedStepRow({ dps }: { dps: DpsResult }): ReactNode {
+  const { rate, declared, speedStep } = dps;
+  if (rate.procPaced || (!rate.castable && !rate.channelled)) return null;
+  if (declared.tags.includes("not_affected_by_cast_speed")) {
+    return (
+      <div className="row wrap gap-5 mt-4 text-sm">
+        <span className="faint">This skill ignores skill speed.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="row wrap gap-5 mt-4 text-sm">
+      {speedStep === undefined ? (
+        <span className="faint" style={{ maxWidth: 680 }}>
+          More skill speed won&apos;t shorten this cycle: the cast and global cooldown are already
+          at their floors, or the cooldown outlasts them.
+        </span>
+      ) : (
+        <>
+          <Fact label="Next skill speed step" value={`+${num(speedStep.morePercent, 1)}%`} />
+          <Fact
+            label="Cycle"
+            value={`${ticksAsTime(speedStep.cycleTicks)} → ${ticksAsTime(speedStep.nextCycleTicks)}`}
+          />
+          <span className="faint" style={{ maxWidth: 680 }}>
+            <Plain>
+              Casts and cooldowns run in whole game ticks (1/20 s), so skill speed only helps when
+              it crosses a tick. Anything short of the step above does nothing for this skill.
+            </Plain>
+            <Tech>
+              <code>getCastTimeTicks</code> and <code>getCastSpeedTicks</code> both return{" "}
+              <code>(int) Math.ceil(number)</code>, so <code>cast_speed_perc</code> moves the cycle
+              only when it carries one of them past a tick boundary.
+            </Tech>
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * Which items, buffs and perks fed one stat, read off the spell unit's own contexts.

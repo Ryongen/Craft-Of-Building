@@ -160,7 +160,18 @@ function evaluateSerializer(
     }
 
     case "ele_match_stat":
-      // `event.data.getElement().elementsMatch(stat.getElement())`.
+      // `ElementMatchesStat.can`, checked against the 6.4.13 jar:
+      //
+      //     if (event instanceof DamageEvent d
+      //         && (d.unconvertedDamagePercent <= 0 || d.unconvertedDamageTakenAsPercent <= 0)) return false;
+      //     return event.data.getElement().elementsMatch(stat.getElement());
+      //
+      // A hit converted away entirely matches no element-gated stat, not even its own element's.
+      // Without the first line, a build converting all its physical still stacked Hemorrhage off
+      // the empty physical parent every time it crit.
+      if (ctx.event.unconvertedDamagePercent <= 0 || ctx.event.unconvertedDamageTakenAsPercent <= 0) {
+        return FALSE;
+      }
       return bool(elementsMatch(ELEMENTS[ctx.event.data.getElement()], elementByName(subject.element)));
 
     case "is_elemental_damage":

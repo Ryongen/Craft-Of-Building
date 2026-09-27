@@ -159,8 +159,8 @@ export type {
 export { DEFAULT_PLACEMENT, coverageOf } from "./damage/geometry.js";
 export type { Coverage, CoverageMethod, TargetPlacement } from "./damage/geometry.js";
 
-export { TICKS_PER_SECOND, calculateSpell, rateOf, spellConfig } from "./damage/spell-calc.js";
-export type { CastRate, SpellCalc, SpellCalcInput, SpellConfig } from "./damage/spell-calc.js";
+export { TICKS_PER_SECOND, calculateSpell, nextSpeedStep, rateOf, spellConfig } from "./damage/spell-calc.js";
+export type { CastRate, SpeedStep, SpellCalc, SpellCalcInput, SpellConfig } from "./damage/spell-calc.js";
 
 export { Recorder, traceTotal } from "./damage/breakdown.js";
 export type {

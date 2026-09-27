@@ -277,6 +277,23 @@ test("sockets read gems and runes out of the same field, by asking the registrie
   assert.equal(result.item?.runeword, "steel");
 });
 
+test("a socket count above the rarity's max is read as the corruption's socket", () => {
+  const snapshot = necklaceSnapshot();
+  (snapshot.registries as Record<string, unknown>)["mmorpg_chaos_stat"] = {
+    normal_high: {
+      id: "normal_high",
+      origin: "test",
+      source: { kind: "pack", packId: "test" },
+      data: { bonus_sockets: 1, for_item_rarities: ["mythic"] },
+    },
+  };
+  const nbt =
+    `{mmorpg_gear: '{"sockets":{"so":[{"g":"amethyst0","p":0},{"g":"amethyst0","p":0}],"sl":2,` +
+    `"rw":"","rp":0},"rar":"mythic","lvl":50,"gtype":"necklace"}'}`;
+  const result = importItem(nbt, snapshot);
+  assert.equal(result.item?.bonusSockets, 1);
+});
+
 test("an empty socket is stored as an id in neither registry, and is skipped", () => {
   const nbt =
     `{mmorpg_gear: '{"sockets":{"so":[{"g":"","p":0}],"sl":1,"rw":"","rp":0},` +

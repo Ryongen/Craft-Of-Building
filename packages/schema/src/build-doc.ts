@@ -102,6 +102,17 @@ export type Item = {
   unique?: string;
   /** Roll percent per entry of the unique's `unique_stats`, in declaration order. */
   uniqueRolls?: number[];
+  /**
+   * Sockets added by the corruption itself, above what the rarity allows.
+   *
+   * `ChaosStat.applyToGear` runs `for (i < bonus_sockets) gear.sockets.addSocket()`, and
+   * `addSocket` is a bare `sl++` — no `canAddSocket` check — so the "Ascended" outcome
+   * (`bonus_sockets: 1`) is the one way a rare-or-better item holds two sockets. A rarity
+   * upgrade cannot do it: `UpgradeRarityItemMod` removes every socket above the new rarity's
+   * `sockets.max` (checked against the 6.4.13 jar), so a two-socket common is trimmed to one
+   * on its way to rare.
+   */
+  bonusSockets?: number;
   /** `mmorpg_gems` ids, one per filled socket. */
   sockets?: string[];
   /** `mmorpg_runes` ids. */

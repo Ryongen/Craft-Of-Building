@@ -185,7 +185,7 @@ const ACCOUNTED = {
   "mmorpg_auto_item": ["scope", "crafting"],
   "mmorpg_custom_item": ["scope", "crafting"],
   "mmorpg_orb_extension": ["scope", "crafting currency"],
-  "mmorpg_chaos_stat": ["scope", "item ascension tiers — crafting, not a stat on a build"],
+  "mmorpg_chaos_stat": ["elsewhere", "queries.ts corruptionSockets reads bonus_sockets; the rest is crafting odds"],
   "mmorpg_wizard": ["scope", "an NPC"],
   "mmorpg_atlas_layout": ["scope", "the atlas map layout, not the atlas passives"],
   "mmorpg_map_mob_list - obsolete": ["scope", "named obsolete by the pack itself"],

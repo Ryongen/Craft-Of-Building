@@ -49,6 +49,7 @@ import {
   baseGearType,
   basesForSlot,
   coreStatIds,
+  corruptionSockets,
   gearRarity,
   omen,
   omenCountsSlot,
@@ -1101,14 +1102,31 @@ function validateSocketsAndRunes(
   // `sockets.max` gates `canAddSocket`, which is a crafting-time check rather than an invariant
   // an item on a character has to satisfy: a mythic helmet carrying two socketed gems came out
   // of a real capture, and the game applied both. So this reports rather than refuses.
+  //
+  // The corruption's own socket is outside that gate — `ChaosStat.applyToGear` calls the bare
+  // `addSocket()` — so it raises the ceiling here, and is itself capped by what the pack's
+  // corruption outcomes for this rarity can add.
+  const bonus = item.bonusSockets ?? 0;
+  const bonusMax = corruptionSockets(snapshot, rarity.id);
+  if (bonus > bonusMax) {
+    add(
+      "error",
+      "too-many-bonus-sockets",
+      `${path}.bonusSockets`,
+      `A corruption adds at most ${bonusMax} socket(s) to a ${rarity.id} item ` +
+        `(\`mmorpg_chaos_stat\` bonus_sockets), got ${bonus}.`,
+    );
+  }
+  const cap = rarity.sockets.max + bonus;
   const filled = sockets.length + runes.length;
-  if (filled > rarity.sockets.max) {
+  if (filled > cap) {
     add(
       "warning",
       "too-many-sockets",
       `${path}.sockets`,
-      `Rarity "${rarity.id}" allows at most ${rarity.sockets.max} socket(s) to be *added* and ` +
-        `gems and runes share them, got ${sockets.length} gem(s) + ${runes.length} rune(s). ` +
+      `Rarity "${rarity.id}" allows at most ${rarity.sockets.max} socket(s) to be *added*` +
+        (bonus > 0 ? `, plus ${bonus} from its corruption,` : "") +
+        ` and gems and runes share them, got ${sockets.length} gem(s) + ${runes.length} rune(s). ` +
         `An item can carry more than it could be given today.`,
     );
   }

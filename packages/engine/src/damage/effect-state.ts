@@ -57,8 +57,20 @@
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import type { BuildDoc, EffectSetup, ExileEffectSetup } from "@cte2/schema";
-import { CATEGORY, activeSupportLinks, entry, isAuraEnabled, isSkillEnabled, learnedSpells } from "@cte2/schema";
+import type { BuildDoc, EffectSetup, ElementName, ExileEffectSetup } from "@cte2/schema";
+import {
+  CATEGORY,
+  CONVERTED_ELEMENTS,
+  ELEMENTS,
+  SINGLE_ELEMENTS,
+  activeSupportLinks,
+  elementByName,
+  elementsMatch,
+  entry,
+  isAuraEnabled,
+  isSkillEnabled,
+  learnedSpells,
+} from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { spellRanks, type SpellRanks } from "../collect/spell.js";
@@ -111,6 +123,15 @@ export type EffectGrant = {
    * ritual unavailable the instant the ritual was up.
    */
   requires?: readonly string[];
+  /**
+   * The element a hit must be for this grant to fire — its block's `ele_match_stat` gate, read
+   * against the granting stat's own `ele`.
+   *
+   * Hemorrhager is the case: `hemorrhage_to_source_on_crit` is a Physical stat whose block asks
+   * `ele_match_stat`, so only a physical crit stacks Hemorrhage. Unread, the gate passed, and a
+   * build with no physical hit anywhere was handed ten stacks of +4% crit damage for nothing.
+   */
+  requiresHit?: ElementName;
 } & (
   /** A spell in the build has an `exile_effect` act naming it. */
   | { kind: "spell"; spellId: string; action: string }
@@ -381,7 +402,7 @@ export function resolveEffectState(input: EffectStateInput): EffectState {
     });
   }
 
-  resolveAvailability(options, input.preferred ?? []);
+  resolveAvailability(options, input.preferred ?? [], hitCheck(snapshot, build, sheet));
   pinComboResources(options, input.combo);
 
   const active = new Map<string, number>();
@@ -456,7 +477,11 @@ function pinComboResources(
   }
 }
 
-function resolveAvailability(options: EffectOption[], preferred: readonly string[]): void {
+function resolveAvailability(
+  options: EffectOption[],
+  preferred: readonly string[],
+  canHit: HitCheck,
+): void {
   const base = new Map(options.map((option) => [option.id, option.stacks] as const));
   const dead = new Set<string>();
 
@@ -474,7 +499,7 @@ function resolveAvailability(options: EffectOption[], preferred: readonly string
       // The document's own word wins here as everywhere else: `config.effects` naming an effect
       // is a statement about the character, not a derivation to be overruled.
       if (option.chosen) continue;
-      const missing = unmetRequirements(option, up);
+      const missing = unmetRequirements(option, up, canHit);
       if (missing === undefined) continue;
       option.needs = missing;
       dead.add(option.id);
@@ -490,7 +515,8 @@ function resolveAvailability(options: EffectOption[], preferred: readonly string
   const settled = new Set(options.filter((o) => o.stacks > 0).map((o) => o.id));
   for (const option of options) {
     if (dead.has(option.id)) option.stacks = 0;
-    const missing = option.stacks > 0 || option.chosen ? undefined : unmetRequirements(option, settled);
+    const missing =
+      option.stacks > 0 || option.chosen ? undefined : unmetRequirements(option, settled, canHit);
     if (missing === undefined) delete option.needs;
     else option.needs = missing;
   }
@@ -504,10 +530,17 @@ function resolveAvailability(options: EffectOption[], preferred: readonly string
  * comes back is the shortest unmet list, which is the useful thing to say: "this wants Abyssal
  * Aura", rather than the union of three branches nobody is running.
  */
-function unmetRequirements(option: EffectOption, up: ReadonlySet<string>): string[] | undefined {
+function unmetRequirements(
+  option: EffectOption,
+  up: ReadonlySet<string>,
+  canHit: HitCheck,
+): string[] | undefined {
   let shortest: string[] | undefined;
   for (const grant of option.grantedBy) {
     const missing = (grant.requires ?? []).filter((id) => !up.has(id));
+    if (grant.requiresHit !== undefined && !canHit(option.id, grant.requiresHit)) {
+      missing.push(`a ${ELEMENTS[grant.requiresHit].displayName.toLowerCase()} hit`);
+    }
     if (missing.length === 0) return undefined;
     if (shortest === undefined || missing.length < shortest.length) shortest = missing;
   }
@@ -761,6 +794,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
       event: grant.event,
       holder: grant.holder,
       side: grant.side,
+      ...(grant.requiresHit === undefined ? {} : { requiresHit: grant.requiresHit }),
     });
   }
 
@@ -786,6 +820,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
             event: grant.event,
             holder: grant.holder,
             side: grant.side,
+            ...(grant.requiresHit === undefined ? {} : { requiresHit: grant.requiresHit }),
           });
         }
       }
@@ -820,6 +855,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
             event: grant.event,
             holder: grant.holder,
             side: grant.side,
+            ...(grant.requiresHit === undefined ? {} : { requiresHit: grant.requiresHit }),
           });
         }
       }
@@ -1211,6 +1247,7 @@ type EffectGrantFromStat = {
   event: string;
   holder: EffectHolder;
   side: EffectSide;
+  requiresHit?: ElementName;
 };
 
 /**
@@ -1264,11 +1301,23 @@ function grantingStats(snapshot: Snapshot): Map<string, EffectGrantFromStat[]> {
         const side = stringAt(block, "side") ?? "Source";
         const giveTo = stringAt(data!, "give_to") ?? "Source";
         const list = found.get(statId);
+        // Only your own hits are judged here: a Target-side `ele_match_stat` is asking about the
+        // element of what hit *you*, which the build does not decide.
+        const elementGated =
+          side === "Source" &&
+          asArray(block["ifs"]).some(
+            (id) =>
+              typeof id === "string" &&
+              stringAt(asObject(entry(snapshot, CATEGORY.statCondition, id)?.data) ?? {}, "ser") ===
+                "ele_match_stat",
+          );
+        const ele = elementByName(stringAt(asObject(stat.data) ?? {}, "ele"));
         const grant: EffectGrantFromStat = {
           effectId,
           event,
           holder: SELF_EVENTS.has(event) ? "caster" : giveTo === side ? "caster" : "target",
           side: side === "Target" ? "Target" : "Source",
+          ...(elementGated && ele !== undefined ? { requiresHit: ele.name } : {}),
         };
         if (list) list.push(grant);
         else found.set(statId, [grant]);
@@ -1278,6 +1327,139 @@ function grantingStats(snapshot: Snapshot): Map<string, EffectGrantFromStat[]> {
 
   GRANTING_STATS.set(snapshot as unknown as object, found);
   return found;
+}
+
+/** Whether the build can land a hit of `element`, not counting what effect `effectId` itself grants. */
+type HitCheck = (effectId: string, element: ElementName) => boolean;
+
+/**
+ * The elements this build hits with, for the `ele_match_stat` gate on a stat grant.
+ *
+ * Build-wide rather than per skill on purpose: Hemorrhage lasts thirty seconds on *you*, so a
+ * physical skill anywhere on the bar keeps it up for a fire one. What counts as a hit:
+ *
+ *   - every `damage` act of every enabled skill, at its declared element;
+ *   - the weapon swing, Physical plus any `<ele>_weapon_damage`, but only when the document says
+ *     it swings (`mainIsBasicAttack`). A planner cannot know you swing otherwise, and the AFK
+ *     build that surfaced this never does;
+ *   - the spells your stats proc, at their acts' elements;
+ *   - `flat_<ele>_added_*`, which the sweep queues as a bonus event of that element on any direct
+ *     hit, and Hemorrhager's `is_hit_or_bonus` accepts a bonus event.
+ *
+ * The effect being judged is left out of its own evidence. Hemorrhage grants
+ * `proc_blood_explosion_on_crit`, and once the effect pass has put it up that stat is on the
+ * sheet — so counting it would let the buff justify itself. That costs a build carrying the same
+ * stat from gear as well; the effects list says what it wanted and a tick turns it back on.
+ *
+ * Conversion is read, because it decides the answer: a build converting all of its physical
+ * lands no physical hit however many physical skills it presses. See the conversion step below.
+ */
+function hitCheck(snapshot: Snapshot, build: BuildDoc, sheet: Sheet): HitCheck {
+  const skills: ElementName[] = [];
+  for (const skill of build.skills ?? []) {
+    if (!isSkillEnabled(skill)) continue;
+    const spell = entry(snapshot, CATEGORY.spell, skill.spellId)?.data;
+    if (spell) skills.push(...damageElementsOf(spell));
+  }
+  const swings = build.config?.mainIsBasicAttack === true;
+  const cache = new Map<string, Set<ElementName>>();
+
+  const elementsFor = (effectId: string): Set<ElementName> => {
+    const cached = cache.get(effectId);
+    if (cached) return cached;
+    const own = new Set(
+      asArray(asObject(entry(snapshot, CATEGORY.exileEffect, effectId)?.data)?.["stats"]).flatMap(
+        (raw) => {
+          const stat = stringAt(asObject(raw) ?? {}, "stat");
+          return stat === undefined ? [] : [stat];
+        },
+      ),
+    );
+    const on = (statId: string): boolean => !own.has(statId) && (sheet.get(statId)?.value ?? 0) > 0;
+
+    const out = new Set<ElementName>(skills);
+    if (swings) {
+      out.add("Physical");
+      for (const element of SINGLE_ELEMENTS) if (on(`${element.guid}_weapon_damage`)) out.add(element.name);
+    }
+    for (const spellId of proccedSpells(snapshot, on)) {
+      const spell = entry(snapshot, CATEGORY.spell, spellId)?.data;
+      if (spell) for (const element of damageElementsOf(spell)) out.add(element);
+    }
+    if (out.size > 0) {
+      for (const element of SINGLE_ELEMENTS) {
+        const added = ["added_damage", "added_attack_damage", "added_magic_damage"].some((kind) =>
+          on(`flat_${element.guid}_${kind}`),
+        );
+        if (added) out.add(element.name);
+      }
+    }
+    // Conversion. `ElementMatchesStat` refuses an event whose `unconvertedDamagePercent` has
+    // reached 0, so physical that is converted away entirely is no physical hit at all — the
+    // parent event is still swept, but no element-gated stat matches it. Past 100 the shares are
+    // scaled down rather than dropped, so any total of 100 or more leaves nothing behind. What it
+    // converts *to* arrives as a child event of that element, with its own budget at 100.
+    if (out.has("Physical")) {
+      let converted = 0;
+      for (const element of CONVERTED_ELEMENTS) {
+        const statId = `phys_to_${element.guid}`;
+        if (!on(statId)) continue;
+        converted += sheet.get(statId)?.value ?? 0;
+        if (element.name !== "Physical") out.add(element.name);
+      }
+      if (converted >= 100) out.delete("Physical");
+    }
+    cache.set(effectId, out);
+    return out;
+  };
+
+  return (effectId, element) =>
+    [...elementsFor(effectId)].some((hit) => elementsMatch(ELEMENTS[hit], ELEMENTS[element]));
+}
+
+/** The spells a Source-side `proc_spell` on a stat that `has` accepts would cast. */
+function proccedSpells(snapshot: Snapshot, has: (statId: string) => boolean): string[] {
+  const effects = snapshot.registries[CATEGORY.statEffect] ?? {};
+  const out: string[] = [];
+  for (const [statId, stat] of Object.entries(snapshot.registries[CATEGORY.stat] ?? {})) {
+    if (!has(statId)) continue;
+    for (const rawBlock of asArray(asObject(stat.data)?.["effect"])) {
+      const block = asObject(rawBlock);
+      if (!block || (stringAt(block, "side") ?? "Source") !== "Source") continue;
+      for (const id of asArray(block["effects"])) {
+        if (typeof id !== "string") continue;
+        const data = asObject(effects[id]?.data);
+        if (data === undefined || stringAt(data, "ser") !== "proc_spell") continue;
+        const spellId = stringAt(data, "spellId");
+        if (spellId !== undefined && !out.includes(spellId)) out.push(spellId);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The element of every `damage` act in a spell's tree, read the way `skill-model.ts` reads it:
+ * an act that names no element deals Physical.
+ */
+function damageElementsOf(spell: Record<string, unknown>): ElementName[] {
+  const out = new Set<ElementName>();
+  const visitPart = (raw: unknown): void => {
+    const part = asObject(raw);
+    if (!part) return;
+    for (const rawAct of asArray(part["acts"])) {
+      const act = asObject(rawAct);
+      if (!act || act["type"] !== "damage") continue;
+      out.add(elementByName(asObject(act["map"])?.["element"])?.name ?? "Physical");
+    }
+    for (const inner of asArray(part["per_entity_hit"])) visitPart(inner);
+  };
+  const attached = asObject(spell["attached"]) ?? {};
+  for (const part of asArray(attached["on_cast"])) visitPart(part);
+  for (const parts of Object.values(asObject(attached["entity_components"]) ?? {})) {
+    for (const part of asArray(parts)) visitPart(part);
+  }
+  return [...out];
 }
 
 // ---------------------------------------------------------------------------

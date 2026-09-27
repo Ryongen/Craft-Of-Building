@@ -40,6 +40,7 @@ import {
   allUniques,
   allowedAffixTiers,
   baseGearType,
+  corruptionSockets,
   gearTypeName,
   gem,
   gemName,
@@ -59,6 +60,7 @@ import {
   runewordName,
   runewordsForItem,
   slotFamily,
+  socketCap,
   socketFamilyOfBase,
   statName,
   statsForFamily,
@@ -724,6 +726,7 @@ export function ItemEditor({
           wear={wearList?.corruptions}
           onChange={(rolls) => patch({ corruptions: rolls })}
         />
+        <AscendedToggle item={item} patch={patch} />
       </Accordion>
 
       <Accordion
@@ -732,7 +735,7 @@ export function ItemEditor({
         summary={
           rarity === undefined
             ? undefined
-            : `${socketCount} of ${rarity.sockets.max} socket${rarity.sockets.max === 1 ? "" : "s"}` +
+            : `${socketCount} of ${socketCap(snapshot, item)} socket${socketCap(snapshot, item) === 1 ? "" : "s"}` +
               (item.runeword === undefined ? "" : ` · ${runewordName(snapshot, item.runeword)}`)
         }
       >
@@ -1635,6 +1638,45 @@ const PINNACLE_GEM_TIER = 7;
 /** The ranking row for the item as it stands — the zero every other row is measured from. */
 const AS_IS = "\u0000as-is";
 
+/**
+ * The "Ascended" corruption outcome, the one that adds a socket.
+ *
+ * `ChaosStat.applyToGear` calls `gear.sockets.addSocket()` once per `bonus_sockets`, and
+ * `addSocket` is a bare `sl++` that skips `canAddSocket` — so this is the only way a rare or
+ * better item gets a second socket. Upgrading a two-socket common does not: the rarity upgrade
+ * removes sockets above the new rarity's max on the way to rare. Turning it off keeps whatever
+ * is socketed; the socket count then reads over the cap until something is taken out.
+ */
+function AscendedToggle({
+  item,
+  patch,
+}: {
+  item: Item;
+  patch: (next: Patch<Item>) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const most = corruptionSockets(snapshot, item.rarity);
+  if (most <= 0) return null;
+  const on = (item.bonusSockets ?? 0) > 0;
+  return (
+    <label
+      className="field mt-2"
+      title={
+        "The Ascended corruption outcome adds a socket past the rarity's limit. " +
+        "It's the only way to get a second socket on a rare, epic, legendary or mythic item: " +
+        "upgrading a two-socket common trims it back to one socket at rare."
+      }
+    >
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(event) => patch({ bonusSockets: event.target.checked ? most : undefined })}
+      />
+      Ascended: +{most} socket{most === 1 ? "" : "s"}
+    </label>
+  );
+}
+
 /** What a socket list can be ordered by. One at a time: two orders cannot share one list. */
 type SortMode = "none" | "dps" | "ehp";
 
@@ -1852,7 +1894,8 @@ function Sockets({
   );
 
   const filled = sockets.length + runes.length;
-  const free = rarity.sockets.max - filled;
+  const cap = socketCap(snapshot, item);
+  const free = cap - filled;
   const gemsAllowed = rarity.maxGems > 0;
 
   const setRuneRoll = (index: number, value: number): void => {
@@ -1903,7 +1946,8 @@ function Sockets({
       )}
 
       <div className="faint text-xs mb-2">
-        {filled} of {rarity.sockets.max} filled
+        {filled} of {cap} filled
+        {(item.bonusSockets ?? 0) > 0 ? ` (${item.bonusSockets} from Ascended corruption)` : ""}
         {gemsAllowed
           ? `, up to ${rarity.maxRunes} rune${rarity.maxRunes === 1 ? "" : "s"}`
           : ", runes only"}
@@ -1977,7 +2021,7 @@ function Sockets({
           {...(!gemsAllowed
             ? { title: `${rarity.id} cannot hold a gem` }
             : free <= 0
-              ? { title: `All ${rarity.sockets.max} socket(s) are filled` }
+              ? { title: `All ${cap} socket(s) are filled` }
               : {})}
           onAdd={(id) => patch({ sockets: [...sockets, id] })}
         />
@@ -2051,7 +2095,7 @@ function Sockets({
           options={runeOptions}
           width={360}
           disabled={free <= 0 || runes.length >= rarity.maxRunes}
-          {...(free <= 0 ? { title: `All ${rarity.sockets.max} socket(s) are filled` } : {})}
+          {...(free <= 0 ? { title: `All ${cap} socket(s) are filled` } : {})}
           onAdd={(id) => patch({ runes: [...runes, id], runeRolls: [...runeRolls, 0] })}
         />
         {sortToggle}
@@ -2062,7 +2106,7 @@ function Sockets({
         )}
         {free <= 0 && (
           <span className="faint text-sm">
-            {rarity.sockets.max} socket{rarity.sockets.max === 1 ? "" : "s"}, all filled
+            {cap} socket{cap === 1 ? "" : "s"}, all filled
           </span>
         )}
       </div>

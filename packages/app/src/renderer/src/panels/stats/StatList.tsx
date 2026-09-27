@@ -61,18 +61,22 @@ export type SheetRow = {
 export function StatList({
   selected,
   onSelect,
+  stats,
 }: {
   selected: string | null;
   onSelect: (statId: string | null) => void;
+  /** The sheet to list. Omitted, the character sheet. */
+  stats?: ReadonlyMap<string, EngineStat> | undefined;
 }): ReactNode {
   const { snapshot } = useWorld();
   const derived = useDerived();
+  const sheet = stats ?? derived.stats;
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
 
   const groups = useMemo(() => {
     const rows: SheetRow[] = [];
-    for (const [statId, stat] of derived.stats) {
+    for (const [statId, stat] of sheet) {
       const display = statDisplay(snapshot, statId);
 
       // Default view: what the game's own sheet would show, and only where it has a value.
@@ -115,7 +119,7 @@ export function StatList({
     }
 
     return [...byGroup].sort(([a], [b]) => sheetGroupRank(a) - sheetGroupRank(b));
-  }, [derived.stats, snapshot, query, showAll]);
+  }, [sheet, snapshot, query, showAll]);
 
   const shown = groups.reduce((n, [, rows]) => n + rows.length, 0);
 
@@ -123,7 +127,7 @@ export function StatList({
     <div className="stat-list">
       <div className="row wrap mb-3">
         <SearchInput
-          placeholder={`Filter ${derived.stats.size} stats…`}
+          placeholder={`Filter ${sheet.size} stats…`}
           value={query}
           onChange={setQuery}
         />

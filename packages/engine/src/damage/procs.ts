@@ -160,6 +160,15 @@ export type Proc = {
   competes?: { effectId: string; spentBy: string };
   /** Damage one proc puts on the target. */
   damagePerProc: number;
+  /**
+   * The procced spell's own crit chance, 0..1 — not the chance to proc, which is {@link chance}.
+   *
+   * A zero-button build is mostly procs, and whether they crit is half of what their damage is.
+   * Absent when the proc never fired, or the caller's `damageOf` only answered with a number.
+   */
+  critChance?: number;
+  /** What one proc puts on the target when it crits. {@link damagePerProc} already blends it in. */
+  critDamagePerProc?: number;
   /** `damagePerProc × perSecond`. */
   dps: number;
   /** Set when the figure is 0 for a reason worth showing. */
@@ -167,6 +176,50 @@ export type Proc = {
   /** The gate that stopped it, when `limit` is `wrong-skill`. */
   needsTag?: string;
 };
+
+/** One cast of a procced spell: its blended damage and how it crits. */
+export type ProcCast = {
+  damage: number;
+  critChance: number;
+  critDamage: number;
+};
+
+/**
+ * A procced spell's cast, read off its nested `simulateDps`.
+ *
+ * The crit chance is backed out of the three totals rather than read off `result.hit`, which is
+ * only the largest source: on a multi-source spell that differ in crit, the blend of the whole
+ * cast is what `damagePerCast` was made of.
+ */
+export function procCastOf(
+  result:
+    | {
+        damagePerCast: number;
+        critDamagePerCast: number;
+        hit: { critChance: number };
+        sources: readonly {
+          damagePerCast: number;
+          critDamagePerCast: number;
+          hit: { critChance: number };
+        }[];
+      }
+    | undefined,
+): ProcCast {
+  if (result === undefined) return { damage: 0, critChance: 0, critDamage: 0 };
+  const damage = result.damagePerCast;
+  const critDamage = result.critDamagePerCast;
+  // average = normal + c·(crit − normal) per source, so each source's normal hit comes back out
+  // of its two totals; then the same identity over the whole cast gives the blended c.
+  const normal = result.sources.reduce((sum, s) => {
+    const c = s.hit.critChance;
+    return sum + (c >= 1 ? s.damagePerCast : (s.damagePerCast - c * s.critDamagePerCast) / (1 - c));
+  }, 0);
+  const critChance =
+    critDamage > normal
+      ? Math.min(1, Math.max(0, (damage - normal) / (critDamage - normal)))
+      : result.hit.critChance;
+  return { damage, critChance, critDamage };
+}
 
 export type ProcInput = {
   snapshot: Snapshot;
@@ -209,7 +262,7 @@ export type ProcInput = {
    * it was triggered on. Cryogenic Rupture's 0.5-block burst lands on that enemy; resolved from
    * where you stand, it reached nothing.
    */
-  damageOf: (spellId: string, position: "CASTER" | "TARGET") => number;
+  damageOf: (spellId: string, position: "CASTER" | "TARGET") => number | ProcCast;
   /**
    * Stacks per second of a debuff the build puts on the target, for a proc that spends one.
    *
@@ -285,7 +338,9 @@ export function resolveProcs(input: ProcInput): Proc[] {
           : perSecond === capPerSecond && capPerSecond < triggered
             ? ("cooldown" as const)
             : ("trigger" as const);
-    const damagePerProc = perSecond > 0 ? input.damageOf(hit.spellId, hit.position) : 0;
+    const answer = perSecond > 0 ? input.damageOf(hit.spellId, hit.position) : 0;
+    const cast = typeof answer === "number" ? undefined : answer;
+    const damagePerProc = typeof answer === "number" ? answer : answer.damage;
 
     out.push({
       statId: hit.statId,
@@ -299,6 +354,9 @@ export function resolveProcs(input: ProcInput): Proc[] {
         ? {}
         : { consumes: { effectId: hit.consumes.effectId, stacksPerProc: hit.consumes.stacks, supply } }),
       damagePerProc,
+      ...(cast === undefined || cast.damage <= 0
+        ? {}
+        : { critChance: cast.critChance, critDamagePerProc: cast.critDamage }),
       dps: damagePerProc * perSecond,
       ...(limit === undefined
         ? damagePerProc <= 0 && perSecond > 0
@@ -408,6 +466,7 @@ export function rotationProcs(
     /** The chance to show when nothing triggered it at all, so a limited row is not blank. */
     bestChance: number;
     damagePerProc: number;
+    crit?: { chance: number; damage: number };
     limits: (ProcLimit | undefined)[];
     needsTag?: string;
     consumes?: Proc["consumes"];
@@ -438,7 +497,12 @@ export function rotationProcs(
       acc.bestChance = Math.max(acc.bestChance, proc.chance);
       // The same spell cast by the same build, so the skills that resolved it agree; the ones
       // that could not trigger it report 0 and must not drag the figure down.
-      acc.damagePerProc = Math.max(acc.damagePerProc, proc.damagePerProc);
+      if (proc.damagePerProc > acc.damagePerProc) {
+        acc.damagePerProc = proc.damagePerProc;
+        if (proc.critChance !== undefined && proc.critDamagePerProc !== undefined) {
+          acc.crit = { chance: proc.critChance, damage: proc.critDamagePerProc };
+        }
+      }
       acc.limits.push(proc.limit);
       if (acc.consumes === undefined && proc.consumes !== undefined) acc.consumes = proc.consumes;
       if (acc.needsTag === undefined && proc.needsTag !== undefined) acc.needsTag = proc.needsTag;
@@ -467,6 +531,9 @@ export function rotationProcs(
       perSecond: limit === undefined ? perSecond : 0,
       ...(acc.consumes === undefined ? {} : { consumes: acc.consumes }),
       damagePerProc: acc.damagePerProc,
+      ...(acc.crit === undefined
+        ? {}
+        : { critChance: acc.crit.chance, critDamagePerProc: acc.crit.damage }),
       dps: limit === undefined ? acc.damagePerProc * perSecond : 0,
       ...(limit === undefined ? {} : { limit }),
       ...(limit === "wrong-skill" && acc.needsTag !== undefined ? { needsTag: acc.needsTag } : {}),

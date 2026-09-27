@@ -34,16 +34,27 @@ import { balance, simulateDps, spellRanks, type DpsResult } from "@cte2/engine";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
-import { mainSkillIndex, useDerived, type DerivedBuild } from "../../state/derived.js";
+import { breakdownsOf, mainSkillIndex, useDerived, type DerivedBuild } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { num, smart } from "../../ui/format.js";
 import { DockedPane } from "./DetailPane.js";
 import { SheetDetail, type SheetFocus } from "./SheetDetail.js";
 import { StatList } from "./StatList.js";
+import { SkillSheetContext, type SkillSheet } from "./skill-sheet.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** Whether the header's figures read per hit or per second. */
 type Mode = "hit" | "dps";
+
+/**
+ * Which stat unit the list reads.
+ *
+ * `skill` is the picked skill's own — the character sheet plus the spell's innate stats and its
+ * support gems, `getSpellUnitStats(spell)` — which is the sheet its damage was computed on and
+ * the default here, because the header above the list is already about that skill. `character`
+ * is the sheet the sidebar shows, with no gem in it.
+ */
+type SheetMode = "skill" | "character";
 
 export function CalcsPanel(): ReactNode {
   const world = useWorld();
@@ -64,6 +75,7 @@ export function CalcsPanel(): ReactNode {
   const [picked, setPicked] = useState<number | undefined>(undefined);
   const skillIndex = picked ?? mainIndex;
   const [mode, setMode] = useState<Mode>("dps");
+  const [sheetMode, setSheetMode] = useState<SheetMode>("skill");
 
   /**
    * Which number the pane at the bottom is about.
@@ -73,9 +85,7 @@ export function CalcsPanel(): ReactNode {
    */
   const [focus, setFocus] = useState<SheetFocus | null>(null);
   const [detailHeight, setDetailHeight] = useState(340);
-  const selected = focus?.kind === "stat" ? focus.statId : null;
-  const select = (statId: string | null): void =>
-    setFocus(statId === null ? null : { kind: "stat", statId });
+  const selected = focus?.kind === "stat" || focus?.kind === "skill-stat" ? focus.statId : null;
 
   /**
    * The skill the header is about.
@@ -97,6 +107,20 @@ export function CalcsPanel(): ReactNode {
     }
   }, [skill, skillIndex, mainIndex, derived.dps, doc, world.snapshot]);
 
+  // The picked skill's own unit, and a breakdown over it for the pane below — built once per
+  // result, like the sidebar's. `undefined` when there is no skill, and the list falls back to
+  // the character sheet.
+  const skillSheet: SkillSheet | undefined = useMemo(
+    () =>
+      result === undefined || skill === undefined
+        ? undefined
+        : { spellId: skill.spellId, breakdown: breakdownsOf(result.spellSheet, world.snapshot) },
+    [result, skill, world.snapshot],
+  );
+  const onSkill = sheetMode === "skill" && skillSheet !== undefined;
+  const select = (statId: string | null): void =>
+    setFocus(statId === null ? null : { kind: onSkill ? "skill-stat" : "stat", statId });
+
   const ranks = useMemo(
     () => spellRanks(world.snapshot, derived.stats, balance(world.snapshot)),
     [world.snapshot, derived.stats],
@@ -114,9 +138,21 @@ export function CalcsPanel(): ReactNode {
           result={result}
           rank={skill === undefined ? undefined : ranks.get(skill.spellId)}
           derived={derived}
+          sheetMode={sheetMode}
+          onSheetMode={(next) => {
+            setSheetMode(next);
+            // An open breakdown follows the list onto the other sheet.
+            if (focus?.kind === "stat" || focus?.kind === "skill-stat") {
+              setFocus({ kind: next === "skill" ? "skill-stat" : "stat", statId: focus.statId });
+            }
+          }}
         />
 
-        <StatList selected={selected} onSelect={select} />
+        <StatList
+          selected={selected}
+          onSelect={select}
+          stats={onSkill ? result?.spellSheet.stats : undefined}
+        />
       </div>
 
       {/*
@@ -127,7 +163,9 @@ export function CalcsPanel(): ReactNode {
       */}
       {focus !== null && (
         <DockedPane height={detailHeight} onHeight={setDetailHeight} onClose={() => setFocus(null)}>
-          <SheetDetail focus={focus} onFocus={setFocus} />
+          <SkillSheetContext.Provider value={skillSheet}>
+            <SheetDetail focus={focus} onFocus={setFocus} />
+          </SkillSheetContext.Provider>
         </DockedPane>
       )}
     </div>
@@ -150,6 +188,8 @@ function SkillHeader({
   result,
   rank,
   derived,
+  sheetMode,
+  onSheetMode,
 }: {
   skills: readonly SkillSetup[];
   skillIndex: number;
@@ -159,6 +199,8 @@ function SkillHeader({
   result: DpsResult | undefined;
   rank: number | undefined;
   derived: DerivedBuild;
+  sheetMode: SheetMode;
+  onSheetMode: (mode: SheetMode) => void;
 }): ReactNode {
   const { snapshot } = useWorld();
 
@@ -206,6 +248,20 @@ function SkillHeader({
           <select value={mode} onChange={(event) => onMode(event.target.value as Mode)}>
             <option value="dps">Per second</option>
             <option value="hit">Per hit</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label title="This skill: your stats plus the skill's own and its support gems, the numbers its damage uses. Character: the sheet in the sidebar, with no support gem in it.">
+            Stats from
+          </label>
+          <select
+            value={sheetMode}
+            disabled={result === undefined}
+            onChange={(event) => onSheetMode(event.target.value as SheetMode)}
+          >
+            <option value="skill">This skill (with support gems)</option>
+            <option value="character">Character sheet</option>
           </select>
         </div>
 

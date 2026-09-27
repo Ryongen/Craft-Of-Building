@@ -23,6 +23,7 @@ import {
   valueCalcEntry,
 } from "../test-support.js";
 import { damageWithin, simulateDps, simulateFullDps, timeToKill } from "./dps.js";
+import { procCastOf } from "./procs.js";
 
 /** The three `on_spell_stat_calc` serializers a rate depends on. */
 const EFFECTS = {
@@ -428,6 +429,34 @@ test("the global cooldown floors the cast speed arm", () => {
   // `Math.max(GLOBAL_COOLDOWN_TICKS, castSpeedTicks / multi)` — no amount of cast speed gets a
   // spell below the pack's global cooldown.
   assert.ok(result.calc.castSpeedTicks >= 2);
+});
+
+test("skill speed moves the cycle only across a tick boundary, and says where the next one is", () => {
+  // `getCastSpeedTicks` is `(int) Math.ceil(number)`: at +10%, 15 / 1.1 = 13.6 arms 14 ticks,
+  // and so does anything up to 15 / 13 = 1.1538.
+  const at = (percent: number) => {
+    const { stats, granted } = castSpeedStat(percent);
+    const result = simulateDps(
+      build(),
+      scenario({ spellConfig: { cast_time_ticks: 0, cooldown_ticks: 0, cast_speed_ticks: 15 }, stats, granted }),
+    );
+    assert.ok(result);
+    return result;
+  };
+  const now = at(10);
+  assert.equal(now.calc.castSpeedTicks, 14);
+  closeTo(at(15.3).rate.cycleSeconds, now.rate.cycleSeconds);
+  assert.deepEqual(now.speedStep, { morePercent: 5.4, cycleTicks: 15, nextCycleTicks: 14 });
+  closeTo(at(15.4).rate.cycleSeconds, 14 / 20);
+});
+
+test("no speed step when the spell's own cooldown outlasts everything speed can shorten", () => {
+  const result = simulateDps(
+    build(),
+    scenario({ spellConfig: { cast_time_ticks: 0, cooldown_ticks: 60, cast_speed_ticks: 15 } }),
+  );
+  assert.ok(result);
+  assert.equal(result.speedStep, undefined);
 });
 
 test("a spell with cast_speed_ticks 0 is off the global cooldown and keeps the old cycle", () => {
@@ -928,12 +957,18 @@ function procScenario({
   procCooldownTicks = 20,
   side = "Source",
   events = ["on_damage"],
+  ele,
+  converted = 0,
 }: {
   chance?: number;
   ifs?: string[];
   procCooldownTicks?: number;
   side?: string;
   events?: string[];
+  /** The proc stat's own `ele`, which `ele_match_stat` compares against. */
+  ele?: string;
+  /** `phys_to_fire` on the sheet. */
+  converted?: number;
 } = {}) {
   const main = spellEntry("strike", "Physical", "hit100", {
     config: { tags: { tags: ["melee"] }, use_support_gems_from: "", cooldown_ticks: 0, cast_time_ticks: 20 },
@@ -953,8 +988,10 @@ function procScenario({
     mmorpg_spells: { strike: main, bolt },
     mmorpg_stat: {
       proc_bolt: statEntry("proc_bolt", {
+        ...(ele === undefined ? {} : { ele }),
         effect: [{ effects: ["proc_spell_bolt"], events, ifs, order: "final_damage", side }],
       }),
+      phys_to_fire: statEntry("phys_to_fire"),
     },
     mmorpg_stat_effect: {
       ...EFFECTS,
@@ -964,9 +1001,13 @@ function procScenario({
       ...CONDITIONS,
       random_roll: condition("random_roll", "random_roll"),
       spell_has_tag_ranged: condition("spell_has_tag_ranged", "spell_has_tag", { tag: { id: "ranged" } }),
+      ele_match_stat: condition("ele_match_stat", "ele_match_stat"),
     },
     mmorpg_base_stats: {
-      original_mode_player: baseStats("original_mode_player", [exact("proc_bolt", "FLAT", chance)]),
+      original_mode_player: baseStats("original_mode_player", [
+        exact("proc_bolt", "FLAT", chance),
+        ...(converted > 0 ? [exact("phys_to_fire", "FLAT", converted)] : []),
+      ]),
     },
   });
 }
@@ -1154,6 +1195,50 @@ test("a proc on hit fires at the hit rate times its chance, and its spell's dama
   closeTo(proc.perSecond, 1);
   closeTo(proc.damagePerProc, 100);
   closeTo(result.procDps, 100);
+  // The procced spell's own crit, which nothing in this scenario gives it.
+  assert.equal(proc.critChance, 0);
+});
+
+test("a proc's crit chance is the whole cast's, backed out of its three totals", () => {
+  // Two sources: one hits 100 and crits 200 at 50%, the other a flat 300 at 0%. The cast is 450
+  // against 400 normal and 500 all-crit, so it sits halfway across the gap — 50%, the chance of
+  // the only source whose crit changes anything.
+  const cast = procCastOf({
+    damagePerCast: 450,
+    critDamagePerCast: 500,
+    hit: { critChance: 0.5 },
+    sources: [
+      { damagePerCast: 150, critDamagePerCast: 200, hit: { critChance: 0.5 } },
+      { damagePerCast: 300, critDamagePerCast: 300, hit: { critChance: 0 } },
+    ],
+  });
+  closeTo(cast.damage, 450);
+  closeTo(cast.critDamage, 500);
+  closeTo(cast.critChance, 0.5);
+
+  // Nothing can crit, so the identity has no gap to solve over and the hit's own chance stands.
+  const flat = procCastOf({
+    damagePerCast: 100,
+    critDamagePerCast: 100,
+    hit: { critChance: 0.2 },
+    sources: [{ damagePerCast: 100, critDamagePerCast: 100, hit: { critChance: 0.2 } }],
+  });
+  closeTo(flat.critChance, 0.2);
+});
+
+test("an element-gated proc does not fire off a hit converted away entirely", () => {
+  // `ElementMatchesStat.can` (6.4.13 jar) refuses a damage event whose unconverted percent has
+  // reached 0, before it ever compares elements — so a physical skill that converts all of its
+  // physical triggers no physical-gated stat, though the physical parent event is still swept.
+  const gated = { ifs: ["random_roll", "ele_match_stat"], ele: "Physical" };
+  const chanceWith = (converted: number): number => {
+    const result = simulateDps(build(), procScenario({ ...gated, converted }));
+    assert.ok(result);
+    return result.procs.find((p) => p.spellId === "bolt")?.chance ?? 0;
+  };
+  closeTo(chanceWith(0), 1);
+  closeTo(chanceWith(60), 1, "a partial conversion leaves a physical event to match");
+  closeTo(chanceWith(100), 0);
 });
 
 test("proc_cooldown_ticks caps a proc however often the trigger fires", () => {

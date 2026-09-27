@@ -68,10 +68,12 @@ import {
 } from "./skill-model.js";
 import {
   calculateSpell,
+  nextSpeedStep,
   rateOf,
   spellConfig,
   TICKS_PER_SECOND,
   type CastRate,
+  type SpeedStep,
   type SpellCalc,
   type SpellConfig,
 } from "./spell-calc.js";
@@ -107,6 +109,7 @@ import { gatedShare, selfHitSupply } from "./self-hit-supply.js";
 import {
   procDps,
   procSourcesFor,
+  procCastOf,
   resolveProcs,
   rotationProcs,
   type Proc,
@@ -366,6 +369,14 @@ export type DpsResult = {
   declared: SpellConfig;
   calc: SpellCalc;
   rate: CastRate;
+  /**
+   * The spell unit this skill was computed on — `getSpellUnitStats(spell)`: the character sheet
+   * with the spell's innate stats and its linked support gems added. What the Stats tab shows
+   * when a skill is selected.
+   */
+  spellSheet: EngineResult;
+  /** The next skill speed threshold — see {@link nextSpeedStep}. Absent when speed cannot help. */
+  speedStep?: SpeedStep;
   multiHit: MultiHitInfo;
   cost: ResourceCost;
   placement: TargetPlacement;
@@ -1489,7 +1500,7 @@ export function simulateDps(
               procs: false,
               placement: procPlacement(placement, position),
             });
-            return result?.damagePerCast ?? 0;
+            return procCastOf(result);
           },
           diagnostics,
         });
@@ -1638,6 +1649,7 @@ export function simulateDps(
   // stat — your own duration gear lengthens a curse you cast exactly as it lengthens a buff you
   // cast — so the only thing that changes is which grants are read.
   const debuff = buffDurationOf(durationInput, "target");
+  const speedStep = nextSpeedStep(calc, declared, bal);
 
   return {
     spellId: skill.spellId,
@@ -1651,6 +1663,8 @@ export function simulateDps(
     declared,
     calc,
     rate,
+    spellSheet: spellRun,
+    ...(speedStep === undefined ? {} : { speedStep }),
     multiHit,
     cost: {
       manaPerCast: calc.manaCost,

@@ -253,6 +253,20 @@ test("gems and runes share one socket list, so the cap is on the total", () => {
   assert.ok(!codes(diagnostics, "error").includes("too-many-gems"));
 });
 
+test("an Ascended corruption's socket raises the cap by one and no further", () => {
+  // `ChaosStat.applyToGear` adds `bonus_sockets` with a bare `sl++`, past `sockets.max`.
+  const item = legalBoots();
+  item.sockets = ["amethyst0", "amethyst0"]; // rare allows 1 socket
+  item.bonusSockets = 1;
+  let diagnostics = validateBuild(build({ gear: [item] }), standardSnapshot());
+  assert.ok(!codes(diagnostics, "warning").includes("too-many-sockets"));
+  assert.ok(!codes(diagnostics, "error").includes("too-many-bonus-sockets"));
+
+  item.bonusSockets = 2;
+  diagnostics = validateBuild(build({ gear: [item] }), standardSnapshot());
+  assert.ok(codes(diagnostics, "error").includes("too-many-bonus-sockets"));
+});
+
 test("a runed base refuses gems outright rather than capping them", () => {
   // `if (rar.max_gems > 0) { ...cap... } else { return failure(RARITY_CANT_HAVE_ANY_GEMS); }`
   const item: Item = {

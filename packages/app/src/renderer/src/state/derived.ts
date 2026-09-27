@@ -192,7 +192,7 @@ export type DerivedBuild = {
  * few thousand modifiers and the panel would otherwise rescan all of them every time a row is
  * opened.
  */
-function breakdownsOf(result: EngineResult, snapshot: Snapshot): (statId: string) => StatBreakdown {
+export function breakdownsOf(result: EngineResult, snapshot: Snapshot): (statId: string) => StatBreakdown {
   const index = statIndex(snapshot);
 
   const byStat = new Map<string, ModContribution[]>();

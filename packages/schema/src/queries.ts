@@ -70,6 +70,7 @@ export const CATEGORY = {
   aura: "mmorpg_aura",
   baseGearType: "mmorpg_base_gear_types",
   baseStats: "mmorpg_base_stats",
+  chaosStat: "mmorpg_chaos_stat",
   currency: "library_of_exile_currency",
   exileEffect: "mmorpg_exile_effect",
   gameBalance: "mmorpg_game_balance",
@@ -224,6 +225,30 @@ export function gearRarity(snapshot: Snapshot, id: string): GearRarityView | und
     canHaveRunewords: bool(d, "can_have_runewords", false),
     minLvl: num(d, "min_lvl", 0),
   };
+}
+
+/**
+ * The most sockets a corruption can add to an item of this rarity: the largest
+ * `bonus_sockets` among the `mmorpg_chaos_stat` outcomes whose `for_item_rarities` names it.
+ * In this pack that is the "Ascended" outcome, 1 on every rarity.
+ */
+export function corruptionSockets(snapshot: Snapshot, rarityId: string): number {
+  let most = 0;
+  for (const id of ids(snapshot, CATEGORY.chaosStat)) {
+    const d = data(snapshot, CATEGORY.chaosStat, id);
+    if (d === undefined || !arr(d, "for_item_rarities").includes(rarityId)) continue;
+    most = Math.max(most, num(d, "bonus_sockets", 0));
+  }
+  return most;
+}
+
+/**
+ * How many sockets this item has room for: the rarity's `sockets.max`, plus whatever its
+ * corruption added (`Item.bonusSockets`). Gems and runes share them.
+ */
+export function socketCap(snapshot: Snapshot, item: Item): number {
+  const rarity = gearRarity(snapshot, item.rarity);
+  return (rarity?.sockets.max ?? 0) + (item.bonusSockets ?? 0);
 }
 
 /**

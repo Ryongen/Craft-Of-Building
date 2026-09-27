@@ -51,6 +51,16 @@ import { resolveHint } from "../../ui/copy/hint.js";
 /** Below this the two figures are the same number and the difference is float noise. */
 const NOISE = 1e-6;
 
+/**
+ * What the support gem list is sorted by — the Skills tab's "Sort support gems by".
+ *
+ * `skill` is this skill's own DPS, the default and the right question for most gems. `total` is
+ * the whole build's, for a gem whose value lands on *other* skills: Cooldown on a skill that
+ * applies a debuff (Snow Tracked) raises its uptime, and that shows up in everything the debuff
+ * multiplies while the skill's own figure barely moves.
+ */
+export type GemSort = "skill" | "total";
+
 export function SupportGemPicker({
   skill,
   skillIndex,
@@ -61,6 +71,7 @@ export function SupportGemPicker({
   width = 260,
   compatibleOnly = false,
   preset,
+  sortBy = "skill",
 }: {
   skill: SkillSetup;
   skillIndex: number;
@@ -95,6 +106,8 @@ export function SupportGemPicker({
    * has broken the control.
    */
   compatibleOnly?: boolean;
+  /** See {@link GemSort}. */
+  sortBy?: GemSort;
 }): ReactNode {
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
@@ -148,8 +161,9 @@ export function SupportGemPicker({
    * the same one.
    */
   const rank = useCallback(
-    (vitals: Vitals, base: Vitals) => (base.dps > 0 ? vitals.dps : vitals.totalDps),
-    [],
+    (vitals: Vitals, base: Vitals) =>
+      sortBy === "total" || base.dps <= 0 ? vitals.totalDps : vitals.dps,
+    [sortBy],
   );
 
   // The whole reason this list is fast enough to be a list: a support gem's stats land on the
@@ -176,7 +190,7 @@ export function SupportGemPicker({
 
   // The same question `rank` asks, read off the same baseline, so the heading cannot name a sort
   // key the list did not use.
-  const damageSkill = ranking.base.dps > 0;
+  const bySkill = sortBy === "skill" && ranking.base.dps > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -244,7 +258,7 @@ export function SupportGemPicker({
             <span className="faint">
               {/* Named for what the sort key actually is, which differs for a skill that deals
                   no damage — see the `rank` callback. */}
-              {damageSkill ? "Ranked by this skill's DPS" : "Ranked by the rotation's total"}
+              {bySkill ? "Ranked by this skill's DPS" : "Ranked by Total DPS"}
               {/* The roll every row was priced at. Without it the list is ninety numbers whose
                   scale is set by a control on the other side of the panel. */}
               {preset !== undefined &&
@@ -270,6 +284,7 @@ export function SupportGemPicker({
               linked={alreadyLinked.has(row.id)}
               costMulti={manaMulti(world.snapshot, row.id)}
               preset={preset}
+              bySkill={bySkill}
               onPick={() => {
                 if (alreadyLinked.has(row.id)) return;
                 onChange(row.id);
@@ -290,6 +305,7 @@ function GemRow({
   linked,
   costMulti,
   preset,
+  bySkill,
   onPick,
 }: {
   row: Ranked<string>;
@@ -299,13 +315,17 @@ function GemRow({
   costMulti: number;
   /** The rarity and roll every row was priced at, so the card shows the same numbers. */
   preset: GemPreset | undefined;
+  /** Whether the list is sorted by this skill's DPS; otherwise by Total DPS, and so is the row. */
+  bySkill: boolean;
   onPick: (event: React.MouseEvent) => void;
 }): ReactNode {
   const [technical] = useTechnical();
   const world = useWorld();
   const characterLevel = useBuild((s) => s.doc.character.level);
-  const dps = row.comparison.headline.find((d) => d.key === "dps");
-  const full = row.comparison.headline.find((d) => d.key === "fullDps");
+  // The figure the list is sorted by is the one the row shows first, so the numbers down the
+  // right-hand side read in order.
+  const dps = row.comparison.headline.find((d) => d.key === (bySkill ? "dps" : "totalDps"));
+  const full = row.comparison.headline.find((d) => d.key === (bySkill ? "fullDps" : "dps"));
 
   /*
    * What this row reports.
@@ -338,10 +358,12 @@ function GemRow({
       : nothing
         ? "This gem does nothing for this skill's damage, cooldown or buffs."
         : isDps
-          ? `${signGlyph(moved.change)}${smart(Math.round(Math.abs(moved.change)))} DPS on this skill` +
+          ? `${signGlyph(moved.change)}${smart(Math.round(Math.abs(moved.change)))} ` +
+            (bySkill ? "DPS on this skill" : "Total DPS") +
             (full === undefined
               ? ""
-              : `, ${signGlyph(full.change)}${smart(Math.round(Math.abs(full.change)))} on the rotation`)
+              : `, ${signGlyph(full.change)}${smart(Math.round(Math.abs(full.change)))} ` +
+                (bySkill ? "on the rotation" : "on this skill"))
           : `${moved.label} ${signGlyph(moved.change)}${smart(round(Math.abs(moved.change)))}` +
             ". Doesn't change the hit";
 

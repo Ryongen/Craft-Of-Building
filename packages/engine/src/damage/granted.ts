@@ -136,8 +136,14 @@ function merge(a: readonly Proc[], b: readonly Proc[]): Proc[] {
     const damagePerProc = Math.max(seen.damagePerProc, proc.damagePerProc);
     const { limit: _limit, ...rest } = seen;
     const limit = seen.limit !== undefined && proc.limit !== undefined ? seen.limit : undefined;
+    // The crit belongs to whichever side's cast the damage figure was taken from.
+    const critFrom = proc.damagePerProc > seen.damagePerProc ? proc : seen;
     out.set(key, {
       ...rest,
+      ...(critFrom.critChance === undefined ? {} : { critChance: critFrom.critChance }),
+      ...(critFrom.critDamagePerProc === undefined
+        ? {}
+        : { critDamagePerProc: critFrom.critDamagePerProc }),
       triggersPerSecond: seen.triggersPerSecond + proc.triggersPerSecond,
       perSecond,
       damagePerProc,
