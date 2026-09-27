@@ -8,9 +8,11 @@ import {
   nodeKey,
   orphansIfRemoved,
   parseNodeKey,
+  routeTo,
   shortestPathTo,
   treeGraph,
   type NodeKey,
+  type TreeGraph,
 } from "./tree-graph.js";
 import { grid, makeSnapshot, standardSnapshot } from "./test-support.js";
 
@@ -153,6 +155,124 @@ test("the shortest route is the set of nodes that would have to be bought", () =
   assert.equal(shortestPathTo(graph, withStart, START_B), undefined);
   // Nothing reaches the isolated node except taking it as the start itself.
   assert.deepEqual(shortestPathTo(graph, new Set(), START_B), [START_B]);
+});
+
+/**
+ * A graph straight from an adjacency list, for routing tests where drawing the grid would hide
+ * the shape being tested. Only what the routing reads is filled in.
+ */
+function sketch(
+  adjacency: Record<string, string[]>,
+  perks: Record<string, { isEntry?: boolean; oneKind?: string }> = {},
+): TreeGraph {
+  const links = new Map<NodeKey, Set<NodeKey>>();
+  const at = (key: NodeKey): Set<NodeKey> => {
+    if (!links.has(key)) links.set(key, new Set());
+    return links.get(key)!;
+  };
+  const link = (a: NodeKey, b: NodeKey): void => void at(a).add(b);
+  for (const [a, bs] of Object.entries(adjacency)) {
+    at(a);
+    for (const b of bs) {
+      link(a, b);
+      link(b, a);
+    }
+  }
+  const nodes = new Map(
+    [...links.keys()].map((key) => [
+      key,
+      { key, row: 0, col: 0, perkId: key, perk: { ...perks[key] } },
+    ]),
+  );
+  return {
+    nodes,
+    neighbours: (key: NodeKey) => [...(links.get(key) ?? [])],
+    entries: [...nodes.values()].filter((n) => n.perk.isEntry === true),
+  } as unknown as TreeGraph;
+}
+
+test("a route branches at a hub no target sits on", () => {
+  // Each target is three points from the last along its own wire, and four through the hub.
+  // Joining the nearest target each time never touches the hub and costs 9; branching at the
+  // hub costs 8. Only a search that considers non-target branch points finds it.
+  const graph = sketch({
+    a: ["u1", "x1"],
+    u1: ["u2"],
+    u2: ["t2"],
+    t2: ["v1"],
+    v1: ["v2"],
+    v2: ["t3"],
+    t3: ["w1"],
+    w1: ["w2"],
+    w2: ["t4"],
+    x1: ["c"],
+    c: ["x2", "x3", "x4"],
+    x2: ["t2"],
+    x3: ["t3"],
+    x4: ["t4"],
+  });
+  const route = routeTo(graph, new Set(["a"]), ["t2", "t3", "t4"]);
+
+  assert.deepEqual(route.unreachable, []);
+  assert.deepEqual([...route.nodes].sort(), ["c", "t2", "t3", "t4", "x1", "x2", "x3", "x4"]);
+  // Front to back, every node touches something already held.
+  const held = new Set(["a"]);
+  for (const key of route.nodes) {
+    assert.ok(graph.neighbours(key).some((n) => held.has(n)), `${key} is not connected`);
+    held.add(key);
+  }
+});
+
+test("a route leaves out a target that one_kind locks away", () => {
+  const graph = sketch(
+    { a: ["g1", "b"], b: ["g2", "t"] },
+    { g1: { oneKind: "focus" }, g2: { oneKind: "focus" } },
+  );
+  const route = routeTo(graph, new Set(["a"]), ["g1", "g2", "t"]);
+
+  assert.equal(route.unreachable.length, 1);
+  assert.ok(["g1", "g2"].includes(route.unreachable[0]!));
+  assert.ok(route.nodes.includes("t"));
+  // Held already, the rival is simply unreachable.
+  assert.deepEqual(routeTo(graph, new Set(["a", "g1"]), ["g2"]), { nodes: [], unreachable: ["g2"] });
+});
+
+test("from nothing, a route picks the start that suits its targets", () => {
+  const graph = sketch(
+    { s1: ["x"], x: ["y"], y: ["z"], s2: ["t"], z: ["t"] },
+    { s1: { isEntry: true, oneKind: "start" }, s2: { isEntry: true, oneKind: "start" } },
+  );
+  assert.deepEqual(routeTo(graph, new Set(), ["t"]).nodes, ["s2", "t"]);
+});
+
+test("past the exact limit a route still reaches every target, legally ordered", () => {
+  // A comb: a spine with a tooth off every node. Ten teeth is past the exact solver, so this
+  // runs the greedy fallback — which happens to be optimal on a tree.
+  const adjacency: Record<string, string[]> = { a: ["s0"] };
+  const teeth: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    adjacency[`s${i}`] = [`s${i + 1}`, `t${i}`];
+    teeth.push(`t${i}`);
+  }
+  const graph = sketch(adjacency);
+  const route = routeTo(graph, new Set(["a"]), teeth);
+
+  assert.deepEqual(route.unreachable, []);
+  assert.equal(route.nodes.length, 20);
+  const held = new Set(["a"]);
+  for (const key of route.nodes) {
+    assert.ok(graph.neighbours(key).some((n) => held.has(n)), `${key} is not connected`);
+    held.add(key);
+  }
+});
+
+test("targets already held, or not on the tree, cost nothing", () => {
+  const graph = sketch({ a: ["b"] });
+  assert.deepEqual(routeTo(graph, new Set(["a", "b"]), ["b"]), { nodes: [], unreachable: [] });
+  assert.deepEqual(routeTo(graph, new Set(["a"]), ["nowhere"]), {
+    nodes: [],
+    unreachable: ["nowhere"],
+  });
 });
 
 test("node keys round-trip", () => {

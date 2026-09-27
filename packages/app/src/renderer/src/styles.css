@@ -1463,6 +1463,221 @@ table.grid td.num {
   font-size: var(--text-sm);
 }
 
+/*
+ * The ranking and route drawer, pinned to the bottom of the canvas.
+ *
+ * Capped at 40% of the height so the tree it is talking about stays in view above it; the body
+ * scrolls instead. Under the tooltip (z-index 10) so a hover over a node near the bottom still
+ * reads.
+ */
+.tree-drawer {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  width: min(760px, calc(100% - 20px));
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Folded, it is just its buttons; a full-width empty bar would hide a strip of the tree. */
+.tree-drawer:not(.open) {
+  width: auto;
+}
+
+.tree-drawer-body {
+  min-height: 0;
+  overflow: auto;
+  margin-top: var(--space-3);
+}
+
+.tree-drawer-fold {
+  padding: 0 var(--space-4);
+}
+
+.node-rank-controls {
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.node-rank-controls label {
+  white-space: nowrap;
+}
+
+.node-rank-controls select {
+  width: auto;
+  max-width: 220px;
+}
+
+.tree-drawer-body.rank {
+  overflow-x: hidden;
+}
+
+.node-rank-row > :first-child {
+  min-width: 0;
+}
+
+/* A fixed grid so the numbers line up down the column, as in the gem ranking. */
+.node-rank-row {
+  display: grid;
+  grid-template-columns: 1fr 48px 132px 80px 52px;
+  gap: var(--space-4);
+  align-items: baseline;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.node-rank-row:hover {
+  background: var(--bg-input);
+}
+
+.node-rank-row > .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-rank-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(24, 27, 35, 0.98);
+  cursor: default;
+}
+
+.node-rank-head:hover {
+  background: rgba(24, 27, 35, 0.98);
+}
+
+.node-rank-head > span:nth-child(n + 2):nth-child(-n + 4) {
+  text-align: right;
+}
+
+.node-rank-gc {
+  margin-right: var(--space-3);
+}
+
+.node-rank-take {
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.node-rank-empty {
+  padding: var(--space-3);
+}
+
+.route-targets {
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.route-picker {
+  width: 240px;
+}
+
+/* The drawer sits on the bottom edge, so the list opens upward over the tree. Two classes,
+   because `.picker-list` is declared further down and would otherwise win back `top: 100%` —
+   top and bottom both set squeezes the list to its borders. */
+.route-picker .route-picker-list {
+  top: auto;
+  bottom: 100%;
+  max-height: 260px;
+}
+
+/*
+ * A scrolling body would clip the picker's list, so the route tab scrolls one level down: the
+ * targets and summary stay put, and only the stat lists under them scroll.
+ */
+.tree-drawer-body.route {
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+}
+
+.route-planner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.route-delta {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.route-views {
+  margin-bottom: var(--space-3);
+}
+
+.route-hint {
+  margin-bottom: var(--space-3);
+}
+
+.route-gained {
+  margin-top: var(--space-3);
+  columns: 2 280px;
+  column-gap: var(--space-6, 18px);
+}
+
+.route-gained .tt-line {
+  color: var(--good);
+  font-size: var(--text-sm);
+  break-inside: avoid;
+}
+
+.route-gained .tt-line.cost {
+  color: var(--bad);
+}
+
+.route-gained .tt-line.neutral {
+  color: var(--text-dim);
+}
+
+.route-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px 1px var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  font-size: var(--text-sm);
+}
+
+.route-chip.held {
+  border-color: #2f5c38;
+}
+
+.route-chip.blocked {
+  border-color: #5c3131;
+}
+
+.route-chip > button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+.route-chip-x {
+  background: none;
+  border: none;
+  padding: 0 var(--space-2, 3px);
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.route-summary {
+  margin-bottom: var(--space-3);
+}
+
+.route-delta {
+  margin-top: var(--space-3);
+}
+
 /* -- diagnostics --------------------------------------------------------- */
 
 .diag {
@@ -4293,6 +4508,19 @@ button.stage-pick {
   .tree-overlay .tree-hud-column {
     width: auto;
     max-width: 100%;
+  }
+
+  /* Full width, and a little taller: on a phone the drawer is the thing being read. */
+  .tree-drawer {
+    left: 6px;
+    bottom: 6px;
+    width: calc(100% - 12px);
+    max-height: 55%;
+  }
+
+  .node-rank-row {
+    grid-template-columns: 1fr 32px 92px 60px 44px;
+    gap: var(--space-3);
   }
 
   /* One line that scrolls, rather than four rows of snapshot path and counters. */

@@ -428,6 +428,346 @@ export function shortestPathTo(
   return undefined;
 }
 
+export type Route = {
+  /**
+   * The nodes to newly allocate, in an order where each one touches the allocated set or an
+   * earlier entry — so buying them front to back never makes an illegal click.
+   */
+  nodes: NodeKey[];
+  /** Targets the route could not include: unreachable, or locked out by `one_kind`. */
+  unreachable: NodeKey[];
+};
+
+/**
+ * The cheapest set of nodes that allocates every one of `targets` — a Steiner tree over the
+ * talent graph, with the allocated set as one terminal.
+ *
+ * Exact Steiner trees are NP-hard, but these graphs are small and nearly trees (degree ~2.3),
+ * where a greedy "join the nearest target, repeat" is usually already optimal. Where it is not,
+ * the usual failure is a cheap nearby target luring the route down a branch the others never
+ * use, so the greedy runs once per target with that target forced first, and the smallest
+ * result wins. Each run is `targets²` breadth-first searches over ~1,300 nodes: milliseconds.
+ *
+ * Every step goes through {@link shortestPathTo} against the growing set, so `one_kind` and the
+ * must-reach-an-entry rule hold for the route exactly as they would for the clicks. When two
+ * targets exclude each other the first one routed wins and the other lands in `unreachable`.
+ *
+ * With nothing allocated, each entry is tried as the start, and the chosen entry leads `nodes`.
+ */
+export function routeTo(
+  graph: TreeGraph,
+  allocated: ReadonlySet<NodeKey>,
+  targets: readonly NodeKey[],
+): Route {
+  const wanted = [...new Set(targets)].filter((t) => !allocated.has(t));
+  const missing = wanted.filter((t) => !graph.nodes.has(t));
+  const routable = wanted.filter((t) => graph.nodes.has(t));
+  if (routable.length === 0) return { nodes: [], unreachable: missing };
+
+  const bases: { anchors: ReadonlySet<NodeKey>; fresh: NodeKey[] }[] =
+    allocated.size > 0
+      ? [{ anchors: allocated, fresh: [] }]
+      : graph.entries.map((e) => ({ anchors: new Set([e.key]), fresh: [e.key] }));
+
+  let best: Route | undefined;
+  for (const base of bases) {
+    if (routable.length <= EXACT_LIMIT) {
+      best = better(best, exactRoute(graph, base.anchors, base.fresh, routable));
+      continue;
+    }
+    for (const first of [undefined, ...routable]) {
+      best = better(best, greedyRoute(graph, base.anchors, base.fresh, routable, first));
+    }
+  }
+  if (best === undefined) return { nodes: [], unreachable: wanted };
+  return { nodes: best.nodes, unreachable: [...missing, ...best.unreachable] };
+}
+
+/** More targets reached wins; then fewer points. */
+function better(a: Route | undefined, b: Route): Route {
+  if (a === undefined) return b;
+  if (b.unreachable.length !== a.unreachable.length) {
+    return b.unreachable.length < a.unreachable.length ? b : a;
+  }
+  return b.nodes.length < a.nodes.length ? b : a;
+}
+
+/**
+ * Up to this many targets the route is solved exactly. Dreyfus–Wagner costs `3^k · n`; at eight
+ * targets on the talent tree that is a few million steps, and it doubles-and-a-half per target.
+ */
+const EXACT_LIMIT = 8;
+
+const UNREACHED = 1 << 28;
+
+/**
+ * The provably cheapest route, by Dreyfus–Wagner over the graph with `anchors` contracted into
+ * one root vertex (it is already bought, so passing through it is free).
+ *
+ * `one_kind` is the one rule a subset DP cannot carry, since whether a node is walkable would
+ * depend on which other nodes the tree holds. So it is resolved up front: a target whose kind is
+ * already held, or claimed by an earlier target, is unreachable; and the route never passes
+ * *through* a `one_kind` node that was not asked for — a singular-focus gamechanger is not
+ * something to buy by accident on the way somewhere else.
+ */
+function exactRoute(
+  graph: TreeGraph,
+  anchors: ReadonlySet<NodeKey>,
+  fresh: readonly NodeKey[],
+  targets: readonly NodeKey[],
+): Route {
+  const claimed = new Set<string>();
+  for (const key of anchors) {
+    const kind = graph.nodes.get(key)?.perk?.oneKind;
+    if (kind !== undefined) claimed.add(kind);
+  }
+  const unreachable: NodeKey[] = [];
+  const terminals: NodeKey[] = [];
+  for (const target of targets) {
+    if (anchors.has(target)) continue;
+    const kind = graph.nodes.get(target)?.perk?.oneKind;
+    if (kind !== undefined && claimed.has(kind)) {
+      unreachable.push(target);
+      continue;
+    }
+    if (kind !== undefined) claimed.add(kind);
+    terminals.push(target);
+  }
+  const terminalSet = new Set(terminals);
+
+  // Index 0 is the contracted root; every other walkable node gets its own index.
+  const keys: NodeKey[] = [""];
+  const index = new Map<NodeKey, number>();
+  for (const key of anchors) index.set(key, 0);
+  for (const [key, node] of graph.nodes) {
+    if (anchors.has(key)) continue;
+    if (node.perk?.oneKind !== undefined && !terminalSet.has(key)) continue;
+    index.set(key, keys.length);
+    keys.push(key);
+  }
+  const n = keys.length;
+  const adjacency: number[][] = Array.from({ length: n }, () => []);
+  for (const [key, from] of index) {
+    for (const next of graph.neighbours(key)) {
+      const to = index.get(next);
+      if (to !== undefined && to !== from) adjacency[from]!.push(to);
+    }
+  }
+
+  // Terminals the root cannot reach at all drop out before the DP, which would otherwise carry
+  // an infinite cost through every subset containing them.
+  const rootDistance = bfs(adjacency, [0]);
+  const reachable = terminals.filter((t) => rootDistance.cost[index.get(t)!]! < UNREACHED);
+  unreachable.push(...terminals.filter((t) => !reachable.includes(t)));
+
+  const k = reachable.length;
+  const full = (1 << k) - 1;
+  const cost: Int32Array[] = [];
+  // How each (subset, vertex) state was reached: a parent vertex (`via >= 0`, a tree edge) or a
+  // split into two smaller subsets (`via = -1 - subset`). The terminal leaf itself is `n`.
+  const via: Int32Array[] = [];
+  cost[0] = new Int32Array(n);
+  via[0] = new Int32Array(n);
+
+  for (let i = 0; i < k; i++) {
+    const start = index.get(reachable[i]!)!;
+    const found = bfs(adjacency, [start]);
+    cost[1 << i] = found.cost;
+    found.parent[start] = n;
+    via[1 << i] = found.parent;
+  }
+
+  for (let set = 1; set <= full; set++) {
+    if ((set & (set - 1)) === 0) continue;
+    const here = new Int32Array(n).fill(UNREACHED);
+    const how = new Int32Array(n).fill(n);
+    const low = set & -set;
+    for (let sub = (set - 1) & set; sub > 0; sub = (sub - 1) & set) {
+      // Each split once: the half holding the lowest terminal is always `sub`.
+      if ((sub & low) === 0) continue;
+      const a = cost[sub]!;
+      const b = cost[set ^ sub]!;
+      for (let v = 0; v < n; v++) {
+        const total = a[v]! + b[v]!;
+        if (total < here[v]!) {
+          here[v] = total;
+          how[v] = -1 - sub;
+        }
+      }
+    }
+    relax(adjacency, here, how);
+    cost[set] = here;
+    via[set] = how;
+  }
+
+  if (k === 0) return { nodes: [...fresh], unreachable };
+
+  const chosen = new Set<NodeKey>();
+  const stack: [number, number][] = [[full, 0]];
+  while (stack.length > 0) {
+    const [set, v] = stack.pop()!;
+    if (v !== 0) chosen.add(keys[v]!);
+    const step = via[set]![v]!;
+    if (step === n) continue;
+    if (step >= 0) stack.push([set, step]);
+    else {
+      const sub = -1 - step;
+      stack.push([sub, v], [set ^ sub, v]);
+    }
+  }
+  return { nodes: [...fresh, ...allocationOrder(graph, anchors, chosen)], unreachable };
+}
+
+function bfs(adjacency: readonly number[][], starts: readonly number[]): {
+  cost: Int32Array;
+  parent: Int32Array;
+} {
+  const cost = new Int32Array(adjacency.length).fill(UNREACHED);
+  const parent = new Int32Array(adjacency.length).fill(-1);
+  const queue: number[] = [];
+  for (const s of starts) {
+    cost[s] = 0;
+    queue.push(s);
+  }
+  for (let head = 0; head < queue.length; head++) {
+    const u = queue[head]!;
+    for (const v of adjacency[u]!) {
+      if (cost[v]! <= cost[u]! + 1) continue;
+      cost[v] = cost[u]! + 1;
+      parent[v] = u;
+      queue.push(v);
+    }
+  }
+  return { cost, parent };
+}
+
+/**
+ * Shortest-path relaxation from many sources with different starting costs, on unit edges.
+ *
+ * The sources are visited in cost order and every relaxation adds exactly one, so a FIFO of
+ * relaxed vertices stays sorted too; merging the two fronts is Dijkstra without a heap.
+ */
+function relax(adjacency: readonly number[][], cost: Int32Array, how: Int32Array): void {
+  const sources: number[] = [];
+  for (let v = 0; v < cost.length; v++) if (cost[v]! < UNREACHED) sources.push(v);
+  sources.sort((a, b) => cost[a]! - cost[b]!);
+  const queue: [number, number][] = [];
+  let s = 0;
+  let head = 0;
+  while (s < sources.length || head < queue.length) {
+    let u: number;
+    let d: number;
+    if (head >= queue.length || (s < sources.length && cost[sources[s]!]! <= queue[head]![1])) {
+      u = sources[s++]!;
+      d = cost[u]!;
+    } else {
+      [u, d] = queue[head++]!;
+    }
+    if (d !== cost[u]) continue;
+    for (const v of adjacency[u]!) {
+      if (cost[v]! <= d + 1) continue;
+      cost[v] = d + 1;
+      how[v] = u;
+      queue.push([v, d + 1]);
+    }
+  }
+}
+
+function greedyRoute(
+  graph: TreeGraph,
+  anchors: ReadonlySet<NodeKey>,
+  fresh: readonly NodeKey[],
+  targets: readonly NodeKey[],
+  first: NodeKey | undefined,
+): Route {
+  const held = new Set(anchors);
+  const added = new Set<NodeKey>();
+  const unreachable: NodeKey[] = [];
+  let remaining = targets.filter((t) => !held.has(t));
+
+  const take = (path: readonly NodeKey[]): void => {
+    for (const key of path) {
+      held.add(key);
+      added.add(key);
+    }
+    remaining = remaining.filter((t) => !held.has(t));
+  };
+
+  if (first !== undefined && remaining.includes(first)) {
+    const path = shortestPathTo(graph, held, first);
+    if (path === undefined) {
+      unreachable.push(first);
+      remaining = remaining.filter((t) => t !== first);
+    } else {
+      take(path);
+    }
+  }
+
+  while (remaining.length > 0) {
+    let nearest: NodeKey[] | undefined;
+    const blocked: NodeKey[] = [];
+    for (const target of remaining) {
+      const path = shortestPathTo(graph, held, target);
+      if (path === undefined) blocked.push(target);
+      else if (nearest === undefined || path.length < nearest.length) nearest = path;
+    }
+    unreachable.push(...blocked);
+    remaining = remaining.filter((t) => !blocked.includes(t));
+    if (nearest !== undefined) take(nearest);
+  }
+
+  const kept = pruneRoute(graph, anchors, added, new Set(targets));
+  return { nodes: [...fresh, ...allocationOrder(graph, anchors, kept)], unreachable };
+}
+
+/**
+ * Drops every added node the route can do without: not a target, and not holding anything
+ * else to the anchors. Separate shortest paths can overlap into a loop, and a node on a loop
+ * is a point spent twice.
+ */
+function pruneRoute(
+  graph: TreeGraph,
+  anchors: ReadonlySet<NodeKey>,
+  added: ReadonlySet<NodeKey>,
+  targets: ReadonlySet<NodeKey>,
+): Set<NodeKey> {
+  const kept = new Set(added);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const key of [...kept].reverse()) {
+      if (targets.has(key)) continue;
+      kept.delete(key);
+      if (allocationOrder(graph, anchors, kept).length === kept.size) {
+        changed = true;
+      } else {
+        kept.add(key);
+      }
+    }
+  }
+  return kept;
+}
+
+/** The members of `route` reachable from `anchors` through `route`, in flood order. */
+function allocationOrder(
+  graph: TreeGraph,
+  anchors: ReadonlySet<NodeKey>,
+  route: ReadonlySet<NodeKey>,
+): NodeKey[] {
+  const seen = new Set<NodeKey>(anchors);
+  const queue: NodeKey[] = [...anchors];
+  const order: NodeKey[] = [];
+  for (let head = 0; head < queue.length; head++) {
+    for (const next of graph.neighbours(queue[head]!)) {
+      if (seen.has(next) || !route.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+      order.push(next);
+    }
+  }
+  return order;
+}
+
 function tracePath(
   cameFrom: ReadonlyMap<NodeKey, NodeKey | undefined>,
   target: NodeKey,

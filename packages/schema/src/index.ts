@@ -214,12 +214,14 @@ export {
   nodeKey,
   orphansIfRemoved,
   parseNodeKey,
+  routeTo,
   shortestPathTo,
   treeGraph,
 } from "./tree-graph.js";
 export type {
   AllocationBlock,
   NodeKey,
+  Route,
   TreeEdge,
   TreeGraph,
   TreeNode,

@@ -13,21 +13,14 @@
 
 import {
   modifierLine,
-  nodeKey,
-  parseNodeKey,
   perkName,
   pointsAvailable,
   TREE_POINT_TYPE,
   TREE_KEYS,
-  type BuildDoc,
   type NodeKey,
-  type TreeCoord,
   type TreeKey,
 } from "@cte2/schema";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-
-import type { Snapshot } from "@cte2/extractor";
-import { balance, parseSourceMod, sourceToExact, statIndex } from "@cte2/engine";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
@@ -37,7 +30,10 @@ import { SearchInput } from "../../ui/SearchInput.js";
 import { useNarrow } from "../../ui/narrow.js";
 
 import { StatPoints } from "../character/StatPoints.js";
+import { candidateFor } from "./candidate.js";
+import { perkLines } from "./perk-lines.js";
 import { StageList } from "./StageList.js";
+import { TreeDrawer } from "./TreeDrawer.js";
 import { perkData, TreeCanvas, type HoverInfo } from "./TreeCanvas.js";
 
 const TREES: { key: TreeKey; label: string }[] = [
@@ -64,6 +60,15 @@ export function TreePanel(): ReactNode {
   // tree gets the room. Desktop never folds it.
   const narrow = useNarrow();
   const [hudOpen, setHudOpen] = useState(false);
+  // The drawer's route on the canvas, and its requests to pan to a node.
+  const [outline, setOutline] = useState<ReadonlySet<NodeKey> | undefined>(undefined);
+  const [marked, setMarked] = useState<ReadonlySet<NodeKey> | undefined>(undefined);
+  const [spotlight, setSpotlight] = useState<NodeKey | null>(null);
+  const [focus, setFocus] = useState<{ key: NodeKey; seq: number } | undefined>(undefined);
+  const focusOn = useCallback(
+    (key: NodeKey) => setFocus((last) => ({ key, seq: (last?.seq ?? 0) + 1 })),
+    [],
+  );
 
   const graph = world.graph(tree);
   const coords = doc.tree?.[tree] ?? [];
@@ -164,6 +169,10 @@ export function TreePanel(): ReactNode {
         onAllocate={(keys) => allocateNodes(tree, keys)}
         onDeallocate={(keys) => deallocateNodes(tree, keys)}
         onHover={setHover}
+        {...(outline === undefined ? {} : { outline })}
+        {...(marked === undefined ? {} : { marked })}
+        spotlight={spotlight}
+        focus={focus}
       />
 
       <div className={`tree-overlay${narrow && !hudOpen ? " hud-folded" : ""}`}>
@@ -275,78 +284,21 @@ export function TreePanel(): ReactNode {
         )}
       </div>
 
+      <TreeDrawer
+        tree={tree}
+        graph={graph}
+        allocated={allocated}
+        pickStart={needsStart}
+        pointsLeft={points.recorded || budget !== undefined ? Math.max(0, available - spent) : undefined}
+        onPreview={setOutline}
+        onMarked={setMarked}
+        onSpotlight={setSpotlight}
+        onFocus={focusOn}
+      />
+
       {hover !== null && <PerkTooltip hover={hover} tree={tree} />}
     </div>
   );
-}
-
-/**
- * The document that results from adding or removing exactly `keys`.
- *
- * Called twice per hover, with two different sets. The **click's** set is `hover.affected`:
- * taking a distant node buys the cheapest route to it, and refunding one gives back the branch
- * it was holding up, so that is what the button actually does and what makes the figure honest
- * about cost — six points of pathing to reach a good node is six points of stats.
- *
- * The **node's own** set is the single node under the cursor. That is not a click the tree would
- * ever offer, which is the point: it separates "what is this node contributing" from "what does
- * pressing this cost me", and on the reference build those differ by a factor of seventy.
- */
-function candidateFor(
-  doc: BuildDoc,
-  tree: TreeKey,
-  action: HoverInfo["action"],
-  keys: readonly NodeKey[],
-): BuildDoc | undefined {
-  if (action === "blocked" || keys.length === 0) return undefined;
-
-  const current = doc.tree?.[tree] ?? [];
-  let next: TreeCoord[];
-  if (action === "allocate") {
-    const held = new Set(current.map(([r, c]) => nodeKey(r, c)));
-    next = [...current, ...keys.filter((k) => !held.has(k)).map(parseNodeKey)];
-  } else {
-    const drop = new Set(keys);
-    next = current.filter(([r, c]) => !drop.has(nodeKey(r, c)));
-  }
-
-  const nextTree = { ...(doc.tree ?? {}) };
-  if (next.length === 0) delete nextTree[tree];
-  else nextTree[tree] = next;
-  return { ...doc, tree: nextTree };
-}
-
-/**
- * A perk's stat lines, at the character's level.
- *
- * Perk stats are the `{ type, stat, v1, scale_to_lvl }` shape, and 40 of this pack's 1,497 set
- * `scale_to_lvl` — the flats the game grows with the holder, which is `energy_on_hit`,
- * `health_regen`, `accuracy`, `blood_on_kill` and the rest of what a player reads as "scales
- * with level". `modifierLine` is documented as the *un-levelled* preview, so the tooltip
- * printed `energy_regen_percent_big` as "+2 Energy Regen" against the much larger number the
- * same node had just put on the sheet.
- *
- * `sourceToExact` is the call `collectPerks` makes, so the line and the delta underneath it
- * come from one number rather than two.
- */
-function perkLines(snapshot: Snapshot, perkId: string, level: number): string[] {
-  const raw = perkData(snapshot, perkId)?.["stats"];
-  if (!Array.isArray(raw)) return [];
-  const index = statIndex(snapshot);
-  const curves = balance(snapshot);
-
-  return raw
-    .filter(
-      (s): s is Record<string, unknown> => s !== null && typeof s === "object" && !Array.isArray(s),
-    )
-    .map((mod) => {
-      const source = parseSourceMod(mod);
-      if (source === undefined) return modifierLine(snapshot, mod);
-      const exact = sourceToExact(source, level, index.shapeOf(source.statId), curves);
-      // `modifierLine` words the stat; feeding the resolved value back as a fixed `v1` keeps
-      // the wording — templates, "More"/"Increased", the percent suffix — and swaps the number.
-      return modifierLine(snapshot, { stat: exact.statId, type: exact.type, v1: exact.value });
-    });
 }
 
 function PerkTooltip({ hover, tree }: { hover: HoverInfo; tree: TreeKey }): ReactNode {

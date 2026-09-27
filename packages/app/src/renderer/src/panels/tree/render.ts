@@ -114,6 +114,13 @@ export type RenderInput = {
   highlighted: ReadonlySet<string>;
   hover: NodeKey | null;
   /**
+   * Nodes being pointed at from outside the canvas: the route planner's targets, and the one
+   * its picker is hovering. A heavy double ring, drawn over everything, so a target reads at any
+   * zoom. `spotlight` is the picker's node, and gets a larger ring still.
+   */
+  marked?: ReadonlySet<NodeKey>;
+  spotlight?: NodeKey | null;
+  /**
    * True while this tree has no entry perk allocated. `PerkButton` dims everything but the
    * starts in that state, which is the whole of the game's "pick a class" UX.
    */
@@ -130,6 +137,7 @@ const COLOURS = {
   possibleEdge: "#7d8ba5",
   highlight: "#5b9dd9",
   hover: "#ffffff",
+  target: "#ffb347",
   pending: "#63c98a",
   doomed: "#d9534f",
   line: { linked: "#d9b44a", possible: "#5a6478", blocked: "#2f3646" },
@@ -304,6 +312,22 @@ export function draw(
       ctx.lineWidth = isPending || isDoomed || isHover ? 3 : 1.5;
       ctx.beginPath();
       ctx.arc(cx, cy, half + 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    const isSpotlight = input.spotlight === node.key;
+    if (isSpotlight || input.marked?.has(node.key) === true) {
+      ctx.globalAlpha = 1;
+      const outer = half + (isSpotlight ? 14 : 8);
+      ctx.lineWidth = isSpotlight ? 4 : 3;
+      ctx.strokeStyle = isSpotlight ? COLOURS.hover : COLOURS.target;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = COLOURS.target;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer + 5, 0, Math.PI * 2);
       ctx.stroke();
     }
 

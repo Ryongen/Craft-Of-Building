@@ -68,6 +68,10 @@ export function TreeCanvas({
   onAllocate,
   onDeallocate,
   onHover,
+  outline = EMPTY,
+  marked = EMPTY,
+  spotlight = null,
+  focus,
 }: {
   graph: TreeGraph;
   allocated: ReadonlySet<NodeKey>;
@@ -75,6 +79,17 @@ export function TreeCanvas({
   onAllocate: (keys: readonly NodeKey[]) => void;
   onDeallocate: (keys: readonly NodeKey[]) => void;
   onHover: (info: HoverInfo | null) => void;
+  /**
+   * A route drawn as if it were being hovered — the drawer's ranked row or planned route. The
+   * cursor's own preview wins while it is over a node, because that is the click about to happen.
+   */
+  outline?: ReadonlySet<NodeKey>;
+  /** Route targets, ringed so they stand out from the path between them. */
+  marked?: ReadonlySet<NodeKey>;
+  /** The one node a list outside the canvas is pointing at right now. */
+  spotlight?: NodeKey | null;
+  /** Pans to `key`. `seq` changes per request, so asking twice for one node pans twice. */
+  focus?: { key: NodeKey; seq: number } | undefined;
 }): ReactNode {
   const world = useWorld();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -144,14 +159,21 @@ export function TreeCanvas({
         texture: (path) => cache?.get(path) ?? null,
         allocated,
         status,
-        pending: preview?.action === "allocate" ? new Set(preview.affected) : EMPTY,
+        pending:
+          preview?.action === "allocate"
+            ? new Set(preview.affected)
+            : preview === null
+              ? outline
+              : EMPTY,
         doomed: preview?.action === "deallocate" ? new Set(preview.affected) : EMPTY,
         highlighted,
         hover: preview?.key ?? null,
+        marked,
+        spotlight,
         pickStart,
       });
     });
-  }, [graph, allocated, status, preview, highlighted, pickStart]);
+  }, [graph, allocated, status, preview, highlighted, pickStart, outline, marked, spotlight]);
 
   redrawRef.current = requestDraw;
   useEffect(() => requestDraw(), [requestDraw]);
@@ -189,6 +211,18 @@ export function TreeCanvas({
     transformRef.current = centreOn(centre[0], centre[1], rect.width, rect.height, 0.55);
     redrawRef.current();
   }, [graph]);
+
+  // Keeps the zoom the user chose; only the position moves.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const node = focus === undefined ? undefined : graph.nodes.get(focus.key);
+    if (!wrap || node === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    transformRef.current = centreOn(node.row, node.col, rect.width, rect.height, transformRef.current.scale);
+    redrawRef.current();
+    // `focus` by identity is the request; `graph` changing under a stale request must not pan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   // Clearing the ref matters as much as cancelling the frame: `requestDraw` treats a non-null
   // `frameRef` as "a frame is already coming" and returns. StrictMode's mount/unmount/remount
