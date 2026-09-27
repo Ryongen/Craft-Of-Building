@@ -171,6 +171,10 @@ export function App(): ReactNode {
   const narrow = useNarrow();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const sheetShown = narrow ? drawerOpen : sheetOpen;
+  const toggleSheet = useCallback(
+    () => (narrow ? setDrawerOpen((open) => !open) : setSheetOpen((open) => !open)),
+    [narrow],
+  );
   const [technical, setTechnical] = useTechnical();
 
   // Going to a technical tab turns technical on, so the tab strip always shows the tab you are
@@ -577,17 +581,6 @@ export function App(): ReactNode {
             `ui/detail-mode.ts`. A picture rather than a labelled checkbox so it reads as
             decoration and players leave it alone; whoever needs it knows where it is.
           */}
-          {narrow && (
-            <button
-              type="button"
-              className={`sheet-toggle${drawerOpen ? " active" : ""}`}
-              aria-pressed={drawerOpen}
-              onClick={() => setDrawerOpen((open) => !open)}
-            >
-              Sheet
-            </button>
-          )}
-
           <button
             type="button"
             className={`technical-toggle${technical ? " on" : ""}`}
@@ -596,6 +589,19 @@ export function App(): ReactNode {
             onClick={toggleTechnical}
           >
             <img src={raiden} alt="" draggable={false} />
+          </button>
+
+          {/* Last in the row so it sits over the sheet's column: the arrow points the way the
+              sheet will move. The same button on a phone, where it opens the drawer. */}
+          <button
+            type="button"
+            className={`sheet-toggle${sheetShown ? " active" : ""}`}
+            aria-pressed={sheetShown}
+            title={sheetShown ? "Hide the stat sheet" : "Show the stat sheet"}
+            onClick={toggleSheet}
+          >
+            <span className="sheet-arrow" aria-hidden>{sheetShown ? "»" : "«"}</span>
+            Sheet
           </button>
         </div>
         <div className="main-pane">
@@ -628,6 +634,13 @@ export function App(): ReactNode {
         )}
         {sheetShown && (
         <div className={narrow ? "sidebar drawer" : "sidebar"}>
+          {/* The drawer covers the tab row, so it carries its own way back out. */}
+          {narrow && (
+            <button type="button" className="drawer-close" onClick={() => setDrawerOpen(false)}>
+              <span className="sheet-arrow" aria-hidden>»</span>
+              Hide sheet
+            </button>
+          )}
           {/* The sheet and the breakdown read the same engine result the panels do, so they can
               fail on their own and must not take the panel with them. */}
           <ErrorBoundary what="the stat sheet">

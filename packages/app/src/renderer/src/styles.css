@@ -396,6 +396,22 @@ a {
   margin-left: 0;
 }
 
+/* Shows and hides the stat sheet. Last in the row, so it sits over the sheet's own column. */
+.tabs .sheet-toggle {
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tabs .sheet-toggle.active {
+  border-bottom-color: var(--accent);
+}
+
+.sheet-arrow {
+  font-size: 1.15em;
+  line-height: 1;
+}
+
 .technical-toggle img {
   display: block;
   height: 22px;
@@ -4194,20 +4210,23 @@ button.stage-pick {
     position: sticky;
     right: 0;
     z-index: 1;
-    margin-left: auto;
     background: var(--bg-panel);
-    border-left: 1px solid var(--border);
+  }
+
+  /* The drawer's own way out, since it covers the tab row that opened it. */
+  .drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    flex: 0 0 auto;
+    min-height: 40px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: var(--bg-panel);
     color: var(--text);
     font-weight: 600;
-  }
-
-  .tabs .sheet-toggle.active {
-    border-bottom-color: var(--accent);
-  }
-
-  .tabs .tab-stage + .sheet-toggle,
-  .tabs .sheet-toggle + .technical-toggle {
-    margin-left: 0;
   }
 
   /* The stat sheet as a drawer over the panel. */
