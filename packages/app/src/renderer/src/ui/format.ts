@@ -174,3 +174,17 @@ export const USABLE_NOUN: Record<string, string> = {
 export function usable(usableValue: number, raw: number, rawIsPercent = false): string {
   return `${num(usableValue, 2)}% (${smart(round(raw))}${rawIsPercent ? "%" : ""})`;
 }
+
+/**
+ * A stat the hard cap clipped, in the same shape as a capped resist: what applies, then what the
+ * build has. `critical_damage` stops at 400, so 600 of it reads `400% (600%)`.
+ */
+export function overCap(value: number, uncapped: number, isPerc: boolean): string {
+  const unit = isPerc ? "%" : "";
+  return `${smart(value)}${unit} (${smart(uncapped)}${unit})`;
+}
+
+/** Whether `uncapped` is far enough past the value to be worth printing. */
+export function isOverCap(stat: { value: number; uncapped?: number } | undefined): boolean {
+  return stat?.uncapped !== undefined && stat.uncapped > stat.value + 0.5;
+}

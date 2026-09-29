@@ -266,6 +266,39 @@ test("past the exact limit a route still reaches every target, legally ordered",
   }
 });
 
+test("past the exact limit a route still finds a hub no target sits on", () => {
+  // The hub from above, plus six cheap targets on their own spokes to push it past the exact
+  // solver. Joining the nearest target each time chains t2-t3-t4 for 9; the hub does it in 8.
+  const adjacency: Record<string, string[]> = {
+    a: ["u1", "x1"],
+    u1: ["u2"],
+    u2: ["t2"],
+    t2: ["v1"],
+    v1: ["v2"],
+    v2: ["t3"],
+    t3: ["w1"],
+    w1: ["w2"],
+    w2: ["t4"],
+    x1: ["c"],
+    c: ["x2", "x3", "x4"],
+    x2: ["t2"],
+    x3: ["t3"],
+    x4: ["t4"],
+  };
+  const spokes: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    adjacency.a!.push(`p${i}`);
+    adjacency[`p${i}`] = [`q${i}`];
+    spokes.push(`q${i}`);
+  }
+  const graph = sketch(adjacency);
+  const route = routeTo(graph, new Set(["a"]), [...spokes, "t2", "t3", "t4"]);
+
+  assert.deepEqual(route.unreachable, []);
+  assert.equal(route.nodes.length, 12 + 8);
+  assert.ok(route.nodes.includes("c"));
+});
+
 test("targets already held, or not on the tree, cost nothing", () => {
   const graph = sketch({ a: ["b"] });
   assert.deepEqual(routeTo(graph, new Set(["a", "b"]), ["b"]), { nodes: [], unreachable: [] });

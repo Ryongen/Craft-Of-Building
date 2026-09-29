@@ -128,6 +128,11 @@ export type EngineStat = {
    * `IUsableStat` stats have one.
    */
   usableValue?: number;
+  /**
+   * What `value` would be without the hard cap, present only when the cap cut it. The game
+   * throws this away; the sheet prints it as `400% (600%)` so a stacked stat shows its waste.
+   */
+  uncapped?: number;
 };
 
 /**
@@ -670,7 +675,15 @@ function applyAfterCalc(
       const steps = Math.trunc(snapshot.get(def.adderStat).value / def.perAmount);
       added = steps * firstPass.get(def.id).value;
     }
-    live.setValue(def.addTo, live.get(def.addTo).value + added);
+    // The game adds to the clamped value, so this does too; only the display-side `uncapped`
+    // keeps whatever the first clamp had already cut off.
+    const before = live.get(def.addTo);
+    const overflow = (before.uncapped ?? before.value) - before.value;
+    live.setValue(def.addTo, before.value + added);
+    if (overflow > 0) {
+      const after = live.get(def.addTo);
+      after.uncapped = (after.uncapped ?? after.value) + overflow;
+    }
 
     if (added !== 0) {
       derived.push({
@@ -847,6 +860,7 @@ function present(
       hardcap: shape.max,
       softcap: shape.softcap,
       ...(usable === undefined ? {} : { usableValue: usable }),
+      ...(stat.uncapped === undefined ? {} : { uncapped: stat.uncapped }),
     });
   }
   return out;

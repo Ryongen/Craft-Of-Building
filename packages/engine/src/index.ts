@@ -307,6 +307,7 @@ function toComputed(result: ReturnType<typeof calculate>): Map<string, ComputedS
       softcap: stat.softcap,
       hardcap: stat.hardcap,
       ...(stat.usableValue === undefined ? {} : { usableValue: stat.usableValue }),
+      ...(stat.uncapped === undefined ? {} : { uncapped: stat.uncapped }),
     });
   }
   return out;

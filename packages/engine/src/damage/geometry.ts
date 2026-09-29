@@ -454,6 +454,9 @@ const MAX_LANDED_TICKS = 2000;
 const SCATTER_CELL = 0.25;
 const MAX_SCATTER_SAMPLES = 21;
 
+/** The same for `projectile_spread_randomness`, in degrees of yaw. */
+const SPREAD_CELL_DEGREES = 1;
+
 /**
  * Every carrier of this source, placed, by walking `origin.chain` outward from the caster.
  *
@@ -480,11 +483,12 @@ function resolveSites(
   for (const step of source.origin.chain) {
     const next: Site[] = [];
     const scatter = scatterOffsets(step);
+    const spread = spreadRolls(step.carrier);
 
     // Thin *before* expanding, not after: a step that multiplies by its count and again by its
     // scatter grid would otherwise build the whole product — up to tens of thousands of flights
     // — before anything capped it. Each survivor carries the weight of the ones it stands in for.
-    const fanOut = Math.max(1, step.count * scatter.length);
+    const fanOut = Math.max(1, step.count * scatter.length * spread.length);
     if (sites.length * fanOut > MAX_SITES) {
       const kept = sample(sites, Math.max(1, Math.floor(MAX_SITES / fanOut)));
       const scale = sites.length / kept.length;
@@ -507,20 +511,24 @@ function resolveSites(
               at = aim.from;
               heading = aim.yaw;
             }
-            const weight = site.weight * launch.weight * offset.weight;
-            const path =
-              step.carrier.kind === "projectile" ? flightFrom(step.carrier, at, i, heading) : undefined;
-            const spawned: Site = {
-              at,
-              bornAt: launch.tick,
-              endsAt: step.carrier.lifeTicks,
-              weight,
-              ...(path === undefined ? {} : { path }),
-            };
-            const life = lifeOf(step.carrier, spawned, placement, target);
-            spawned.endsAt = life.endsAt;
-            if (life.restingAt !== undefined) spawned.restingAt = life.restingAt;
-            next.push(spawned);
+            for (const roll of spread) {
+              const weight = site.weight * launch.weight * offset.weight * roll.weight;
+              const flight =
+                step.carrier.kind === "projectile"
+                  ? flightFrom(step.carrier, at, i, heading, roll.yaw)
+                  : undefined;
+              const spawned: Site = {
+                at: flight?.start ?? at,
+                bornAt: launch.tick,
+                endsAt: step.carrier.lifeTicks,
+                weight,
+                ...(flight === undefined ? {} : { path: flight.path }),
+              };
+              const life = lifeOf(step.carrier, spawned, placement, target);
+              spawned.endsAt = life.endsAt;
+              if (life.restingAt !== undefined) spawned.restingAt = life.restingAt;
+              next.push(spawned);
+            }
           }
         }
       }
@@ -727,26 +735,51 @@ function scatterOffsets(step: SpawnStep): { x: number; z: number; weight: number
 }
 
 /**
+ * A midpoint grid across one projectile's random yaw roll, each cell carrying its share of it.
+ *
+ * `ProjectileCastHelper.cast` in the 6.4.13 jar rolls `(Math.random() * 2 - 1) * randomSpreadDegrees`
+ * per projectile — uniform, like the block scatter above, and integrated for the same reason. It
+ * matters most where one fixed flight sits on a hitbox edge: two projectiles fanned at ±18.75°
+ * pass 0.64 blocks from a mob two blocks away, 0.04 outside the reach, and flying only that
+ * line reported that Hunter's Focus took Battery Fusillade from one hit a cast to none.
+ */
+function spreadRolls(carrier: Carrier): { yaw: number; weight: number }[] {
+  if (carrier.kind !== "projectile" || carrier.motion.orbitsCaster) return [{ yaw: 0, weight: 1 }];
+  const spread = carrier.motion.randomSpreadDegrees;
+  if (!(spread > 0)) return [{ yaw: 0, weight: 1 }];
+  const n = Math.min(MAX_SCATTER_SAMPLES, Math.max(3, Math.ceil((2 * spread) / SPREAD_CELL_DEGREES)));
+  return Array.from({ length: n }, (_, i) => ({ yaw: -spread + (2 * spread * (i + 0.5)) / n, weight: 1 / n }));
+}
+
+/**
  * One projectile of a mid-chain spawn, launched from `from` — on the caster's heading, or turned
- * by `headingDegrees` when it was aimed at the enemy.
+ * by `headingDegrees` when it was aimed at the enemy. `rollDegrees` is its random spread roll.
+ *
+ * `start` is where it actually spawned, which is not `from` for a barrage: each projectile is
+ * placed a block sideways first. Starting the first movement at `from` instead draws a diagonal
+ * across the target that the real, parallel flight never makes — and the faster the projectile,
+ * the more of those diagonals clip a mob ahead.
  */
 function flightFrom(
   carrier: Extract<Carrier, { kind: "projectile" }>,
   from: Point,
   index: number,
   headingDegrees = 0,
-): Point[] {
+  rollDegrees = 0,
+): { start: Point; path: Point[] } {
   const ticks = Math.min(carrier.lifeTicks, MAX_SIMULATED_TICKS);
   const { motion, count } = carrier;
-  if (motion.orbitsCaster) return orbitPath(motion, ticks, index, count);
-  const path = integrate(motion, ticks, initialYaw(motion, index, count), sidewaysOffset(motion, index, count));
-  if (headingDegrees === 0) return path.map((p) => ({ x: p.x + from.x, z: p.z + from.z }));
+  if (motion.orbitsCaster) return { start: from, path: orbitPath(motion, ticks, index, count) };
+  const yaw = initialYaw(motion, index, count) + rollDegrees;
+  const side = sidewaysOffset(motion, index, count);
+  const path = integrate(motion, ticks, yaw, side);
   // `integrate` flies in the caster's frame, facing +Z; turn the whole flight, barrage offset
   // included, onto the aim. Maps +Z to (-sin h, cos h), the same forward `integrate` uses.
   const h = headingDegrees * DEG;
   const cos = Math.cos(h);
   const sin = Math.sin(h);
-  return path.map((p) => ({ x: from.x + p.x * cos - p.z * sin, z: from.z + p.x * sin + p.z * cos }));
+  const place = (p: Point): Point => ({ x: from.x + p.x * cos - p.z * sin, z: from.z + p.x * sin + p.z * cos });
+  return { start: place({ x: side, z: 0 }), path: path.map(place) };
 }
 
 /**

@@ -37,7 +37,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, num, smart } from "../../ui/format.js";
+import { USABLE_NOUN, isOverCap, num, smart } from "../../ui/format.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
@@ -229,7 +229,14 @@ ${display.id}`
       )}
 
       {capped && (
-        <span className="badge bad" title={`Hard cap: ${smart(stat.hardcap)}`}>
+        <span
+          className="badge bad"
+          title={
+            isOverCap(stat)
+              ? `Hard cap: ${smart(stat.hardcap)}. You have ${smart(stat.uncapped!)}, and the ${smart(stat.uncapped! - stat.value)} over it does nothing.`
+              : `Hard cap: ${smart(stat.hardcap)}`
+          }
+        >
           cap
         </span>
       )}
@@ -248,6 +255,16 @@ ${display.id}`
             <>
               {smart(stat.value)}
               {display.isPerc ? "%" : ""}
+              {/* Past the hard cap, what the build has follows in brackets, as a resist's does. */}
+              {isOverCap(stat) && (
+                <>
+                  {" "}
+                  <span className="usable">
+                    ({smart(stat.uncapped!)}
+                    {display.isPerc ? "%" : ""})
+                  </span>
+                </>
+              )}
             </>
           ) : (
             <span

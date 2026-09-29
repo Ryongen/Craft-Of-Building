@@ -23,6 +23,7 @@ function motion(overrides: Partial<ProjectileMotion> = {}): ProjectileMotion {
     nova: false,
     barrage: false,
     apartDegrees: 75,
+    randomSpreadDegrees: 0,
     expiresOnEntityHit: true,
     orbitsCaster: false,
     orbitRadius: 0,
@@ -171,6 +172,28 @@ test("a nova spreads projectiles evenly, so a single target catches a fraction o
   assert.ok(coverage.hitsPerCast >= 1, "the one aimed at the target reaches it");
   assert.ok(coverage.hitsPerCast < 8, "the other seven fly elsewhere");
   assert.equal(coverage.method, "flight");
+});
+
+test("random spread turns a fan that just misses into a share of hits, not zero", () => {
+  // `battery_fusillade` with Hunter's Focus: two projectiles at ±18.75° pass 0.64 blocks from a
+  // mob two blocks out, just outside the 0.6 reach. The ±8° roll brings each back in part of the time.
+  const fan = (randomSpreadDegrees: number): DamageSource =>
+    source({
+      carrier: {
+        kind: "projectile",
+        count: 2,
+        baseCount: 1,
+        bonusCount: 1,
+        lifeTicks: 12,
+        motion: motion({ speed: 2, randomSpreadDegrees }),
+      },
+      trigger: { kind: "on_hit" },
+      target: { kind: "target" },
+    });
+
+  assert.equal(coverageOf(fan(0), DEFAULT_PLACEMENT).hitsPerCast, 0);
+  const hits = coverageOf(fan(8), DEFAULT_PLACEMENT).hitsPerCast;
+  assert.ok(hits > 0.5 && hits < 1.2, `about 0.4 of each projectile lands, got ${hits}`);
 });
 
 test("a turning projectile stays near the caster, and coverage falls off with distance", () => {
@@ -364,6 +387,24 @@ test("a scattered summon lands the share of its box that reaches, not all or not
     Math.abs(coverage.hitsPerCast - expected) < 0.03,
     `expected about ${expected.toFixed(3)}, got ${coverage.hitsPerCast.toFixed(3)}`,
   );
+});
+
+test("a barrage's side arrows fly parallel past a mob straight ahead, however fast they are", () => {
+  // Seven arrows a block apart; a mob at two blocks with a 0.6 reach catches only the centre
+  // one. Flying the side arrows' first tick from the caster instead of from their own spawn
+  // point swept them diagonally across it, and faster arrows swept closer — 3 hits, then 5.
+  for (const speed of [5, 7.25]) {
+    const carrier: Carrier = {
+      kind: "projectile",
+      count: 7,
+      baseCount: 1,
+      bonusCount: 6,
+      lifeTicks: 80,
+      motion: motion({ speed, barrage: true }),
+    };
+    const s = source({ carrier, trigger: { kind: "on_hit" } });
+    assert.equal(coverageOf(s, DEFAULT_PLACEMENT).hitsPerCast, 1, `speed ${speed}`);
+  }
 });
 
 test("a fast projectile cannot step over a target standing between its tick samples", () => {

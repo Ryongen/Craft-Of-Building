@@ -100,6 +100,12 @@ export type ProjectileMotion = {
   barrage: boolean;
   /** `proj_apart`, the degrees a non-nova spread fans across. */
   apartDegrees: number;
+  /**
+   * `projectile_spread_randomness` × `PROJECTILE_SPREAD_RANDOMNESS`: each projectile's yaw is
+   * turned by a fresh uniform roll on `[-this, +this]` degrees (`ProjectileCastHelper.cast`,
+   * 6.4.13 jar). Pitch gets its own roll, which a horizontal flight has nowhere to put.
+   */
+  randomSpreadDegrees: number;
   /** True when the projectile is deleted by the first enemy it touches. */
   expiresOnEntityHit: boolean;
   /** `orbits_caster`, which pins the projectile to a circle around the player instead. */
@@ -881,6 +887,10 @@ function carrierFor(act: RawAct, calc: SpellCalc): Spawn | undefined {
           nova: calc.nova || map["nova"] === true,
           barrage: calc.barrage,
           apartDegrees: num(map["proj_apart"]) ?? 75,
+          randomSpreadDegrees: Math.max(
+            0,
+            (num(map["projectile_spread_randomness"]) ?? 0) * calc.projectileSpreadMulti,
+          ),
           // `getOrDefault(EXPIRE_ON_ENTITY_HIT, true)`.
           expiresOnEntityHit: map["expire_on_en_hit"] !== false,
           orbitsCaster: map["orbits_caster"] === true,

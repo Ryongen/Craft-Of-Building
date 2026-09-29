@@ -42,7 +42,7 @@ import { useState, type ReactNode } from "react";
 
 import { useDerived, type DerivedBuild } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, num, smart, usable } from "../../ui/format.js";
+import { USABLE_NOUN, isOverCap, num, overCap, smart, usable } from "../../ui/format.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import { elementColour, elementLabel } from "../../ui/palette.js";
@@ -137,6 +137,8 @@ function SkillVitals({
   // branches is what a crit is actually worth on this skill — and it is the number that moves
   // when a support gem is linked.
   const critMulti = damage.hit.total > 0 ? damage.crit.total / damage.hit.total : 0;
+  // The skill's unit, since that is where a Crit Damage support lands.
+  const critDamage = derived.skillBreakdown("critical_damage")?.stat;
 
   // Which pool this skill actually spends, and what it spends. `manaSpentAs` is `blood` under
   // the Blood Magic game changer, so naming the pool from the cost rather than from the stat is
@@ -214,7 +216,12 @@ function SkillVitals({
         label="Crit multiplier"
         statId="critical_damage"
         value={`${num(critMulti, 2)}×`}
-        hint="What a crit is actually worth on this skill: the crit branch over the non-crit one, so double damage and the conversion children are in it."
+        hint={
+          "What a crit is actually worth on this skill: the crit branch over the non-crit one, so double damage and the conversion children are in it." +
+          (isOverCap(critDamage)
+            ? ` Crit damage is capped: ${overCap(critDamage!.value, critDamage!.uncapped!, true)}, and the part over the cap does nothing.`
+            : "")
+        }
         active={same(focus, { kind: "figure", id: "crit-multi" })}
         onSelect={pick({ kind: "figure", id: "crit-multi" })}
       />
@@ -702,9 +709,11 @@ function StatRowOf({
     override ??
     (stat === undefined
       ? smart(0)
-      : stat.usableValue === undefined
-        ? smart(stat.value)
-        : usable(stat.usableValue, stat.value, rawIsPercent));
+      : stat.usableValue !== undefined
+        ? usable(stat.usableValue, stat.value, rawIsPercent)
+        : isOverCap(stat)
+          ? overCap(stat.value, stat.uncapped!, rawIsPercent)
+          : smart(stat.value));
 
   return (
     <Row
@@ -715,7 +724,9 @@ function StatRowOf({
         stat === undefined
           ? `${statId}: nothing in this build grants it`
           : stat.usableValue === undefined
-            ? statId
+            ? isOverCap(stat)
+              ? `${statId}. You have ${smart(stat.uncapped!)}, but it is capped at ${smart(stat.value)} and the rest does nothing.`
+              : statId
             : `${smart(stat.usableValue)}% ${USABLE_NOUN[statId] ?? "effective"} (${statId})` +
               (rawIsPercent && stat.value > stat.usableValue + 0.5
                 ? `. You have ${smart(stat.value)}%, but anything over ${smart(stat.usableValue)}% is past the cap and does nothing.`

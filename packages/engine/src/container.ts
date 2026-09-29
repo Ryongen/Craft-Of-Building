@@ -17,8 +17,14 @@
 import type { ExactMod } from "./modifier.js";
 import type { StatIndex } from "./stat-def.js";
 
-/** `StatData`: what a stat resolves to. `m` is `dmgMulti`. */
-export type StatValue = { value: number; dmgMulti: number };
+/**
+ * `StatData`: what a stat resolves to. `m` is `dmgMulti`.
+ *
+ * `uncapped` is not the game's: it is what the stat would have been had the hard cap not
+ * clamped it, set only when it did. `critical_damage` stops at 400 however much a build stacks,
+ * and without this the sheet can only print the 400 and never say the build has 600 of it.
+ */
+export type StatValue = { value: number; dmgMulti: number; uncapped?: number };
 
 export class InCalcStat {
   flat = 0;
@@ -102,6 +108,7 @@ export class InCalcContainer {
       out.set(id, {
         value: clamp(value, shape.min, shape.max),
         dmgMulti: shape.multiUseType === "MULTIPLICATIVE_DAMAGE" ? stat.multi : 1,
+        ...(value > shape.max ? { uncapped: value } : {}),
       });
     }
     return new StatContainer(out, this.index);
@@ -132,7 +139,10 @@ export class StatContainer {
   /** `StatData.setValue` — clamped to the hard cap, not the soft one. */
   setValue(id: string, value: number): void {
     const shape = this.index.shapeOf(id);
-    this.getOrCreate(id).value = clamp(value, shape.min, shape.max);
+    const stat = this.getOrCreate(id);
+    stat.value = clamp(value, shape.min, shape.max);
+    if (value > shape.max) stat.uncapped = value;
+    else delete stat.uncapped;
   }
 
   /**
@@ -149,6 +159,7 @@ export class StatContainer {
     for (const [id, stat] of this.stats) {
       const shape = this.index.shapeOf(id);
       const cap = shape.hasSoftcap ? shape.softcap : shape.max;
+      if (stat.value > cap) stat.uncapped = Math.max(stat.uncapped ?? 0, stat.value);
       stat.value = clamp(stat.value, shape.min, cap);
     }
   }

@@ -30,7 +30,7 @@ import { useDerived, type DerivedBuild } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { Plain, Tech, useHint, type Hint } from "../../ui/copy/hint.js";
 import { STATS_COPY } from "../../ui/copy/stats.js";
-import { num, smart } from "../../ui/format.js";
+import { isOverCap, num, overCap, smart } from "../../ui/format.js";
 import { elementLabel } from "../../ui/palette.js";
 import { StepRow } from "../../ui/StepRow.js";
 import { formatStep, layerLabel } from "../../ui/trace-format.js";
@@ -509,6 +509,7 @@ function FigureDetail({
 
     case "crit-multi": {
       const multi = damage.hit.total > 0 ? damage.crit.total / damage.hit.total : 0;
+      const critDamage = derived.skillBreakdown("critical_damage")?.stat;
       return (
         <Detail
           title={`Crit multiplier · ${spell}`}
@@ -520,8 +521,19 @@ function FigureDetail({
             <Term label="Ratio" value={`${num(multi, 3)}×`} strong />
             <Term
               label={statName(snapshot, "critical_damage")}
-              value="the stat behind it"
-              hint="One input to a multiplicative layer, not the multiplier itself."
+              value={
+                critDamage === undefined
+                  ? "the stat behind it"
+                  : isOverCap(critDamage)
+                    ? overCap(critDamage.value, critDamage.uncapped!, true)
+                    : `${smart(critDamage.value)}%`
+              }
+              hint={
+                "One input to a multiplicative layer, not the multiplier itself." +
+                (isOverCap(critDamage)
+                  ? ` Capped at ${smart(critDamage!.value)}%: the ${smart(critDamage!.uncapped! - critDamage!.value)}% over it does nothing.`
+                  : "")
+              }
               onSelect={onSkill("critical_damage")}
             />
           </div>

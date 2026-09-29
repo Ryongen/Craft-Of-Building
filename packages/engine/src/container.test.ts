@@ -59,6 +59,22 @@ test("values are clamped to the stat's own min and max", () => {
   assert.equal(d.calculate().get("fire_resist").value, -300);
 });
 
+test("a stat past its hard cap keeps what it would have been as `uncapped`", () => {
+  // `critical_damage` ships with base 75 and max 400; 525 more is 600 before the clamp.
+  const c = new InCalcContainer(
+    index({ critical_damage: statEntry("critical_damage", { base: 75, max: 400 }) }),
+  );
+  c.apply({ statId: "critical_damage", type: "FLAT", value: 525 });
+  assert.deepEqual(c.calculate().get("critical_damage"), { value: 400, dmgMulti: 1, uncapped: 600 });
+
+  // Under the cap there is nothing to report.
+  const d = new InCalcContainer(
+    index({ critical_damage: statEntry("critical_damage", { base: 75, max: 400 }) }),
+  );
+  d.apply({ statId: "critical_damage", type: "FLAT", value: 100 });
+  assert.deepEqual(d.calculate().get("critical_damage"), { value: 175, dmgMulti: 1 });
+});
+
 test("addFullyTo adds the Multi where every other MORE path multiplies it", () => {
   // `other.Multi += 1F - Multi;` — InCalcStatData.java:61-65. A 1.5x source hands over
   // -0.5, taking a 1.0 target to 0.5, which is not what a player reading "more" expects.

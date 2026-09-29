@@ -2,7 +2,7 @@
  * Pick the nodes you want; get the fewest points that takes all of them.
  *
  * `routeTo` in `@cte2/schema` does the work — an exact Steiner tree up to eight targets, a
- * greedy one past that — and is fast enough (tens of milliseconds on the talent tree) to rerun
+ * locally optimised one past that — and is fast enough (under 100 ms on the talent tree) to rerun
  * on every change, so there is no "solve" button: the route on the canvas is always the answer
  * for the targets and allocation on screen.
  *

@@ -143,6 +143,8 @@ export type SpellCalc = {
   projectileSpeedMulti: number;
   /** `PROJECTILE_YAW_SPEED_MULTI` — how fast a turning projectile turns. */
   projectileYawSpeedMulti: number;
+  /** `PROJECTILE_SPREAD_RANDOMNESS` — scales an act's `projectile_spread_randomness` degrees. */
+  projectileSpreadMulti: number;
   pierce: boolean;
   nova: boolean;
   barrage: boolean;
@@ -414,6 +416,7 @@ function clampSpellCalc(event: DamageEventState, declared: SpellConfig, balance:
     durationMulti: event.data.getNumber(EVENT.DURATION_MULTI),
     projectileSpeedMulti: event.data.getNumber(EVENT.PROJECTILE_SPEED_MULTI, 1),
     projectileYawSpeedMulti: event.data.getNumber(EVENT.PROJECTILE_YAW_SPEED_MULTI, 1),
+    projectileSpreadMulti: event.data.getNumber(EVENT.PROJECTILE_SPREAD_RANDOMNESS, 1),
     pierce: event.data.getBoolean(EVENT.PIERCE),
     nova: event.data.getBoolean(EVENT.NOVA),
     barrage: event.data.getBoolean(EVENT.BARRAGE),

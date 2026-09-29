@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, num, smart } from "../../ui/format.js";
+import { USABLE_NOUN, isOverCap, num, smart } from "../../ui/format.js";
 import { StatIcon } from "../../ui/StatIcon.js";
 import { statLook } from "../../ui/stat-look.js";
 import type { SheetFocus } from "./SheetDetail.js";
@@ -105,13 +105,17 @@ type ValueShape =
   /** A rating and what it converts to. */
   | { kind: "rating"; usable: number; raw: number }
   /** A percentage clipped by its ceiling: what applies, and what was granted. */
-  | { kind: "capped"; usable: number; raw: number };
+  | { kind: "capped"; usable: number; raw: number }
+  /** A stat clipped by its own hard cap (`critical_damage` at 400). */
+  | { kind: "hardcap"; value: number; raw: number };
 
 function valueShape(
-  stat: { value: number; usableValue?: number } | undefined,
+  stat: { value: number; usableValue?: number; uncapped?: number } | undefined,
   isPerc: boolean,
 ): ValueShape {
-  if (stat?.usableValue === undefined) return { kind: "plain" };
+  if (stat?.usableValue === undefined) {
+    return isOverCap(stat) ? { kind: "hardcap", value: stat!.value, raw: stat!.uncapped! } : { kind: "plain" };
+  }
   if (!isPerc) return { kind: "rating", usable: stat.usableValue, raw: stat.value };
   if (stat.value <= stat.usableValue + 0.5) return { kind: "plain" };
   return { kind: "capped", usable: stat.usableValue, raw: stat.value };
@@ -160,8 +164,14 @@ export function TraceStatList({
         // Character scope only: `stat` is the character sheet, and in skill scope the value
         // beside it came from the spell's own unit — pairing the two would print one sheet's
         // conversion over another sheet's number.
+        // The hard cap is the sheet's own, so skill scope can show it from the skill's unit.
+        const skillStat = scope === "skill" ? derived.skillBreakdown(statId)?.stat : undefined;
         const shape: ValueShape =
-          scope === "character" ? valueShape(stat, isPerc) : { kind: "plain" };
+          scope === "character"
+            ? valueShape(stat, isPerc)
+            : isOverCap(skillStat)
+              ? { kind: "hardcap", value: skillStat!.value, raw: skillStat!.uncapped! }
+              : { kind: "plain" };
         const isOpen =
           selected !== null &&
           (selected.kind === "stat" || selected.kind === "skill-stat") &&
@@ -209,7 +219,14 @@ export function TraceStatList({
                         `${smart(shape.raw)}. IUsableStat.getUsableValue, a hyperbolic curve read ` +
                         `at your level, so the same rating is worth less the more of it you have.`,
                     }
-                  : {
+                  : shape.kind === "hardcap"
+                    ? {
+                        title:
+                          `Capped at ${smart(shape.value)}${isPerc ? "%" : ""}. The ` +
+                          `${smart(shape.raw - shape.value)}${isPerc ? "%" : ""} above it is ` +
+                          `granted and unused, and no figure on this tab counts it.`,
+                      }
+                    : {
                       title:
                         `Capped at ${smart(shape.usable)}%. ` +
                         `ElementalResist.getUsableValue clamps to 75 plus this element's ` +
@@ -226,6 +243,12 @@ export function TraceStatList({
               ) : shape.kind === "rating" ? (
                 <>
                   {num(shape.usable, 2)}%<span className="faint"> ({smart(shape.raw)})</span>
+                </>
+              ) : shape.kind === "hardcap" ? (
+                <>
+                  {smart(shape.value)}
+                  {isPerc ? "%" : ""}
+                  <span className="faint"> ({smart(shape.raw)}{isPerc ? "%" : ""})</span>
                 </>
               ) : (
                 <>

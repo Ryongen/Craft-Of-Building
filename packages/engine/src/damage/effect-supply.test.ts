@@ -32,7 +32,7 @@ function calc(): SpellCalc {
     effectiveCooldownTicks: 20, castSpeedPercent: 0, speedMulti: 1,
     offGlobalCooldown: true, cooldownTicks: 20, chargeCooldownTicks: 0, manaCost: 0, energyCost: 0,
     bonusProjectiles: 0, bonusChains: 0, areaMulti: 1, durationMulti: 1, projectileSpeedMulti: 1,
-    projectileYawSpeedMulti: 1, pierce: false, nova: false, barrage: false, maxTotems: 1,
+    projectileYawSpeedMulti: 1, projectileSpreadMulti: 1, pierce: false, nova: false, barrage: false, maxTotems: 1,
     maxBanners: 1, extraTotems: 0, extraBanners: 0, bonusTotalSummons: 0, summonType: "none",
   };
 }

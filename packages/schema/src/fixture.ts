@@ -320,6 +320,8 @@ export type ComputedStat = {
   softcap?: number;
   hardcap?: number;
   usableValue?: number;
+  /** The value before the hard cap clamped it, when it did. Display only; never compared. */
+  uncapped?: number;
 };
 
 /**

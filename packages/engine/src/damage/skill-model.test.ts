@@ -35,6 +35,7 @@ function calc(overrides: Partial<SpellCalc> = {}): SpellCalc {
     durationMulti: 1,
     projectileSpeedMulti: 1,
     projectileYawSpeedMulti: 1,
+    projectileSpreadMulti: 1,
     pierce: false,
     nova: false,
     barrage: false,
