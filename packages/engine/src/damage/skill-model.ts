@@ -1041,6 +1041,13 @@ function firesFor(trigger: Trigger, carrier: Carrier): number {
       }
       const life = carrier.lifeTicks;
       if (life <= 0) return 0;
+      if (carrier.kind === "effect" && carrier.permanent && trigger.rate > 0) {
+        // A held aura's life here is the cast cycle, a counting window rather than a real one:
+        // the gate reads the holder's own `tickCount`, which casting never touches. Counting whole
+        // pulses in the window paced Holy Fire by cast speed — 3 pulses in 30 ticks and in 39 —
+        // so it gets the same expectation as a direct part, which is exactly `life / rate`.
+        return life / trigger.rate;
+      }
       if (trigger.rate <= 0) {
         // `tickCount == firstTick` — fires exactly once, and only if it lives that long.
         return trigger.firstTick >= 1 && trigger.firstTick <= life ? 1 : 0;

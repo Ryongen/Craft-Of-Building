@@ -282,6 +282,11 @@ export function calculateSpell(input: SpellCalcInput): SpellCalc {
   // the five `summon_type_is_*` conditions compare against `SummonType.id`, which is its lower
   // case. Without this every `max_<type>_summons` gate failed and every summon cap read zero.
   event.data.setString(EVENT.SUMMON_TYPE, summonTypeOf(input.spell));
+  // `this.data.setString(EventData.STYLE, spell.config.getStyle().id)` — :43. Left unset, the
+  // `style_is_int_is_false` gate on `attack_cast_speed` passed for every spell, so Attack Skill
+  // Speed — Sniper's -50 — paced Armageddon, an `int` channel it never touches in game.
+  const style = styleOf(input.spell);
+  if (style.length > 0) event.data.setString(EVENT.STYLE, style);
 
   const ctx: DamageCtx = {
     snapshot: input.snapshot,
@@ -355,6 +360,13 @@ function summonTypeOf(spell: Record<string, unknown>): string {
   const config = asObject(spell["config"]);
   const declared = config?.["summonType"];
   return typeof declared === "string" && declared.length > 0 ? declared.toLowerCase() : "none";
+}
+
+/** `spell.config.getStyle().id` — `PlayStyle.id`, the lower case every `style` match compares. */
+function styleOf(spell: Record<string, unknown>): string {
+  const config = asObject(spell["config"]);
+  const style = config?.["style"];
+  return typeof style === "string" ? style.toLowerCase() : "";
 }
 
 /**

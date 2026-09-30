@@ -168,7 +168,7 @@ export type Coverage = {
  * `instancesPerCast` on the source is the ceiling; this returns how much of it lands.
  */
 export function coverageOf(source: DamageSource, placement: TargetPlacement): Coverage {
-  const result = compute(source, placement);
+  const result = heldAura(source) ? heldAuraCoverage(source, placement) : compute(source, placement);
   const ceiling = source.instancesPerCast;
   const hits = Math.min(result.hitsPerCast, ceiling);
   return {
@@ -177,6 +177,35 @@ export function coverageOf(source: DamageSource, placement: TargetPlacement): Co
     fraction: ceiling > 0 ? hits / ceiling : 0,
     landedTicks: result.landedTicks.slice().sort((a, b) => a - b),
   };
+}
+
+/** A permanent aura's pulse, whose `lifeTicks` is only the window one cast is counted over. */
+function heldAura(source: DamageSource): boolean {
+  return (
+    source.carrier.kind === "effect" &&
+    source.carrier.permanent &&
+    source.trigger.kind === "tick" &&
+    source.trigger.rate > 0
+  );
+}
+
+/**
+ * A held aura's coverage as a share of its pulses, not a count of them.
+ *
+ * `firesFor` credits it `life / rate` pulses, a fraction whenever the cast cycle is not a
+ * multiple of the tick rate. Flying it over that window counts whole pulses instead and lands
+ * short of the ceiling, which is the cast-speed sawtooth all over again. So it is flown over
+ * whole pulses — at least one, since a cycle shorter than the rate would count none — and the
+ * share that lands is applied to the fractional ceiling.
+ */
+function heldAuraCoverage(source: DamageSource, placement: TargetPlacement): Coverage {
+  const trigger = source.trigger as { kind: "tick"; rate: number; firstTick: number };
+  const window = Math.max(source.carrier.lifeTicks, trigger.rate);
+  const carrier = { ...source.carrier, lifeTicks: window } as Carrier;
+  const flown = compute({ ...source, carrier }, placement);
+  const fired = tickIndices(trigger, window).length * source.carriersPerCast * source.castShare;
+  const share = fired > 0 ? flown.hitsPerCast / fired : 0;
+  return { ...flown, hitsPerCast: share * source.instancesPerCast };
 }
 
 function compute(source: DamageSource, placement: TargetPlacement): Coverage {

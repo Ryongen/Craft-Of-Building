@@ -198,6 +198,25 @@ test("a permanent aura's damage per second does not depend on the cycle it is pr
   closeTo(a.dps, b.dps, "damage per second must be the same however the cycle is read");
 });
 
+test("a permanent aura's damage per second does not step with a cycle off the tick rate", () => {
+  // 400 and 40 above are both multiples of the 10-tick pulse, which hid the sawtooth: counting
+  // whole pulses gave 3 in 34 ticks and 3 in 39, so a slower cast read as less aura damage — and
+  // one that slowed a cycle from 38 onto 40 read as a gain. Sniper's -50 cast speed did that.
+  const dpsAt = (ticks: number): number => {
+    const snap = scenario();
+    const spell = snap.registries["mmorpg_spells"]!["pulse_aura"]!.data as Record<string, unknown>;
+    (spell["config"] as Record<string, unknown>)["cooldown_ticks"] = ticks;
+    const result = simulateDps(build(), snap);
+    assert.ok(result);
+    return result.dps;
+  };
+  const whole = dpsAt(40);
+  assert.ok(whole > 0, "an aura that pulses must deal damage");
+  for (const ticks of [34, 38, 39]) {
+    closeTo(dpsAt(ticks), whole, `a ${ticks}-tick cycle must pulse twice a second like a 40-tick one`);
+  }
+});
+
 test("the self-targeted pulse is self-damage, not damage to the enemy", () => {
   const result = simulateDps(build(), scenario(true));
   assert.ok(result);
