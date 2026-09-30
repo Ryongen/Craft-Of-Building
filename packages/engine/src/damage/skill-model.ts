@@ -590,6 +590,8 @@ export function skillModel(
         resolvesAtTarget: boolean,
         hits: SourceTarget,
         enemy: boolean,
+        /** Share of casts that reach this act at all — see the `per_entity_hit` loop below. */
+        reach = 1,
       ): void => {
         if (act.type === "exile_effect") {
           const effectId = str(act.map["exile_potion_id"]);
@@ -657,7 +659,7 @@ export function skillModel(
             walk(next, name, {
               carrier: spawned.carrier,
               chain: [...frame.chain, step],
-              carriersPerCast: frame.carriersPerCast * step.count * firesPerCarrier,
+              carriersPerCast: frame.carriersPerCast * step.count * firesPerCarrier * reach,
               path: [...frame.path, `${act.type} ${name}`],
             }, depth + 1);
           }
@@ -690,8 +692,14 @@ export function skillModel(
       // selector's question and the outer position's, which is why both are passed down.
       if (part.perEntityHit.length > 0 && target.kind !== "none" && target.kind !== "self") {
         const hitFrom: SpawnFrom = { kind: "target", gate: target };
+        // A damage act here is scored against `target`, so its selection chance is applied where
+        // the hit is. A *spawn* is not: its carrier brings its own selector, and the outer roll
+        // — whether this enemy was picked at all — would be lost. Power Surge picks each enemy
+        // at 50% every 40 ticks and throws a bolt at the ones it picked; without this, every
+        // tick threw one.
+        const reach = target.kind === "aoe" ? target.selectionChance : 1;
         for (const inner of part.perEntityHit) {
-          for (const act of inner.acts) run(act, hitFrom, true, target, onEnemy);
+          for (const act of inner.acts) run(act, hitFrom, true, target, onEnemy, reach);
         }
       }
     });

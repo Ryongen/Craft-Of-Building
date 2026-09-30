@@ -35,7 +35,7 @@ import type { EngineResult } from "../calculate.js";
 import { basicAttack } from "./basic-attack.js";
 import { simulateDps } from "./dps.js";
 import { casterEffectsOf } from "./effect-state.js";
-import type { Proc } from "./procs.js";
+import { shareCooldowns, type Proc } from "./procs.js";
 import { TICKS_PER_SECOND } from "./spell-calc.js";
 
 /** The proc stats this spell's self-applied effects carry, keyed to whether only a swing fires them. */
@@ -151,5 +151,6 @@ function merge(a: readonly Proc[], b: readonly Proc[]): Proc[] {
       ...(limit === undefined ? {} : { limit }),
     });
   }
-  return [...out.values()];
+  // Per key above; per spell here, because two stats procing one spell share its cooldown too.
+  return shareCooldowns([...out.values()]);
 }

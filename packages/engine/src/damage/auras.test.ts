@@ -311,3 +311,66 @@ test("an aura's damage is the same whether the pass is short or long", () => {
   assert.ok(long.rotationSeconds > short.rotationSeconds * 2);
   closeTo(long.auraDps, short.auraDps);
 });
+
+/**
+ * Power Surge's shape: the effect's tick deals nothing itself. Every 40 ticks it picks each enemy
+ * at 50% and throws a `bolt` at the ones it picked — and `bolt` is a group on the *granting spell*,
+ * not on the effect. Walked on the effect alone the bolt had nothing to run and the skill read 0.
+ */
+function surgeScenario() {
+  const snap = scenario(false);
+  const effect = snap.registries["mmorpg_exile_effect"]!["pulse"]!.data as Record<string, unknown>;
+  effect["spell"] = {
+    on_cast: [],
+    entity_components: {
+      default_entity_name: [
+        {
+          acts: [],
+          ifs: [{ type: "x_ticks_condition", map: { tick_rate: 40 } }],
+          en_preds: [],
+          targets: [
+            {
+              type: "aoe",
+              map: { radius: 4, selection_type: "RADIUS", en_predicate: "enemies", selection_chance: 50 },
+            },
+          ],
+          per_entity_hit: [
+            {
+              acts: [
+                {
+                  type: "projectile",
+                  map: { entity_name: "bolt", proj_count: 1, proj_speed: 0, life_ticks: 1, proj_en: "mmorpg:spell_projectile" },
+                },
+              ],
+              ifs: [],
+              en_preds: [],
+              targets: [],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const spell = snap.registries["mmorpg_spells"]!["pulse_aura"]!.data as Record<string, unknown>;
+  const groups = (spell["attached"] as Record<string, unknown>)["entity_components"] as Record<string, unknown>;
+  groups["bolt"] = [
+    {
+      acts: [{ type: "damage", map: { element: "Nature", value_calculation: "pulse_hit" } }],
+      ifs: [{ type: "on_entity_expire", map: {} }],
+      en_preds: [],
+      targets: [{ type: "aoe", map: { radius: 2, selection_type: "RADIUS", en_predicate: "enemies" } }],
+    },
+  ];
+  return snap;
+}
+
+test("an effect's tick can spawn a group declared on the spell that granted it", () => {
+  const result = simulateDps(build(), surgeScenario());
+  assert.ok(result);
+  const bolt = result.sources.find((s) => s.source.id.startsWith("effect:pulse:bolt"));
+  assert.ok(bolt, "the bolt the effect throws must be a source");
+  // One tick every 2s, and the target is picked on half of them: a quarter of a bolt a second.
+  const perBolt = bolt.damagePerCast / bolt.coverage.hitsPerCast;
+  assert.ok(perBolt > 0);
+  closeTo(result.dps / perBolt, 0.25, "bolts a second");
+});

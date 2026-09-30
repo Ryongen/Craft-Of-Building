@@ -120,6 +120,13 @@ export function ProcTable({
                 {proc.critDamagePerProc !== undefined && (proc.critChance ?? 0) > 0 && (
                   <div className="faint text-xs">{smart(proc.critDamagePerProc)} on crit</div>
                 )}
+                {/* A summoning proc's figure is a pet's whole life; how many that keeps out is
+                    the part a player will want to check against what they see. */}
+                {proc.pets !== undefined && proc.perSecond > 0 && (
+                  <div className="faint text-xs">
+                    {num(proc.pets.alive, 1)} alive, {num(proc.pets.lifeSeconds, 1)}s each
+                  </div>
+                )}
               </td>
               <td className="num">{smart(proc.dps)}</td>
             </tr>

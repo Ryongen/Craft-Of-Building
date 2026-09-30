@@ -842,33 +842,6 @@ export function simulateDps(
 
   const rate = rateOf(calc, declared);
 
-  // A spell with no cast speed is not a button. `rateOf` paces it by `proc_cooldown_ticks`
-  // rather than by the one-tick floor that used to make `cursed_raging_dragon` report 27
-  // million, but that is a ceiling and nothing about the build supports it — so say whose
-  // trigger it is waiting on, and whether this build has one.
-  if (!rate.castable) {
-    const sources = procSourcesFor(snapshot, skill.spellId, characterRun.stats);
-    const held = sources.filter((s) => s.onSheet);
-    diagnostics.push({
-      severity: held.length > 0 ? "info" : "warning",
-      code: "spell-not-castable",
-      path: "skills",
-      message:
-        `\`${skill.spellId}\` declares \`cast_speed_ticks: 0\`, so it cannot be cast. It happens ` +
-        `when something triggers it. ` +
-        (sources.length === 0
-          ? `Nothing in the pack procs it, so this figure describes a cast that never occurs.`
-          : held.length === 0
-            ? `${sources.length} stat(s) proc it (${sources.slice(0, 3).map((s) => `\`${s.statId}\``).join(", ")}` +
-              `${sources.length > 3 ? ", …" : ""}) and this build carries none of them, so nothing here produces it.`
-            : `${held.map((s) => `\`${s.statId}\``).join(", ")} procs it on this build. Its real rate is on ` +
-              `whichever skill you are actually casting, under Procs.`) +
-        (rate.procPaced
-          ? ` The cycle shown is \`proc_cooldown_ticks\`, the fastest it could ever repeat, not a rate you can plan on.`
-          : ` The cycle shown is its own cooldown, which caps how often a trigger can land it.`),
-    });
-  }
-
   const walked = skillModel(
     spell,
     declared,
@@ -893,10 +866,47 @@ export function simulateDps(
     cycleTicks: rate.cycleSeconds * TICKS_PER_SECOND,
     conditions: build.config?.conditions,
   });
+  // Groups the held effect's tick reached, by the name `auras.ts` stamps on each source.
+  const auraGroups = new Set(auras.sources.map((s) => s.id.split(":")[2]?.split("#")[0]));
   const withAuras: SkillModel =
     auras.sources.length === 0
       ? walked
-      : { ...walked, sources: [...walked.sources, ...auras.sources] };
+      : {
+          ...walked,
+          sources: [...walked.sources, ...auras.sources],
+          unreachableGroups: walked.unreachableGroups.filter((g) => !auraGroups.has(g)),
+        };
+
+  // A spell with no cast speed is not a button. `rateOf` paces it by `proc_cooldown_ticks`
+  // rather than by the one-tick floor that used to make `cursed_raging_dragon` report 27
+  // million, but that is a ceiling and nothing about the build supports it — so say whose
+  // trigger it is waiting on, and whether this build has one.
+  //
+  // Not for a toggle whose damage rides an effect you hold: Power Surge is also
+  // `cast_speed_ticks: 0`, and it is pressed once and left on. Its figure is the held effect's
+  // tick, which no trigger paces.
+  if (!rate.castable && auras.sources.length === 0) {
+    const sources = procSourcesFor(snapshot, skill.spellId, characterRun.stats);
+    const held = sources.filter((s) => s.onSheet);
+    diagnostics.push({
+      severity: held.length > 0 ? "info" : "warning",
+      code: "spell-not-castable",
+      path: "skills",
+      message:
+        `\`${skill.spellId}\` declares \`cast_speed_ticks: 0\`, so it cannot be cast. It happens ` +
+        `when something triggers it. ` +
+        (sources.length === 0
+          ? `Nothing in the pack procs it, so this figure describes a cast that never occurs.`
+          : held.length === 0
+            ? `${sources.length} stat(s) proc it (${sources.slice(0, 3).map((s) => `\`${s.statId}\``).join(", ")}` +
+              `${sources.length > 3 ? ", …" : ""}) and this build carries none of them, so nothing here produces it.`
+            : `${held.map((s) => `\`${s.statId}\``).join(", ")} procs it on this build. Its real rate is on ` +
+              `whichever skill you are actually casting, under Procs.`) +
+        (rate.procPaced
+          ? ` The cycle shown is \`proc_cooldown_ticks\`, the fastest it could ever repeat, not a rate you can plan on.`
+          : ` The cycle shown is its own cooldown, which caps how often a trigger can land it.`),
+    });
+  }
 
   // A resource you hit yourself for is neither up nor down: the skill fires whichever branch the
   // stacks say, so a share of its casts land the gated hit. See `self-hit-supply.ts`.

@@ -171,6 +171,14 @@ export type Proc = {
   critDamagePerProc?: number;
   /** `damagePerProc × perSecond`. */
   dps: number;
+  /**
+   * The pets each proc summons, when the procced spell is a summon.
+   *
+   * `damagePerProc` is then their whole life's worth of attacks, and `alive` is how many are out
+   * at once — `perSecond × perProc × lifeSeconds`, which nothing caps: every pet a proc summons in
+   * this pack has `counts_towards_max_summons: false`.
+   */
+  pets?: { perProc: number; lifeSeconds: number; alive: number };
   /** Set when the figure is 0 for a reason worth showing. */
   limit?: ProcLimit;
   /** The gate that stopped it, when `limit` is `wrong-skill`. */
@@ -182,6 +190,8 @@ export type ProcCast = {
   damage: number;
   critChance: number;
   critDamage: number;
+  /** What the cast summons, when it does. Its lifetime damage is already inside `damage`. */
+  pets?: { perProc: number; lifeSeconds: number };
 };
 
 /**
@@ -202,10 +212,40 @@ export function procCastOf(
           critDamagePerCast: number;
           hit: { critChance: number };
         }[];
+        summons?: readonly {
+          damagePerSummon?: number;
+          petsPerCast: number;
+          lifeSeconds: number;
+        }[];
       }
     | undefined,
 ): ProcCast {
   if (result === undefined) return { damage: 0, critChance: 0, critDamage: 0 };
+  const cast = directCastOf(result);
+  // A summon's cast deals nothing itself; what it is worth is the pets, and a proc-summoned pet is
+  // on no clock of the summoning skill's — so one proc is worth their whole life. Whether the
+  // summoning cast "crit" changes nothing about them, so the same amount goes on both branches
+  // and the blend is untouched.
+  const summoned = (result.summons ?? []).filter((s) => s.damagePerSummon !== undefined);
+  if (summoned.length === 0) return cast;
+  const petDamage = summoned.reduce((sum, s) => sum + s.damagePerSummon!, 0);
+  return {
+    damage: cast.damage + petDamage,
+    critChance: cast.damage > 0 ? cast.critChance : 0,
+    critDamage: cast.critDamage + petDamage,
+    pets: {
+      perProc: summoned.reduce((sum, s) => sum + s.petsPerCast, 0),
+      lifeSeconds: Math.max(...summoned.map((s) => s.lifeSeconds)),
+    },
+  };
+}
+
+function directCastOf(result: {
+  damagePerCast: number;
+  critDamagePerCast: number;
+  hit: { critChance: number };
+  sources: readonly { damagePerCast: number; critDamagePerCast: number; hit: { critChance: number } }[];
+}): ProcCast {
   const damage = result.damagePerCast;
   const critDamage = result.critDamagePerCast;
   // average = normal + c·(crit − normal) per source, so each source's normal hit comes back out
@@ -354,10 +394,12 @@ export function resolveProcs(input: ProcInput): Proc[] {
         ? {}
         : { consumes: { effectId: hit.consumes.effectId, stacksPerProc: hit.consumes.stacks, supply } }),
       damagePerProc,
-      ...(cast === undefined || cast.damage <= 0
+      // A pure summon's pets do not crit on the summoning cast, so it has no crit to show.
+      ...(cast === undefined || cast.damage <= 0 || (cast.pets !== undefined && cast.critChance <= 0)
         ? {}
         : { critChance: cast.critChance, critDamagePerProc: cast.critDamage }),
       dps: damagePerProc * perSecond,
+      ...(cast?.pets === undefined ? {} : { pets: { ...cast.pets, alive: 0 } }),
       ...(limit === undefined
         ? damagePerProc <= 0 && perSecond > 0
           ? { limit: "no-damage" as const }
@@ -395,8 +437,9 @@ export function resolveProcs(input: ProcInput): Proc[] {
     }
   });
 
-  out.sort((a, b) => b.dps - a.dps);
-  for (const proc of out) {
+  const shared = shareCooldowns(out);
+  shared.sort((a, b) => b.dps - a.dps);
+  for (const proc of shared) {
     if (proc.limit !== "on-kill" && proc.limit !== "when-hit") continue;
     input.diagnostics.push({
       severity: "info",
@@ -410,6 +453,69 @@ export function resolveProcs(input: ProcInput): Proc[] {
             `say how often that is. State the enemy's attack damage and how often it swings on ` +
             `the Config tab (an attacker profile fills both) and this gets a real rate. It is ` +
             `listed and not counted until then.`,
+    });
+  }
+  return shared;
+}
+
+/**
+ * One cooldown per procced spell, however many stats roll for it.
+ *
+ * `ProcSpellEffect.activate` (6.4.13 jar) checks and stamps `procCooldownKey(spell.GUID())` — a
+ * key built from the *spell*, not the stat — before it casts. So Arachnid Inoculation's
+ * `proc_summon_spider` and `proc_summon_spider_crit` are two rolls against one 10-tick
+ * cooldown, and together they summon at most two spiders a second, not four. Rating each stat
+ * against the cooldown on its own counted every spider twice.
+ *
+ * Two procs on the same trigger roll on the same hit, and the first to fire blocks the other, so
+ * their combined rate is the union `t × (1 − Π(1 − cᵢ))` rather than the sum. On different
+ * clocks (a swing proc and a when-hit proc) the events are separate and the rates add. The
+ * shared rate is then split in proportion to each proc's own, which is a guess at who wins the
+ * race and does not move the total.
+ */
+export function shareCooldowns(procs: readonly Proc[]): Proc[] {
+  const bySpell = new Map<string, number[]>();
+  procs.forEach((proc, i) => {
+    if (proc.limit !== undefined || proc.perSecond <= 0) return;
+    const list = bySpell.get(proc.spellId) ?? [];
+    list.push(i);
+    bySpell.set(proc.spellId, list);
+  });
+
+  const out = procs.map((proc) =>
+    proc.pets === undefined
+      ? proc
+      : { ...proc, pets: { ...proc.pets, alive: proc.perSecond * proc.pets.perProc * proc.pets.lifeSeconds } },
+  );
+  for (const members of bySpell.values()) {
+    if (members.length < 2) continue;
+    const group = members.map((i) => out[i]!);
+    const capPerSecond = TICKS_PER_SECOND / Math.max(1, group[0]!.cooldownTicks);
+    // What each would fire at with the cooldown lifted — the supply still binds a consumer.
+    const free = group.map((p) =>
+      p.boundBy === "cooldown" ? p.triggersPerSecond * p.chance : p.perSecond,
+    );
+    const freeTotal = free.reduce((sum, r) => sum + r, 0);
+    const sameClock =
+      group.every((p) => p.boundBy !== "supply") &&
+      group.every((p) => Math.abs(p.triggersPerSecond - group[0]!.triggersPerSecond) < 1e-9);
+    const combined = sameClock
+      ? group[0]!.triggersPerSecond * (1 - group.reduce((miss, p) => miss * (1 - Math.min(1, p.chance)), 1))
+      : freeTotal;
+    const total = Math.min(combined, capPerSecond);
+    if (freeTotal <= 0) continue;
+    members.forEach((i, k) => {
+      const proc = out[i]!;
+      const perSecond = (total * free[k]!) / freeTotal;
+      out[i] = {
+        ...proc,
+        perSecond,
+        ...(total < combined ? { boundBy: "cooldown" as const } : {}),
+        dps: proc.damagePerProc * perSecond,
+        ...(proc.pets === undefined
+          ? {}
+          : { pets: { ...proc.pets, alive: perSecond * proc.pets.perProc * proc.pets.lifeSeconds } }),
+      };
     });
   }
   return out;
@@ -467,6 +573,7 @@ export function rotationProcs(
     bestChance: number;
     damagePerProc: number;
     crit?: { chance: number; damage: number };
+    pets?: Proc["pets"];
     limits: (ProcLimit | undefined)[];
     needsTag?: string;
     consumes?: Proc["consumes"];
@@ -502,6 +609,7 @@ export function rotationProcs(
         if (proc.critChance !== undefined && proc.critDamagePerProc !== undefined) {
           acc.crit = { chance: proc.critChance, damage: proc.critDamagePerProc };
         }
+        if (proc.pets !== undefined) acc.pets = proc.pets;
       }
       acc.limits.push(proc.limit);
       if (acc.consumes === undefined && proc.consumes !== undefined) acc.consumes = proc.consumes;
@@ -519,7 +627,8 @@ export function rotationProcs(
       acc.consumes === undefined
         ? Number.POSITIVE_INFINITY
         : acc.consumes.supply.stacksPerSecond / acc.consumes.stacksPerProc;
-    const perSecond = Math.min(triggersPerSecond * chance, capPerSecond, supplyCap);
+    const triggered = triggersPerSecond * chance;
+    const perSecond = Math.min(triggered, capPerSecond, supplyCap);
     const limit = acc.limits.some((l) => l === undefined) ? undefined : worstLimit(acc.limits);
 
     out.push({
@@ -529,7 +638,18 @@ export function rotationProcs(
       cooldownTicks: acc.cooldownTicks,
       triggersPerSecond,
       perSecond: limit === undefined ? perSecond : 0,
+      ...(limit === undefined && perSecond > 0
+        ? {
+            boundBy:
+              perSecond === supplyCap && supplyCap < triggered
+                ? ("supply" as const)
+                : perSecond === capPerSecond && capPerSecond < triggered
+                  ? ("cooldown" as const)
+                  : ("trigger" as const),
+          }
+        : {}),
       ...(acc.consumes === undefined ? {} : { consumes: acc.consumes }),
+      ...(acc.pets === undefined ? {} : { pets: acc.pets }),
       damagePerProc: acc.damagePerProc,
       ...(acc.crit === undefined
         ? {}
@@ -540,8 +660,7 @@ export function rotationProcs(
     });
   }
 
-  out.sort((a, b) => b.dps - a.dps);
-  return out;
+  return shareCooldowns(out).sort((a, b) => b.dps - a.dps);
 }
 
 /**

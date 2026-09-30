@@ -162,6 +162,19 @@ export type SummonOutput = {
   damagePerAttack: number;
   /** `count × damagePerAttack / attackSeconds`. */
   dps: number;
+  /**
+   * What one cast's pets deal over their whole life, for a spell cast by a proc rather than by you.
+   *
+   * A proc-summoned pet is not on the summoning skill's cycle at all: `summon_spider` is never
+   * pressed, Arachnid Inoculation's proc casts it off your hits. So its worth per proc is the
+   * pets it brings times every attack they get in before they expire, and the proc's own rate
+   * then says how many are alive at once. Set only for an uncapped pet with a finite life — the
+   * only kind any proc in the pack summons. A capped pet would be culled before it lived out its
+   * life, and a permanent one has no lifetime to multiply by.
+   */
+  damagePerSummon?: number;
+  /** Pets one cast brings, which is the act's `count` whatever the steady state is. */
+  petsPerCast: number;
   /** The spells this pet casts on top of its swing, when the summon skill declares any. */
   extraSpells: SummonSpellCast[];
 };
@@ -260,6 +273,12 @@ export function resolveSummons(input: SummonInput): SummonOutput[] {
 
     const { count, note } = liveCount(act, calc, input.cycleSeconds, lifeSeconds);
     const extraSpells = petSpells(input, spell, count, attackSeconds);
+    const extraPerPet =
+      count > 0 ? extraSpells.reduce((sum, cast) => sum + cast.dps, 0) / count : 0;
+    const damagePerSummon =
+      act.countsTowardsMax || !Number.isFinite(lifeSeconds) || attackSeconds <= 0
+        ? undefined
+        : act.count * lifeSeconds * (damagePerAttack / attackSeconds + extraPerPet);
 
     out.push({
       spellId,
@@ -276,6 +295,8 @@ export function resolveSummons(input: SummonInput): SummonOutput[] {
       dps:
         (attackSeconds > 0 ? (count * damagePerAttack) / attackSeconds : 0) +
         extraSpells.reduce((sum, cast) => sum + cast.dps, 0),
+      ...(damagePerSummon === undefined ? {} : { damagePerSummon }),
+      petsPerCast: act.count,
       extraSpells,
     });
   }

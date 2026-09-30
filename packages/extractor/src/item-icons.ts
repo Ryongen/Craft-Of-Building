@@ -19,7 +19,9 @@
  *
  * The second names no `layer0` at all — it is a block model wearing a texture under an
  * arbitrary key, in the `block/` folder despite being an item. Anything that only reads
- * `textures.layer0` finds a sprite for the armour and none of the 90 weapons.
+ * `textures.layer0` finds a sprite for the armour and none of the 90 weapons. And the texture it
+ * does name is a UV sheet for the model's cuboids, so those items are drawn from their model
+ * instead (`model-render.ts`); the texture-reference path is for flat items only.
  *
  * ## What is not resolved is reported
  *
@@ -29,6 +31,7 @@
  * the same rule the rest of extraction follows: report the gap, never invent the sprite.
  */
 
+import { renderItemModel } from "./model-render.js";
 import { openArchive, type ResourceArchive } from "./zip.js";
 
 /** How deep to follow `parent` before giving up. Vanilla chains are two or three long. */
@@ -117,6 +120,21 @@ export function resolveItemIcons(
   let bytes = 0;
 
   for (const itemId of wanted) {
+    // A 3D model's textures are UV sheets, not pictures of the item — see `model-render.ts`.
+    // One that cannot be drawn is unresolved; its sheet is exactly the wrong glyph.
+    const rendered = renderItemModel(itemId, models, textures);
+    if (rendered.kind === "model") {
+      if (rendered.png === undefined) {
+        unresolved.push(itemId);
+        continue;
+      }
+      const relative = itemIconPath(itemId);
+      write(relative, rendered.png);
+      icons[itemId] = relative;
+      bytes += rendered.png.length;
+      continue;
+    }
+
     // Every candidate the chain offers, in preference order, and the first that resolves to a
     // PNG actually present in `mods/` wins. Taking only the single best-named reference would
     // discard a working sprite whenever a model's tidiest key points outside the pack.

@@ -310,6 +310,12 @@ test("a pet that counts against no cap is bounded by its lifespan instead", () =
   // The cycle is the 10s cooldown plus the cast that arms it, so it is a shade under two full
   // waves rather than exactly two — 20 / 10.05, twice over.
   closeTo(pets.count, 2 * (20 / 10.05), "just under two waves of the two each cast summons");
+
+  // Cast by a proc instead, the same pets are worth their whole life per cast: two of them, 20
+  // bites each. A capped pet has no such figure — the cull, not its life, ends it.
+  assert.equal(pets.petsPerCast, 2);
+  closeTo(pets.damagePerSummon!, 2 * 20 * pets.damagePerAttack);
+  assert.equal(run("summon_zombie").summons[0]!.damagePerSummon, undefined);
 });
 
 test("a golem's nova is capped by its attempt cooldown, not by how often it hits", () => {

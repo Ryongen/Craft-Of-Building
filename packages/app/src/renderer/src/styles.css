@@ -3188,6 +3188,12 @@ textarea.paste:focus {
   text-decoration: line-through;
 }
 
+/* A spell gear teaches that is not on the bar yet: an offer, not a group. */
+.skill-row.granted {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
 /* The basic attack: in the list, but not of the document. Set apart by a dashed edge. */
 .skill-row.basic {
   border-style: dashed;

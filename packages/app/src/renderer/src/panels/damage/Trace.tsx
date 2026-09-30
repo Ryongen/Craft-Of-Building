@@ -809,8 +809,13 @@ function StatSources({
   */
   const { isPerc, minusIsGood } = statDisplay(world.snapshot, statId);
 
+  // The split above is a `MULTIPLICATIVE_DAMAGE` rule. A `MULTIPLY_STAT` stat folds its MORE into
+  // the value — `critical_damage` is one, so Confident Ruin's `MORE critical_damage` is part of
+  // the number the Crit Damage layer reads, and filtering MORE out hid the gem from the only row
+  // it feeds. Read the same way the Stats tab's formula reads it.
+  const moreInValue = breakdown.stat.dmgMulti === 1 && breakdown.multi !== 1;
   const contributions = (breakdown?.contributions ?? []).filter((c) =>
-    kind === "more" ? c.type === "MORE" : c.type !== "MORE",
+    kind === "more" ? c.type === "MORE" : c.type !== "MORE" || moreInValue,
   );
 
   /*

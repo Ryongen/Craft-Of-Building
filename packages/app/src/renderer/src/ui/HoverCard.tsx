@@ -12,7 +12,7 @@
  * only decides whether one is up and where it goes.
  */
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { useNarrow } from "./narrow.js";
@@ -109,6 +109,41 @@ export function useHoverCard(render: ((at: At) => ReactNode) | undefined): {
     return () => window.removeEventListener("scroll", onScroll, { capture: true });
   }, [touch, open, clear]);
 
+  // `floatingStyle` guesses the card's size, and on a short window the guess loses: a card taller
+  // than the room above the pointer flips up and runs off the top. So once it is on screen, measure
+  // it and nudge it back inside. `translate` rather than top/bottom, because those belong to React
+  // and it would not know to clear an override on the next move.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const docked = touch && narrow;
+  useLayoutEffect(() => {
+    const el = wrapRef.current?.firstElementChild;
+    if (!(el instanceof HTMLElement)) return;
+    el.style.translate = "";
+    el.style.maxHeight = "";
+    el.style.overflow = "";
+    const margin = 8;
+    const room = window.innerHeight - margin * 2;
+    let rect = el.getBoundingClientRect();
+    if (rect.height > room) {
+      el.style.maxHeight = `${room}px`;
+      el.style.overflow = "hidden";
+      rect = el.getBoundingClientRect();
+    }
+    const dx =
+      rect.left < margin
+        ? margin - rect.left
+        : rect.right > window.innerWidth - margin
+          ? Math.max(margin - rect.left, window.innerWidth - margin - rect.right)
+          : 0;
+    const dy =
+      rect.top < margin
+        ? margin - rect.top
+        : rect.bottom > window.innerHeight - margin
+          ? Math.max(margin - rect.top, window.innerHeight - margin - rect.bottom)
+          : 0;
+    if (dx !== 0 || dy !== 0) el.style.translate = `${dx}px ${dy}px`;
+  });
+
   if (render === undefined) return { props: {}, clear, node: null };
 
   const card = at === null ? null : render(at);
@@ -119,12 +154,14 @@ export function useHoverCard(render: ((at: At) => ReactNode) | undefined): {
       card === null
         ? null
         : createPortal(
-            touch && narrow ? (
+            docked ? (
               <div className="touch-dock" ref={dockRef}>
                 {card}
               </div>
             ) : (
-              card
+              <div ref={wrapRef} style={{ display: "contents" }}>
+                {card}
+              </div>
             ),
             document.body,
           ),

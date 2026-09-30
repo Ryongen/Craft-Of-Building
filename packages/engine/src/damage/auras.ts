@@ -122,8 +122,19 @@ export function auraSources(input: AuraInput): AuraResult {
     // walk serve both: `ExileEffect.spell` *is* a `Spell`, with the same parts, the same gates
     // and the same acts. Entering at the group it ticks rather than at `on_cast` is the only
     // difference, and `entryGroup` already existed for the summons' basic attacks.
+    //
+    // What the tick *spawns* is looked up on the spell that granted it. Power Surge's effect only
+    // throws a `lightning_bolt` projectile every 40 ticks; the bolt's damage group is declared on
+    // `power_surge` itself. Walked on the effect's tree alone the bolt had nothing to run and the
+    // skill read 0, though in game it strikes every two seconds. The effect's own groups win a
+    // name clash, since the tick group is always the effect's.
+    const granting = asObject(asObject(input.spell["attached"])?.["entity_components"]);
+    const attached =
+      granting === undefined
+        ? spell
+        : { ...spell, entity_components: { ...granting, ...groups } };
     const model = skillModel(
-      { attached: spell, identifier: option.id },
+      { attached, identifier: option.id },
       input.declared,
       input.calc,
       input.effects,

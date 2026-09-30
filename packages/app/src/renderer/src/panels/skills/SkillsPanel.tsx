@@ -92,6 +92,7 @@ export function SkillsPanel(): ReactNode {
   const addSkill = useBuild((s) => s.addSkill);
   const removeSkill = useBuild((s) => s.removeSkill);
   const duplicateSkill = useBuild((s) => s.duplicateSkill);
+  const toggleSkillFor = useBuild((s) => s.toggleSkillFor);
   const skills = doc.skills ?? [];
 
   /*
@@ -144,6 +145,7 @@ export function SkillsPanel(): ReactNode {
   const full = active >= MAX_ACTIVE_SKILLS;
 
   const ranking = useSkillRanking(sortByDps);
+  const granted = useGrantedSpells();
 
   /**
    * The list, in the order the left column draws it.
@@ -209,6 +211,32 @@ export function SkillsPanel(): ReactNode {
             selected={selected.kind === "skill" && selected.index === index}
             onSelect={() => setSelection({ kind: "skill", index })}
           />
+        ))}
+
+        {/*
+          Spells the character knows that no class perk taught: a set bonus or a unique putting
+          `learn_<spell>` on the sheet. Genji's Vigilance grants Slice at rank 12 on two pieces,
+          and the game slots it like any other learned spell — but only the Classes tab ever
+          added a Skill here, so the one thing you would want to link gems to had no row.
+          Offered rather than added on equip: a gear swap should not rewrite the bar.
+        */}
+        {granted.length > 0 && (
+          <div className="faint text-sm mt-3 mb-2">Granted by your gear, click to add:</div>
+        )}
+        {granted.map(([spellId, rank]) => (
+          <div
+            key={`granted-${spellId}`}
+            className="skill-row granted"
+            title={`Your gear teaches this at rank ${rank}. Add it to link support gems.`}
+            onClick={() => {
+              toggleSkillFor(spellId, true);
+              setSelection({ kind: "skill", index: skills.length });
+            }}
+          >
+            <span className="ellipsis grow">{spellName(world.snapshot, spellId)}</span>
+            <span className="badge">rank {rank}</span>
+            <span className="badge">+ add</span>
+          </div>
         ))}
 
         {/*
@@ -383,6 +411,30 @@ function useSkillRanking(enabled: boolean): Map<number, number> | undefined {
 }
 
 /**
+ * Spells the sheet knows that are neither on the bar nor taught by a class perk, with their rank.
+ *
+ * `spellRanks` reads every `learn_<spell>` on the finished sheet, so it sees what gear grants;
+ * `learnedSpells` reads `character.schools` only. The difference is what gear alone teaches. A
+ * class-taught spell someone took off the bar is left off — that removal was deliberate.
+ */
+function useGrantedSpells(): [string, number][] {
+  const doc = useBuild((s) => s.doc);
+  const derived = useDerived();
+  const { snapshot } = useWorld();
+
+  return useMemo(() => {
+    const ranks = spellRanks(snapshot, derived.stats, balance(snapshot));
+    const learned = learnedSpells(snapshot, doc);
+    const held = new Set((doc.skills ?? []).map((s) => s.spellId));
+    return [...ranks]
+      .filter(
+        ([id]) => !held.has(id) && !learned.has(id) && spellExclusion(snapshot, id) === undefined,
+      )
+      .sort(([a], [b]) => spellName(snapshot, a).localeCompare(spellName(snapshot, b)));
+  }, [snapshot, derived.stats, doc]);
+}
+
+/**
  * The swing's figure for the ranked list: the hit and what it procs, on its own clock.
  *
  * Already computed for the open document, so it costs nothing, and it is the same number the
@@ -449,6 +501,9 @@ function ResolvedFacts({ index }: { index: number }): ReactNode {
             (proc.critChance === undefined
               ? ""
               : `, ${(proc.critChance * 100).toFixed(1)}% to crit`) +
+            (proc.pets === undefined
+              ? ""
+              : `, keeping ${proc.pets.alive.toFixed(1)} alive at ${proc.pets.lifeSeconds.toFixed(1)}s each`) +
             (proc.boundBy === "supply" && proc.consumes !== undefined
               ? `, paced by ${exileEffectName(snapshot, proc.consumes.effectId)} arriving at ` +
                 `${proc.consumes.supply.stacksPerSecond.toFixed(2)}/s`
@@ -908,7 +963,9 @@ function SkillCard({
             {skill.level === undefined
               ? learnedRank === undefined && resolvedRank === undefined
                 ? " · unset"
-                : grantedBonus > 0
+                : learnedRank === undefined
+                  ? " · from your gear"
+                  : grantedBonus > 0
                   ? " · from your class and gear"
                   : " · from your class"
               : ""}
