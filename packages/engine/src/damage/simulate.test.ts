@@ -93,6 +93,37 @@ test("a bare hit is the value calc's number, untouched", () => {
   assert.equal(result.element, "Physical");
 });
 
+test("multiply_by_caster_effect_stacks multiplies the base by the caster's stacks", () => {
+  // `DamageAction`: `value *= getStacks(id)`. Clamor, Crash, Clatter deals its Fire, Nature and
+  // Cold once per charge held, and none at all without one.
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: { strike: spellEntry("strike", "Physical", "hit100") },
+    mmorpg_exile_effect: {
+      charge: {
+        id: "charge",
+        type: "beneficial",
+        max_stacks: 3,
+        one_of_a_kind_id: "",
+        stacks_affect_stats: true,
+        stats: [{ type: "FLAT", min: 5, max: 5, stat: "armor" }],
+        tags: { tags: [] },
+      },
+    },
+  });
+  const held = (stacks: number) =>
+    simulateHit(build({ config: { effects: { charge: stacks } } }), snapshot, {
+      multiplyByCasterStacks: "charge",
+    });
+
+  const three = held(3);
+  assert.ok(three);
+  assert.equal(three.baseValue, 300);
+  assert.equal(three.hit.total, 300);
+  assert.deepEqual(three.stackMultiplier, { effectId: "charge", stacks: 3 });
+  assert.equal(held(0)?.baseValue, 0);
+});
+
 test("an additive_damage stat multiplies, and its MORE rides separately as dmgMulti", () => {
   // `increased_damage` is MULTIPLICATIVE_DAMAGE, so its MORE modifiers stay out of the value
   // through the whole stat calculation and arrive here as `StatData.m`. The layer gets the

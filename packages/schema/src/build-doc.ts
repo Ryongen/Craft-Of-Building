@@ -189,6 +189,63 @@ export type Item = {
    * through it. Only meaningful on a worn item; benched items never carry it.
    */
   mirrored?: true;
+  /**
+   * The stack data crafting reads and a build doesn't: potential, the corrupted / mirrored /
+   * crafted flags, use counters. Written by the exporter mod, carried through untouched here so a
+   * build file round-trips it, and read by the crafting simulator (Gamba to Exile). Nothing in
+   * the stat engine looks at it.
+   */
+  craft?: CraftState;
+};
+
+/**
+ * What a gear stack holds beyond `GearItemData`, as the exporter mod reads it. All of it lives
+ * in two other `ItemstackDataSaver`s on the stack — `mmorpg_potential` (`PotentialData`) and
+ * `mmorpg_custom_data` (`CustomItemData`) — which is why a plain item document never had it.
+ */
+export type CraftState = {
+  /** Format version of this block. */
+  v: 1;
+  /**
+   * `PotentialData.potential`, or null when the stack has no potential key at all. The two are
+   * not the same: `OrbAddonEvents.hasPotential` fails a missing key for any orb that costs
+   * potential, exactly as it fails too little.
+   */
+  potential: number | null;
+  /**
+   * `CustomItemData.KEYS.CORRUPT` — the flag every orb's "Must not be corrupted" reads.
+   *
+   * Not the same as having `corruptions`: `IsNotCorruptedReq` checks this flag, and an Entangled
+   * orb's failure sets it while adding no corruption affix at all.
+   */
+  corrupted: boolean;
+  /**
+   * `CustomItemData.KEYS.MIRRORED` — a copy made by an Orb of Reflection.
+   *
+   * Unrelated to `Item.mirrored`, which is the planner's "worn in both places" and is about
+   * wearing, not about the stack.
+   */
+  mirrored: boolean;
+  /** `CustomItemData.KEYS.CRAFTED` — made from a stat soul. Some orbs refuse crafted gear. */
+  crafted: boolean;
+  /**
+   * `GearSocketsData.sl`, the socket count including empty ones. The item records only what is
+   * socketed (`sockets`, `runes`) and the corruption's extra (`bonusSockets`), so an empty socket
+   * is otherwise invisible.
+   */
+  sockets: number;
+  /** `CustomItemData.KEYS.ENCHANT_TIMES` — infusion attempts made, out of the game's ten. */
+  enchantTimes: number;
+  /**
+   * `MaxUsesKey` counters by use id (`level_up`, `relief`, `seed_uses`, ...). Each capped orb
+   * increments one, and its `max_uses` requirement compares against it.
+   */
+  uses: Record<string, number>;
+  /**
+   * The raw `CustomItemData` map, string to string as the game saves it. Kept so a key added by a
+   * later version of the mod still arrives without the exporter knowing its name.
+   */
+  custom?: Record<string, string>;
 };
 
 /**
@@ -405,6 +462,9 @@ export type SkillSetup = {
    * and for those, "every pass" both overcharges the pass and overcounts the hit. With this set
    * the skill is charged its upkeep like a pure buff, and its damage lands once per re-cast.
    * Ignored for a skill with no buff or debuff to wait on.
+   *
+   * Unset means the default, which is true for a `curse`-tagged skill and false otherwise — so
+   * `false` is meaningful too: it puts a curse's hit back on every pass.
    */
   fullDpsAsBuff?: boolean;
   /**

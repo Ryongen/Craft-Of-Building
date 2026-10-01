@@ -960,7 +960,7 @@ function tagFor(snapshot: Snapshot, conditionId: string): string | undefined {
  * that condition is unanswerable from a static document — so the cooldown is applied here, as a
  * ceiling on the rate, rather than as a gate on the roll.
  */
-function procCooldownOf(snapshot: Snapshot, spellId: string): number {
+export function procCooldownOf(snapshot: Snapshot, spellId: string): number {
   const config = entry(snapshot, CATEGORY.spell, spellId)?.data?.["config"];
   const value =
     config !== null && typeof config === "object"

@@ -94,7 +94,7 @@ import { resolveSummons, summonDps, type SummonOutput } from "./summons.js";
  * `Spell.DEFAULT_EN_NAME`, which `PetAttackUTIL.tryAttack` passes to `tryActivate` — the pet's
  * basic attack has no `on_cast` half at all, so this is the only way into it.
  */
-const PET_ATTACK_GROUP = "default_entity_name";
+export const PET_ATTACK_GROUP = "default_entity_name";
 import {
   budget,
   leech,
@@ -160,6 +160,12 @@ export type DpsOptions = DamageOptions & {
    * way `procs` does and for the same reason.
    */
   summons?: boolean;
+  /**
+   * Collect each source's per-hit proc rolls (`SourceResult.hit.procs`) but skip resolving them
+   * into rates and damage. `chain.ts` only wants the rolls, and resolving would cost a nested
+   * `simulateDps` per proc for every link in the chain. `procs` is then empty.
+   */
+  procRollsOnly?: boolean;
   /**
    * The character run this figure should be built on, when the caller already has it.
    *
@@ -1039,7 +1045,7 @@ export function simulateDps(
   // the source whose element it names: asking the first alone left a cold proc on a
   // physical-first attack reporting `cannot-trigger`.
   const wantProcs = options.procs !== false;
-  const procShares: { procs: { onHit: ProcHit[]; onCrit: ProcHit[] }; critChance: number; hits: number }[] = [];
+  const procShares: { procs: ProcHit[]; hits: number }[] = [];
 
   for (const source of model.sources) {
     for (const need of source.requires) {
@@ -1060,6 +1066,9 @@ export function simulateDps(
       procs: wantProcs && source.target?.kind !== "self",
       element: source.element,
       valueCalcId: source.valueCalcId,
+      ...(source.multiplyByCasterStacks === undefined
+        ? {}
+        : { multiplyByCasterStacks: source.multiplyByCasterStacks }),
       // A `self` selector is the caster. Resolved against your own sheet rather than the mob's,
       // it is the cost of the cast; resolved against the mob's it is a number about nothing.
       selfHit: source.target?.kind === "self",
@@ -1107,7 +1116,7 @@ export function simulateDps(
       concurrentCasts,
       concurrentCarriers: concurrentCasts * source.carriersPerCast,
     });
-    if (asked !== undefined) procShares.push({ procs: asked, critChance: hit.critChance, hits: coverage.hitsPerCast });
+    if (asked !== undefined) procShares.push({ procs: asked, hits: coverage.hitsPerCast });
 
     if (limit !== undefined) {
       diagnostics.push({
@@ -1478,7 +1487,7 @@ export function simulateDps(
 
   const procHits = weighProcShares(procShares);
   const procs =
-    procHits === undefined
+    procHits === undefined || options.procRollsOnly === true
       ? []
       : resolveProcs({
           snapshot,
@@ -2092,7 +2101,7 @@ const MAX_RAMP_CASTS = 400;
  * chance stays readable on a figure that is zero for placement reasons.
  */
 function weighProcShares(
-  shares: readonly { procs: { onHit: ProcHit[]; onCrit: ProcHit[] }; critChance: number; hits: number }[],
+  shares: readonly { procs: ProcHit[]; hits: number }[],
 ): ProcHit[] | undefined {
   if (shares.length === 0) return undefined;
   const total = shares.reduce((sum, s) => sum + s.hits, 0);
@@ -2100,8 +2109,7 @@ function weighProcShares(
   for (const share of shares) {
     const weight = total > 0 ? share.hits / total : 1 / shares.length;
     if (weight <= 0) continue;
-    for (const hit of share.procs.onHit) out.push({ ...hit, chance: hit.chance * (1 - share.critChance) * weight });
-    for (const hit of share.procs.onCrit) out.push({ ...hit, chance: hit.chance * share.critChance * weight });
+    for (const hit of share.procs) out.push({ ...hit, chance: hit.chance * weight });
   }
   return out;
 }
@@ -2161,7 +2169,7 @@ export function simulateFullDps(
     // What one press of this skill takes out of the pass: its cast, then the shared arm it puts
     // on everything else. A skill off the global cooldown contributes only its cast time.
     const pressSeconds = result.rate.castSeconds + result.rate.globalCooldownSeconds;
-    const buff = upkeepOf(result, skill.fullDpsAsBuff === true);
+    const buff = upkeepOf(result, skill.fullDpsAsBuff);
 
     if (buff === undefined) {
       entries.push({ skill, result, rotationSeconds: pressSeconds, pressSeconds, role: "rotation" });
@@ -2392,7 +2400,19 @@ export function simulateFullDps(
  * with Effect Duration, the cycle with Cooldown — which is what makes either one worth linking
  * to one of these at all.
  */
-function upkeepOf(result: DpsResult, asBuff = false):
+/**
+ * Whether a skill that hits is pressed for its buff or debuff rather than for the hit.
+ *
+ * The document's `fullDpsAsBuff` when it says, either way. Unsaid, a curse is: Agony, Despair and
+ * Weakness each carry a small `curse` hit, and reading that as "press every pass" let their 3 s
+ * cooldown pace the whole rotation and left Effect Duration — the reason to link anything to a
+ * curse — moving nothing. Everything else defaults to a rotation step.
+ */
+export function pressedForEffect(result: DpsResult, asBuff: boolean | undefined): boolean {
+  return asBuff ?? result.declared.tags.includes("curse");
+}
+
+function upkeepOf(result: DpsResult, asBuff?: boolean):
   | {
       role: Exclude<FullDpsRole, "rotation">;
       seconds: number;
@@ -2402,10 +2422,11 @@ function upkeepOf(result: DpsResult, asBuff = false):
     }
   | undefined {
   const aura = result.declared.tags.includes("aura");
+  const curse = result.declared.tags.includes("curse");
   // A toggle that hits is still a toggle. Everything else earns its way out of the rotation by
-  // putting nothing on the target — or by the build saying it is pressed for its buff, in which
-  // case the hit rides along once per re-cast (`fullDpsAsBuff`).
-  if (!aura && !asBuff && result.damagePerCast > 0) return undefined;
+  // putting nothing on the target — or by being pressed for its effect, in which case the hit
+  // rides along once per re-cast. See `pressedForEffect` for who decides that.
+  if (!aura && !pressedForEffect(result, asBuff) && result.damagePerCast > 0) return undefined;
 
   // `result.buff` / `result.debuff` rather than a second walk of the spell: they are the same
   // upkeep answers with the `eff_dur_u_cast` sweep already applied, and the rotation has to be
@@ -2413,7 +2434,9 @@ function upkeepOf(result: DpsResult, asBuff = false):
   // support gem would have gone on doing nothing to the pass length.
   const held = result.buff;
   const applied = result.debuff;
-  const chosen = held ?? applied;
+  // The curse on the mob, not the `soul` stack every curse also hands you: Agony is re-cast when
+  // Agony falls off, and `soul`'s 8 s would charge it nearly twice as often.
+  const chosen = curse ? (applied ?? held) : (held ?? applied);
   if (chosen === undefined) {
     // An aura with nothing to pace it is still free: it is up, and the pass does not wait for
     // it. Anything else with no effect to expire is a button you are pressing for no stated
@@ -2436,7 +2459,7 @@ function upkeepOf(result: DpsResult, asBuff = false):
     seconds: Math.max(durationSeconds, result.rate.cycleSeconds),
     durationSeconds,
     effectId: chosen.effectId,
-    holder: held !== undefined ? "caster" : "target",
+    holder: chosen === held ? "caster" : "target",
   };
 }
 

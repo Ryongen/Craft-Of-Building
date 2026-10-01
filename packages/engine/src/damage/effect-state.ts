@@ -805,6 +805,10 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
   // positive at 0%, and availability only asks whether the stat is there at all.
   for (const skill of build.skills ?? []) {
     if (!isSkillEnabled(skill)) continue;
+    // A gem's `on_damage` stat only ever sees the linked skill's own hits — the `SUPPORT_GEM`
+    // context is on that spell's unit. Power Charge on Crit linked to Protection, which deals no
+    // damage, can never fire, and offering the charge made it read as a gem worth linking there.
+    const hits = skillCanHit(snapshot, skill.spellId);
     for (const link of activeSupportLinks(skill)) {
       const gem = entry(snapshot, CATEGORY.supportGem, link.id)?.data;
       if (!gem) continue;
@@ -812,6 +816,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
         const statId = stringAt(asObject(raw) ?? {}, "stat");
         if (statId === undefined) continue;
         for (const grant of grantingStats(snapshot).get(statId) ?? []) {
+          if (!hits && grant.side === "Source" && grant.event === "on_damage") continue;
           add(grant.effectId, {
             kind: "support",
             gemId: link.id,
@@ -1442,6 +1447,29 @@ function proccedSpells(snapshot: Snapshot, has: (statId: string) => boolean): st
  * The element of every `damage` act in a spell's tree, read the way `skill-model.ts` reads it:
  * an act that names no element deals Physical.
  */
+/**
+ * Whether casting `spellId` can deal damage that its linked support gems see: a `damage` act of
+ * its own, one in the `spell` of an effect it applies (Holy Fire and the spell auras hit from the
+ * effect, which carries the casting spell), or one in a spell that takes its gems from it
+ * (`use_support_gems_from`).
+ */
+function skillCanHit(snapshot: Snapshot, spellId: string): boolean {
+  const spells = snapshot.registries[CATEGORY.spell] ?? {};
+  const own = asObject(spells[spellId]?.data);
+  if (own === undefined) return false;
+  if (damageElementsOf(own).length > 0) return true;
+  for (const applied of effectsAppliedBy(own)) {
+    const effect = asObject(entry(snapshot, CATEGORY.exileEffect, applied.id)?.data);
+    const held = asObject(effect?.["spell"]);
+    if (held !== undefined && damageElementsOf({ attached: held }).length > 0) return true;
+  }
+  return Object.values(spells).some((e) => {
+    const data = asObject(e.data);
+    const lender = data === undefined ? undefined : stringAt(asObject(data["config"]) ?? {}, "use_support_gems_from");
+    return lender === spellId && damageElementsOf(data!).length > 0;
+  });
+}
+
 function damageElementsOf(spell: Record<string, unknown>): ElementName[] {
   const out = new Set<ElementName>();
   const visitPart = (raw: unknown): void => {

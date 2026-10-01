@@ -417,3 +417,132 @@ test("a roll percent outside 0-100 is coerced rather than carried into the docum
   assert.equal(result.item?.prefixes?.[0]?.rollPercent, 100);
   assert.deepEqual(result.item?.baseRolls, [0]);
 });
+
+// ---------------------------------------------------------------------------
+// Crafting state — the exporter's `craft` block, and the same facts read out of NBT
+// ---------------------------------------------------------------------------
+
+/** What `GearExport.craft` writes for a corrupted item that has used three Orbs of Infinity. */
+const CRAFT_BLOCK = {
+  v: 1,
+  potential: 0,
+  corrupted: true,
+  mirrored: false,
+  crafted: false,
+  sockets: 2,
+  enchantTimes: 1,
+  uses: { level_up: 3 },
+  custom: { cr: "true", level_up: "3", et: "1" },
+};
+
+test("a document's craft block is carried through as the exporter wrote it", () => {
+  const result = importItem(
+    JSON.stringify({ base: "necklace", rarity: "epic", itemLevel: 60, craft: CRAFT_BLOCK }),
+    necklaceSnapshot(),
+  );
+  assert.equal(result.format, "document");
+  assert.deepEqual(result.item?.craft, CRAFT_BLOCK);
+});
+
+test("a craft block with odd fields reads leniently instead of failing the import", () => {
+  const result = importItem(
+    JSON.stringify({
+      base: "necklace",
+      rarity: "epic",
+      itemLevel: 60,
+      craft: { potential: "lots", corrupted: "yes", sockets: -2, uses: { relief: 2, bogus: "x" } },
+    }),
+    necklaceSnapshot(),
+  );
+  assert.equal(importFailed(result.issues), false);
+  assert.deepEqual(result.item?.craft, {
+    v: 1,
+    potential: null,
+    corrupted: false,
+    mirrored: false,
+    crafted: false,
+    sockets: 0,
+    enchantTimes: 0,
+    uses: { relief: 2 },
+  });
+  const notAnObject = importItem(
+    JSON.stringify({ base: "necklace", rarity: "epic", itemLevel: 60, craft: 7 }),
+    necklaceSnapshot(),
+  );
+  assert.equal(notAnObject.item?.craft, undefined);
+});
+
+test("a document with no craft block is read exactly as before", () => {
+  const result = importItem(JSON.stringify({ base: "necklace", rarity: "epic", itemLevel: 60 }), necklaceSnapshot());
+  assert.equal(result.item?.craft, undefined);
+  assert.equal(result.item?.bonusSockets, undefined);
+});
+
+test("the craft block's socket count gives the corruption's socket when bonusSockets is absent", () => {
+  const snapshot = necklaceSnapshot();
+  (snapshot.registries as Record<string, unknown>)["mmorpg_chaos_stat"] = {
+    normal_high: {
+      id: "normal_high",
+      origin: "test",
+      source: { kind: "pack", packId: "test" },
+      data: { bonus_sockets: 1, for_item_rarities: ["mythic"] },
+    },
+  };
+  const doc = { base: "necklace", rarity: "mythic", itemLevel: 60, craft: { ...CRAFT_BLOCK, sockets: 2 } };
+  assert.equal(importItem(JSON.stringify(doc), snapshot).item?.bonusSockets, 1);
+  // What the item says outright wins over the derivation.
+  assert.equal(importItem(JSON.stringify({ ...doc, bonusSockets: 1 }), snapshot).item?.bonusSockets, 1);
+  // At the rarity's own maximum there is nothing extra to find.
+  const atMax = { ...doc, craft: { ...CRAFT_BLOCK, sockets: 1 } };
+  assert.equal(importItem(JSON.stringify(atMax), snapshot).item?.bonusSockets, undefined);
+});
+
+test("NBT carrying potential and custom data yields the same craft block the exporter writes", () => {
+  const snapshot = necklaceSnapshot();
+  (snapshot.registries as Record<string, unknown>)["mmorpg_unique_gears"] = {
+    lucky_charm: {
+      id: "lucky_charm",
+      origin: "test",
+      source: { kind: "pack", packId: "test" },
+      data: { guid: "lucky_charm", base_gear: "necklace", unique_stats: [{}, {}] },
+    },
+    lucky_twin: {
+      id: "lucky_twin",
+      origin: "test",
+      source: { kind: "pack", packId: "test" },
+      data: { guid: "lucky_twin", base_gear: "necklace", unique_stats: [{}, {}] },
+    },
+  };
+  // `/data get` prints each saver as its own escaped JSON string beside mmorpg_gear.
+  const nbt =
+    `{Count: 1b, id: "roe_weapons:necklace_3", tag: {` +
+    `mmorpg_gear: '{"uniqueStats":{"perc":[40,60]},"sockets":{"so":[],"sl":1,"rw":"","rp":0},` +
+    `"rar":"unique","lvl":70,"gtype":"necklace"}', ` +
+    `mmorpg_potential: '{"potential":35}', ` +
+    `mmorpg_custom_data: '{"data":{"map":{"uq":"lucky_twin","cr":"true","mr":"false","ql":"12",` +
+    `"et":"2","level_up":"3","relief":"0"}}}'}}`;
+  const result = importItem(nbt, snapshot);
+  assert.equal(result.format, "nbt");
+  // Two uniques fit the base and stat count; `uq` names the right one instead of giving up.
+  assert.equal(result.item?.unique, "lucky_twin");
+  assert.deepEqual(result.item?.uniqueRolls, [40, 60]);
+  assert.equal(result.item?.quality, 12);
+  assert.deepEqual(result.item?.craft, {
+    v: 1,
+    potential: 35,
+    corrupted: true,
+    mirrored: false,
+    crafted: false,
+    sockets: 1,
+    enchantTimes: 2,
+    uses: { level_up: 3 },
+    custom: { uq: "lucky_twin", cr: "true", mr: "false", ql: "12", et: "2", level_up: "3", relief: "0" },
+  });
+});
+
+test("NBT with only the gear tag carries no craft block, as before", () => {
+  const nbt = `{mmorpg_gear: '{"sockets":{"so":[],"sl":0,"rw":"","rp":0},"rar":"common","lvl":1,"gtype":"necklace"}'}`;
+  const result = importItem(nbt, necklaceSnapshot());
+  assert.equal(result.format, "nbt");
+  assert.equal(result.item?.craft, undefined);
+});

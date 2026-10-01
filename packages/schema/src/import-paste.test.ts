@@ -167,3 +167,26 @@ test("anything that is not an envelope still goes to the item reader", () => {
   assert.equal(result.thing, undefined);
   assert.notEqual(result.format, "copied-item");
 });
+
+test("a copied gear item keeps the exporter's craft block", () => {
+  const snap = makeSnapshot({
+    mmorpg_gear_rarity: RARITIES,
+    mmorpg_base_gear_types: { ring: { guid: "ring", gear_slot: "ring", tags: { tags: ["ring"] }, base_stats: [], weight: 1000 } },
+  });
+  // Field for field what GearExport.item writes, `craft` and `bonusSockets` included.
+  const craft = {
+    v: 1,
+    potential: 85,
+    corrupted: false,
+    mirrored: false,
+    crafted: true,
+    sockets: 1,
+    enchantTimes: 0,
+    uses: { seed_uses: 1 },
+    custom: { crafted: "true", seed_uses: "1" },
+  };
+  const result = importPaste(envelope("gear", { base: "ring", rarity: "rare", itemLevel: 80, craft }), snap);
+  assert.equal(result.format, "copied-item");
+  assert.equal(result.thing?.kind, "gear");
+  assert.deepEqual(result.thing?.kind === "gear" ? result.thing.item.craft : undefined, craft);
+});

@@ -70,7 +70,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 
-import type { AffixRoll, Item } from "./build-doc.js";
+import type { AffixRoll, CraftState, Item } from "./build-doc.js";
 import {
   LANG_KEY,
   humanise,
@@ -156,7 +156,7 @@ export function importItem(raw: string, snapshot: Snapshot): ImportResult {
   if (document !== undefined && isDocumentShape(document)) return importFromDocument(document, snapshot);
 
   const gearJson = findGearJson(trimmed);
-  if (gearJson !== undefined) return importFromNbt(gearJson, snapshot);
+  if (gearJson !== undefined) return importFromNbt(gearJson, snapshot, findStackExtras(trimmed));
 
   return importFromTooltip(trimmed, snapshot);
 }
@@ -318,6 +318,20 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
     if (Object.keys(kept).length > 0) item.enchantments = kept;
   }
 
+  const craft = readCraft(node["craft"]);
+  if (craft !== undefined) {
+    item.craft = craft;
+    // An exporter that predates `bonusSockets` still sent the socket count here; it is the same
+    // `sl` the NBT reader derives the corruption's socket from, by the same rule.
+    if (item.bonusSockets === undefined) {
+      const max = gearRarity(snapshot, item.rarity)?.sockets.max;
+      if (max !== undefined) {
+        const bonus = Math.min(craft.sockets - max, corruptionSockets(snapshot, item.rarity));
+        if (bonus > 0) item.bonusSockets = bonus;
+      }
+    }
+  }
+
   issues.push(
     issue(
       "info",
@@ -329,6 +343,37 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
     ),
   );
   return { item, format: "document", issues };
+}
+
+/**
+ * The exporter's `craft` block, read leniently: it is crafting state the planner only carries,
+ * so a field that is missing or the wrong type falls back to the game's default for it rather
+ * than failing the import. A block that isn't an object at all is ignored.
+ */
+function readCraft(raw: unknown): CraftState | undefined {
+  const node = asObject(raw);
+  if (node === undefined) return undefined;
+  const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0);
+  const uses: Record<string, number> = {};
+  for (const [id, n] of Object.entries(asObject(node["uses"]) ?? {})) {
+    if (typeof n === "number" && n > 0) uses[id] = Math.round(n);
+  }
+  const custom: Record<string, string> = {};
+  for (const [key, value] of Object.entries(asObject(node["custom"]) ?? {})) {
+    if (typeof value === "string") custom[key] = value;
+  }
+  const potential = node["potential"];
+  return {
+    v: 1,
+    potential: typeof potential === "number" && Number.isFinite(potential) ? Math.max(0, Math.round(potential)) : null,
+    corrupted: node["corrupted"] === true,
+    mirrored: node["mirrored"] === true,
+    crafted: node["crafted"] === true,
+    sockets: count(node["sockets"]),
+    enchantTimes: count(node["enchantTimes"]),
+    uses,
+    ...(Object.keys(custom).length > 0 ? { custom } : {}),
+  };
 }
 
 /** A roll percent, coerced to the 0-100 integer the document stores. */
@@ -352,6 +397,14 @@ function percent(raw: unknown): number {
  * has. A pasted `{ "rar": ..., "lvl": ..., "gtype": ... }` on its own is found by the same scan.
  */
 function findGearJson(input: string): Record<string, unknown> | undefined {
+  return findEmbeddedJson(input, isGearShape);
+}
+
+/** The first brace-balanced JSON object in the input that `accept` recognises. */
+function findEmbeddedJson(
+  input: string,
+  accept: (value: Record<string, unknown>) => boolean,
+): Record<string, unknown> | undefined {
   for (let i = 0; i < input.length; i++) {
     if (input[i] !== "{") continue;
     const end = matchBrace(input, i);
@@ -360,9 +413,58 @@ function findGearJson(input: string): Record<string, unknown> | undefined {
     // SNBT escapes the embedded JSON's quotes when it prints it inside a string. Try both.
     const slice = input.slice(i, end + 1);
     const parsed = tryParse(slice) ?? tryParse(slice.replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
-    if (parsed !== undefined && isGearShape(parsed)) return parsed;
+    if (parsed !== undefined && accept(parsed)) return parsed;
   }
   return undefined;
+}
+
+/**
+ * The stack's other two savers, when the paste carries them: `mmorpg_potential` is
+ * `{"potential": N}` and `mmorpg_custom_data` is `{"data": {"map": {...}}}` — `CustomItemData`
+ * wrapping a `GenericDataHolder` whose only field is its string map. A `/data get` of the whole
+ * item prints both beside `mmorpg_gear`.
+ */
+type StackExtras = { potential?: number; custom?: Record<string, string> };
+
+function findStackExtras(input: string): StackExtras {
+  const out: StackExtras = {};
+  const pot = findEmbeddedJson(input, (v) => Object.keys(v).length === 1 && typeof v["potential"] === "number");
+  if (pot !== undefined) out.potential = pot["potential"] as number;
+  const custom = findEmbeddedJson(input, (v) => asObject(asObject(v["data"])?.["map"]) !== undefined);
+  const map = asObject(asObject(custom?.["data"])?.["map"]);
+  if (map !== undefined) {
+    out.custom = {};
+    for (const [key, value] of Object.entries(map)) if (typeof value === "string") out.custom[key] = value;
+  }
+  return out;
+}
+
+/**
+ * `CustomItemData.KEYS` — every key the mod names. Any other integer-valued key in the map is a
+ * `MaxUsesKey` counter (`level_up`, `relief`, ...), which is how the exporter tells them apart too.
+ */
+const NAMED_CUSTOM_KEYS = new Set(["cr", "crafted", "mr", "sl", "uq", "own", "ownn", "ql", "et"]);
+
+/** The `craft` block from the stack's custom data and potential, as the exporter writes it. */
+function craftFromExtras(extras: StackExtras, socketCount: number): CraftState {
+  const custom = extras.custom ?? {};
+  const uses: Record<string, number> = {};
+  for (const [key, value] of Object.entries(custom)) {
+    if (NAMED_CUSTOM_KEYS.has(key) || !/^-?\d+$/.test(value)) continue;
+    const n = Number(value);
+    if (n > 0) uses[key] = n;
+  }
+  return {
+    v: 1,
+    potential: extras.potential ?? null,
+    corrupted: custom["cr"] === "true",
+    mirrored: custom["mr"] === "true",
+    crafted: custom["crafted"] === "true",
+    sockets: socketCount,
+    enchantTimes: /^\d+$/.test(custom["et"] ?? "") ? Number(custom["et"]) : 0,
+    uses,
+    ...(Object.keys(custom).length > 0 ? { custom } : {}),
+  };
 }
 
 function matchBrace(input: string, start: number): number | undefined {
@@ -404,7 +506,7 @@ function isGearShape(node: Record<string, unknown>): boolean {
   return typeof node["gtype"] === "string" && typeof node["rar"] === "string";
 }
 
-function importFromNbt(gear: Record<string, unknown>, snapshot: Snapshot): ImportResult {
+function importFromNbt(gear: Record<string, unknown>, snapshot: Snapshot, extras: StackExtras = {}): ImportResult {
   const issues: ImportIssue[] = [];
   const base = String(gear["gtype"] ?? "");
   const rarity = String(gear["rar"] ?? "");
@@ -449,7 +551,13 @@ function importFromNbt(gear: Record<string, unknown>, snapshot: Snapshot): Impor
   }
 
   const uniqueNode = asObject(gear["uniqueStats"]);
-  if (uniqueNode !== undefined) {
+  // `CustomItemData.KEYS.UNIQUE_ID` names the unique outright when the paste carries custom data.
+  const namedUnique = extras.custom?.["uq"];
+  if (uniqueNode !== undefined && namedUnique !== undefined && unique(snapshot, namedUnique) !== undefined) {
+    item.unique = namedUnique;
+    const percents = asArray(uniqueNode["perc"]).filter((v): v is number => typeof v === "number");
+    if (percents.length > 0) item.uniqueRolls = percents;
+  } else if (uniqueNode !== undefined) {
     const percents = asArray(uniqueNode["perc"]).filter((v): v is number => typeof v === "number");
     // The NBT records the unique's rolls but not its id — `UniqueStatsData` keys off the item
     // stack, not the gear data. Exactly one unique can sit on this base with this many stats
@@ -474,6 +582,13 @@ function importFromNbt(gear: Record<string, unknown>, snapshot: Snapshot): Impor
   }
 
   readSockets(snapshot, gear["sockets"], item);
+
+  if (extras.potential !== undefined || extras.custom !== undefined) {
+    const sl = asObject(gear["sockets"])?.["sl"];
+    item.craft = craftFromExtras(extras, typeof sl === "number" ? sl : 0);
+    const quality = extras.custom?.["ql"];
+    if (quality !== undefined && /^\d+$/.test(quality) && Number(quality) > 0) item.quality = Number(quality);
+  }
 
   issues.push(
     issue("info", "read-from-nbt", "Read from item NBT. Every roll is exact."),

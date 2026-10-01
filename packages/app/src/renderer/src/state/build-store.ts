@@ -826,8 +826,9 @@ export const useBuild = create<BuildState>((set) => ({
     edit(set, (doc) => {
       const skills = (doc.skills ?? []).map((skill, i) => {
         if (i !== index) return skill;
-        const { fullDpsAsBuff: _drop, ...rest } = skill;
-        return asBuff ? { ...rest, fullDpsAsBuff: true } : rest;
+        // Kept when false: a curse defaults to being pressed for its debuff, so "every pass" has
+        // to be written down or it reads as the default again.
+        return { ...skill, fullDpsAsBuff: asBuff };
       });
       return prune(doc, "skills", skills);
     }),

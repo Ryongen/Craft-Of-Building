@@ -38,7 +38,7 @@ import { applyStatEffect } from "./effects.js";
 import { multiplyExact, parseRolledMods, rollToExact, type ModType } from "../modifier.js";
 import { mobAffixDiagnostics, mobAffixMods } from "./mob-affixes.js";
 import { mapMobMods } from "./map.js";
-import { activeOn, type EffectState } from "./effect-state.js";
+import { activeOn, stacksHeldBy, type EffectState } from "./effect-state.js";
 import { inCodeEffects, MAX_CONVERSION_DEPTH } from "./code-only-effects.js";
 import { sheetValue, type DamageCtx, type ProcHit, type RestoreRecord, type Sheet } from "./ctx.js";
 import { DamageEventState, EVENT, type EffectSide } from "./event.js";
@@ -65,6 +65,11 @@ export type DamageOptions = {
   /** Overrides the spell's own declared damage element and value calc, for a specific act. */
   element?: ElementName;
   valueCalcId?: string;
+  /**
+   * The act's `multiply_by_caster_effect_stacks`: the base value is multiplied by the stacks of
+   * this effect the caster holds, zero included. See `DamageSource.multiplyByCasterStacks`.
+   */
+  multiplyByCasterStacks?: string;
   /**
    * Record how each number was reached, for the damage breakdown. Off by default: the
    * pipeline runs twice per call and every bonus element is a nested event, so tracing is
@@ -141,8 +146,13 @@ export type HitOutcome = {
 
 export type DamageResult = {
   spellId: string;
-  /** `mmorpg_value_calc` output, before the event touches it. What the tooltip prints. */
+  /**
+   * `mmorpg_value_calc` output, before the event touches it — times {@link stackMultiplier} when
+   * the act has one.
+   */
   baseValue: number;
+  /** The act's `multiply_by_caster_effect_stacks`, and the caster stacks it multiplied by. */
+  stackMultiplier?: { effectId: string; stacks: number };
   dmgEffectiveness: number;
   element: ElementName;
   critChance: number;
@@ -189,12 +199,13 @@ export type DamageResult = {
    */
   target: { sheet: Sheet; origins: ReadonlyMap<string, TargetStatOrigin> };
   /**
-   * `proc_spell` blocks the sweep reached, per branch.
+   * `proc_spell` blocks the sweep reached, one entry per proc with its chance per hit — crit
+   * already folded in, per element event. See {@link procsPerHit}.
    *
    * Collected only when `options.procs` asks for them, because a spell with six damage sources
    * resolves six hits and every one of them would report the same list. `dps.ts` asks once.
    */
-  procs?: { onHit: ProcHit[]; onCrit: ProcHit[] };
+  procs?: ProcHit[];
   diagnostics: Diagnostic[];
 };
 
@@ -273,7 +284,7 @@ export function simulateHit(
   }
 
   const read = (sheet: Sheet) => (statId: string) => sheetValue(sheet, statId);
-  const baseValue = calc
+  const calculated = calc
     ? calculatedValue(
         calc,
         read(characterSheet),
@@ -285,6 +296,13 @@ export function simulateHit(
         compat,
       )
     : 0;
+  // `value *= getStacks(id)` on the int the calc returned, before the event is built.
+  const stackEffect = options.multiplyByCasterStacks;
+  const stackMultiplier =
+    stackEffect === undefined
+      ? undefined
+      : { effectId: stackEffect, stacks: stacksHeldBy(effects, stackEffect, "caster") };
+  const baseValue = stackMultiplier === undefined ? calculated : calculated * stackMultiplier.stacks;
   const effectiveness = calc ? damageEffectiveness(calc, level, maxLevel) : 1;
 
   const element = options.element ?? act?.element ?? "Physical";
@@ -319,18 +337,20 @@ export function simulateHit(
     hitChance: 1,
   };
 
-  const procs = options.procs === true ? { onHit: [] as ProcHit[], onCrit: [] as ProcHit[] } : undefined;
-  const hit = runBranch(shared, false, diagnostics, procs?.onHit);
-  const crit = runBranch(shared, true, diagnostics, procs?.onCrit);
+  const procBranches = options.procs === true ? { hit: new Map() as EventProcs, crit: new Map() as EventProcs } : undefined;
+  const hit = runBranch(shared, false, diagnostics, procBranches?.hit);
+  const crit = runBranch(shared, true, diagnostics, procBranches?.crit);
 
   // `critical_hit` sets `EventData.CRIT` from the **Source** side, so a hit whose attacker sweep
   // `disable_attacker_stats` removed never rolls one. Reporting the sheet's chance there would
   // put a crit column on a self-hit that the game can only ever resolve as a normal one.
   const rolledCrit = shared.sourceStatsDisabled ? 0 : critChance;
+  const procs = procBranches === undefined ? undefined : procsPerHit(procBranches.hit, procBranches.crit, rolledCrit);
 
   return {
     spellId: skill.spellId,
     baseValue,
+    ...(stackMultiplier === undefined ? {} : { stackMultiplier }),
     dmgEffectiveness: effectiveness,
     element,
     critChance: rolledCrit,
@@ -404,7 +424,7 @@ function runBranch(
   shared: Shared,
   crit: boolean,
   diagnostics: Diagnostic[],
-  procs: ProcHit[] | undefined,
+  procs: EventProcs | undefined,
 ): HitOutcome {
   const byElement = new Map<ElementName, number>();
   const ailments: AilmentResult[] = [];
@@ -418,10 +438,8 @@ function runBranch(
   // dropped the non-crit branch's entirely to avoid the duplication. That also dropped the few
   // that are genuinely branch-specific — a crit-only layer being averaged, for one.
   const sink: Diagnostic[] = [];
-  const events: ProcHit[] | undefined = procs === undefined ? undefined : [];
-  const trace = runEvent(shared, shared.element, shared.baseValue, crit, 0, false, byElement, ailments, sink, events, restores);
+  const trace = runEvent(shared, shared.element, shared.baseValue, crit, 0, false, byElement, ailments, sink, procs, restores, "0");
   mergeDiagnostics(diagnostics, sink);
-  if (procs !== undefined && events !== undefined) procs.push(...eitherEvent(events));
 
   let total = 0;
   for (const amount of byElement.values()) total += amount;
@@ -429,16 +447,55 @@ function runBranch(
 }
 
 /**
- * One entry per proc for the whole hit, where the hit and its bonus-element events each rolled
- * it: `1 - Π(1 - p)`, because each event rolls independently and the proc fires if any does.
+ * The `proc_spell` blocks each event of one branch reached, keyed by the event's place in the
+ * tree (`0`, `0/1:Fire`, …) so the crit and non-crit runs of the same event can be paired.
  */
-function eitherEvent(hits: readonly ProcHit[]): ProcHit[] {
+type EventProcs = Map<string, { hits: ProcHit[]; rollsCrit: boolean }>;
+
+/**
+ * One entry per proc for the whole hit, crit already folded in.
+ *
+ * Every element of a hit rolls its own crit. `buildBonusElementEvent` copies a long list of
+ * flags onto the child — `IS_BLOCKED`, `AVOIDANCE_ROLLED`, `IS_SUMMON_ATTACK` — but not
+ * `EventData.CRIT`, and `critical_hit`'s `set_bool_crit` gates only on `random_roll` and
+ * `attack_type_is_dot_is_false`, which `bonus_dmg` passes (6.4.13 jar and pack). So each
+ * element is its own crit roll and its own proc roll:
+ *
+ *     per event   q = (1 - c)·p_hit + c·p_crit
+ *     per hit     1 - Π(1 - q)
+ *
+ * Blending crit once for the whole hit instead — `c·(1 - Π(1 - p_crit))` — pinned every element
+ * to the root's crit and undercounted an `is_crit_true` proc on a multi-element hit: at 50% crit
+ * with a certain roll and three elements that is 50% where the game gives 87.5%. Curse of
+ * Tongues' `proc_blood_explosion_on_crit` is the case it was found on. A proc that ignores crit
+ * has `p_hit = p_crit` and comes out exactly as before.
+ *
+ * A `damage_taken_as` child never rolls: its attacker sweep is off, so `set_bool_crit` never
+ * runs and its `CRIT` stays false. Its non-crit run is the only true one.
+ */
+function procsPerHit(hit: EventProcs, crit: EventProcs, critChance: number): ProcHit[] {
   const out = new Map<string, ProcHit>();
-  for (const hit of hits) {
-    const key = `${hit.statId}:${hit.spellId}:${hit.side}`;
-    const seen = out.get(key);
-    if (seen === undefined) out.set(key, { ...hit });
-    else seen.chance = 1 - (1 - seen.chance) * (1 - hit.chance);
+  for (const key of new Set([...hit.keys(), ...crit.keys()])) {
+    const normal = hit.get(key);
+    const critted = crit.get(key);
+    const c = (normal ?? critted)!.rollsCrit ? critChance : 0;
+    const chances = new Map<string, { hit: ProcHit; normal: number; crit: number }>();
+    const fold = (hits: readonly ProcHit[] | undefined, branch: "normal" | "crit") => {
+      for (const proc of hits ?? []) {
+        const id = `${proc.statId}:${proc.spellId}:${proc.side}`;
+        const seen = chances.get(id) ?? { hit: proc, normal: 0, crit: 0 };
+        seen[branch] = 1 - (1 - seen[branch]) * (1 - proc.chance);
+        chances.set(id, seen);
+      }
+    };
+    fold(normal?.hits, "normal");
+    fold(critted?.hits, "crit");
+    for (const [id, { hit: proc, normal: p, crit: k }] of chances) {
+      const q = (1 - c) * p + c * k;
+      const seen = out.get(id);
+      if (seen === undefined) out.set(id, { ...proc, chance: q });
+      else seen.chance = 1 - (1 - seen.chance) * (1 - q);
+    }
   }
   return [...out.values()];
 }
@@ -471,10 +528,15 @@ function runEvent(
   byElement: Map<ElementName, number>,
   ailments: AilmentResult[],
   diagnostics: Diagnostic[],
-  procs: ProcHit[] | undefined,
+  procs: EventProcs | undefined,
   restores: RestoreRecord[],
+  /** This event's place in the tree, which pairs it with its run in the other branch. */
+  key: string,
 ): EventTrace | undefined {
   if (depth > MAX_CONVERSION_DEPTH) return undefined;
+
+  const ownProcs: ProcHit[] | undefined = procs === undefined ? undefined : [];
+  if (procs !== undefined && ownProcs !== undefined) procs.set(key, { hits: ownProcs, rollsCrit: !takenAs });
 
   const recorder = shared.breakdown ? new Recorder() : undefined;
   const event = new DamageEventState(shared.layers, undefined, recorder);
@@ -554,7 +616,7 @@ function runEvent(
     spellTags: spellTags(shared.spell),
     config: shared.build.config ?? {},
     effects: shared.effects,
-    ...(procs === undefined ? {} : { procs }),
+    ...(ownProcs === undefined ? {} : { procs: ownProcs }),
     restores,
     diagnostics,
     report: (severity, code, path, message) => diagnostics.push({ severity, code, path, message }),
@@ -621,7 +683,9 @@ function runEvent(
     byElement,
     ailments,
     diagnostics,
+    procs,
     restores,
+    key,
   );
 
   const dealt = Math.max(0, event.damage);
@@ -966,10 +1030,12 @@ function collectBonusElements(
   byElement: Map<ElementName, number>,
   ailments: AilmentResult[],
   diagnostics: Diagnostic[],
+  procs: EventProcs | undefined,
   restores: RestoreRecord[],
+  key: string,
 ): EventTrace[] {
   const traces: EventTrace[] = [];
-  for (const bonus of event.bonusElements) {
+  for (const [i, bonus] of event.bonusElements.entries()) {
     const trace = runEvent(
       shared,
       bonus.element,
@@ -980,17 +1046,18 @@ function collectBonusElements(
       byElement,
       ailments,
       diagnostics,
-      // Collected, and folded into the parent's by `runBranch`. The child is its own
-      // `DamageEvent` and rolls every proc block again, and an `ele_match_stat` gate can only pass
-      // on it: Blade of Desecrated Hallows' Frost Orbs proc on a *cold* hit, and a physical attack
-      // it converts is cold only in the bonus event.
-      ctx.procs,
+      // Collected under the child's own key and folded in by `procsPerHit`. The child is its own
+      // `DamageEvent` and rolls every proc block again — and its own crit — and an
+      // `ele_match_stat` gate can only pass on it: Blade of Desecrated Hallows' Frost Orbs proc
+      // on a *cold* hit, and a physical attack it converts is cold only in the bonus event.
+      procs,
       // Leech is the opposite case, and deliberately so: each bonus element is its own
       // `DamageEvent` carrying its own share of the hit, and `ele_match_stat` picks the leech
       // stat that matches *it*. Collecting from the children is how `fire_mana_leech` reaches
       // the fire half of a converted physical hit. A `damage_taken_as` child skips the source
       // sweep entirely (`disableSourceStats`), so it contributes nothing here either way.
       restores,
+      `${key}/${i}:${bonus.element}${bonus.takenAs ? "~" : ""}`,
     );
     if (trace !== undefined) traces.push(trace);
   }
@@ -1487,9 +1554,10 @@ export function simulateBasicAttack(
     hitChance: 1,
   };
 
-  const procs = options.procs === true ? { onHit: [] as ProcHit[], onCrit: [] as ProcHit[] } : undefined;
-  const hit = runBranch(shared, false, diagnostics, procs?.onHit);
-  const crit = runBranch(shared, true, diagnostics, procs?.onCrit);
+  const procBranches = options.procs === true ? { hit: new Map() as EventProcs, crit: new Map() as EventProcs } : undefined;
+  const hit = runBranch(shared, false, diagnostics, procBranches?.hit);
+  const crit = runBranch(shared, true, diagnostics, procBranches?.crit);
+  const procs = procBranches === undefined ? undefined : procsPerHit(procBranches.hit, procBranches.crit, critChance);
 
   return {
     spellId: "",

@@ -139,6 +139,14 @@ export type Vitals = {
    */
   buffSeconds: number;
   /**
+   * How long one press of the asked-about skill keeps its debuff on the enemy, in seconds.
+   *
+   * {@link buffSeconds}'s twin for the other side. Effect Duration lengthens a curse or Hunter's
+   * Mark exactly as it lengthens Protection, and with only the buff row that was a change no
+   * figure could see — so the gem list hid it from every skill that debuffs. 0 on the same terms.
+   */
+  debuffSeconds: number;
+  /**
    * Life plus magic shield, before any mitigation.
    *
    * Beside {@link ehp} rather than folded into it, because the two move independently and which
@@ -245,6 +253,7 @@ export const HEADLINE: {
   // that will ever move.
   { key: "skillCycleSeconds", label: "Skill cooldown", good: "down", kind: "number" },
   { key: "buffSeconds", label: "Buff duration", good: "up", kind: "number" },
+  { key: "debuffSeconds", label: "Debuff duration", good: "up", kind: "number" },
   { key: "pool", label: "Life + magic shield", good: "up", kind: "number" },
   { key: "ehp", label: "Effective HP (weakest)", good: "up", kind: "number" },
 ];
@@ -453,6 +462,14 @@ export function vitalsOf(doc: BuildDoc, snapshot: Snapshot, options: VitalsOptio
   });
 }
 
+/**
+ * Whether the skill has a hit that could crit: a damage act aimed at something other than you,
+ * or procs its own buff grants. A self-hit never rolls one (`disable_attacker_stats`).
+ */
+function canCrit(dps: DpsResult): boolean {
+  return dps.sources.some((s) => s.source.target?.kind !== "self") || dps.grantedDps > 0;
+}
+
 /** Whether any spell the swing actually procs takes its support gems from `lenderId`. */
 function swingBorrowsFrom(snapshot: Snapshot, swing: BasicAttack, lenderId: string): boolean {
   return swing.procs.some((proc) => {
@@ -523,7 +540,11 @@ function assembleVitals(parts: {
     basicProcDps: rates.basicProcDps,
     summonDps: rates.summonDps,
     totalDps: rates.total,
-    critChance: dps?.hit.critChance ?? 0,
+    // Only for a skill that has something to crit with. Protection has no damage act, yet its
+    // spell unit still carries a crit chance — so the Crit Chance gem "moved" it and was offered
+    // as compatible with a buff it can do nothing for. A skill whose buff casts a hit for it
+    // (Holy Fire, Power Surge) keeps the row through `grantedDps`.
+    critChance: dps !== undefined && canCrit(dps) ? dps.hit.critChance : 0,
     skillCycleSeconds: dps?.rate.cycleSeconds ?? 0,
     // `infinite` is the toggle sentinel and `Infinity` would make every delta `NaN`. See the
     // field's own note for why both it and "no buff at all" report 0.
@@ -531,6 +552,10 @@ function assembleVitals(parts: {
       dps?.buff === undefined || !Number.isFinite(dps.buff.durationSeconds)
         ? 0
         : dps.buff.durationSeconds,
+    debuffSeconds:
+      dps?.debuff === undefined || !Number.isFinite(dps.debuff.durationSeconds)
+        ? 0
+        : dps.debuff.durationSeconds,
     pool: def.pools.health + def.pools.magicShield,
     ehp: def.weakest.effectiveHealth,
     weakestElement: def.weakest.element,

@@ -485,6 +485,14 @@ test("a support gem that grants an effect offers it, though the sheet never hold
     skills: [{ spellId: "strike", main: true, enabled: false, supports: [{ id: "fortify", rollPercent: 80 }] }],
   });
   assert.deepEqual(off.options.map((o) => o.id), []);
+
+  // Linked to a buff that deals no damage, the `on_damage` stat never sees a hit — Power Charge
+  // on Crit in Protection was offered the charge and ranked as worth linking there.
+  const onBuff = stateOf(
+    { ...registries, mmorpg_spells: { ...registries.mmorpg_spells, ward: granting("ward") } },
+    { skills: [{ spellId: "ward", supports: [{ id: "fortify", rollPercent: 80 }] }] },
+  );
+  assert.deepEqual(onBuff.options.map((o) => o.id), []);
 });
 
 test("give_to is read against the event side, not absolutely", () => {

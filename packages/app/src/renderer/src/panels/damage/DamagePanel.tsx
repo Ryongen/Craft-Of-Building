@@ -46,6 +46,7 @@ import { EffectsCard } from "./EffectsCard.js";
 import { ModelGaps } from "./ModelGaps.js";
 import { SummonTable } from "./SummonTable.js";
 import { ProcTable } from "./ProcTable.js";
+import { ProcChainCard } from "./ProcChainCard.js";
 import { BasicAttackDamage } from "./BasicAttackDamage.js";
 import { TargetCard } from "./TargetCard.js";
 import { FullDpsCard } from "./FullDpsCard.js";
@@ -325,6 +326,19 @@ function SkillDamagePanel(): ReactNode {
                 One cast produces {dps.sources.length} damage acts, each with its own value
                 calculation and element.
               </span>
+              {/*
+                The acts summed, because the picker can only show one at a time and a skill like
+                Clamor, Crash, Clatter is four hits of four elements whose whole point is the sum.
+              */}
+              <span
+                title={dps.sources
+                  .filter((s) => s.damagePerCast > 0)
+                  .map((s) => `${sourceChoice(s)}: ${smart(s.damagePerCast)}`)
+                  .join("\n")}
+              >
+                <span className="muted">all acts, per cast </span>
+                <span className="mono">{smart(dps.damagePerCast)}</span>
+              </span>
             </div>
           )}
 
@@ -584,6 +598,16 @@ function SkillDamagePanel(): ReactNode {
           )}
 
           {/*
+            The chain those procs start: procs of procs and the pets' bites, simulated. Closed by
+            default and only computed when opened — it is a simulation, not a formula.
+          */}
+          {dps.procs.some((p) => p.perSecond > 0) && (
+            <Panel id="damage.proc-chain" title="Procs triggering procs" summary="simulated" defaultOpen={false}>
+              <ProcChainCard />
+            </Panel>
+          )}
+
+          {/*
             What this skill's own buff casts for you, on whichever clock fires it.
 
             Ice-Tipped Blade's whole value is here — its DPS above is 0 and correctly so — and
@@ -774,7 +798,10 @@ function sourceChoice(entry: DpsResult["sources"][number]): string {
   const element = ELEMENTS[entry.source.element]?.displayName ?? entry.source.element;
   const name = entry.source.valueCalcId || entry.source.id;
   const self = entry.source.target?.kind === "self" ? " (to yourself)" : "";
-  return `${name} · ${element} · ${sourceLabel(entry.source)}${self}`;
+  const stacked = entry.hit.stackMultiplier;
+  const per =
+    stacked === undefined ? "" : ` · ×${stacked.stacks} ${stacked.effectId.replace(/_/g, " ")}`;
+  return `${name} · ${element} · ${sourceLabel(entry.source)}${per}${self}`;
 }
 
 /** How many exile effects the pipeline settled on as up, for the card's head. */
@@ -803,6 +830,7 @@ const DAMAGE_PANELS = [
   "damage.sources",
   "damage.summons",
   "damage.procs",
+  "damage.proc-chain",
   "damage.granted",
   "damage.full",
   "damage.rotation-procs",

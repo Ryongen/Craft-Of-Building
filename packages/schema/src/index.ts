@@ -15,6 +15,7 @@ export {
 export type {
   AffixRoll,
   AuraSetup,
+  CraftState,
   BuildConfig,
   BuildDoc,
   BuildMeta,

@@ -380,6 +380,15 @@ export type DamageSource = {
    * stay untouched and come out right.
    */
   castShare: number;
+  /**
+   * `multiply_by_caster_effect_stacks` on the act: the effect whose stacks on the caster multiply
+   * the hit's base value. `DamageAction.tryActivate` in the 6.4.13 jar:
+   *
+   *     value *= Load.Unit(ctx.caster).getStatusEffectsData().getStacks(stackEffectId);
+   *
+   * `noise` is the case — each charge you hold adds one more Fire, Nature or Cold hit's worth.
+   */
+  multiplyByCasterStacks?: string;
   /** `disable_knockback` on the act. Carried through so a breakdown can show it. */
   disableKnockback: boolean;
   /**
@@ -611,6 +620,7 @@ export function skillModel(
         }
         if (act.type === "damage") {
           const targetCooldownTicks = targetCooldownOf(part);
+          const stackEffect = str(act.map["multiply_by_caster_effect_stacks"]) || undefined;
           sources.push({
             id: `${groupName}#${index}`,
             path: frame.path,
@@ -627,6 +637,7 @@ export function skillModel(
             castShare,
             disableKnockback: act.map["disable_knockback"] === true,
             ...(targetCooldownTicks === undefined ? {} : { targetCooldownTicks }),
+            ...(stackEffect === undefined ? {} : { multiplyByCasterStacks: stackEffect }),
           });
           return;
         }

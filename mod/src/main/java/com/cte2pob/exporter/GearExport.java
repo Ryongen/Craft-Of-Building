@@ -1,6 +1,7 @@
 package com.cte2pob.exporter;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.robertx22.mine_and_slash.database.data.StatMod;
 import com.robertx22.mine_and_slash.database.data.unique_items.UniqueGear;
@@ -12,6 +13,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * One equipped item, expressed the way {@code BuildDoc.Item} wants it: a base, a rarity, a
@@ -68,8 +71,73 @@ public final class GearExport {
         unique(item, ex, gear, warn, where);
         sockets(stack, item, gear, warn, where);
         enchantments(stack, item);
+        craft(stack, item, gear);
 
         return item;
+    }
+
+    /**
+     * {@code CustomItemData.KEYS} - every key the mod names. Any other integer-valued key in the
+     * map is a {@code MaxUsesKey} counter ({@code level_up}, {@code relief}, ...). The planner's
+     * NBT reader ({@code craftFromExtras} in import-item.ts) applies the same rule; keep the two
+     * lists in step.
+     */
+    private static final Set<String> NAMED_CUSTOM_KEYS = Set.of("cr", "crafted", "mr", "sl", "uq", "own", "ownn", "ql", "et");
+
+    /**
+     * The stack data crafting reads and a build doesn't - {@code BuildDoc.CraftState}. It lives in
+     * two other savers on the stack ({@code mmorpg_potential}, {@code mmorpg_custom_data}), not in
+     * {@code GearItemData}, which is why the item document never carried it.
+     *
+     * <p>The flags and counters are read from the custom data's raw map rather than through
+     * {@code CustomItemData}'s typed keys so that a counter this exporter has never heard of still
+     * arrives: an orb added in a later pack update keys its {@code max_uses} by a new id.
+     */
+    private static void craft(ItemStack stack, JsonObject item, GearItemData gear) {
+        Map<String, String> custom = RawGear.customMap(stack);
+        JsonObject craft = new JsonObject();
+        craft.addProperty("v", 1);
+
+        Integer potential = RawGear.potential(stack);
+        if (potential != null) {
+            craft.addProperty("potential", potential);
+        } else {
+            craft.add("potential", JsonNull.INSTANCE);
+        }
+        craft.addProperty("corrupted", "true".equals(custom.get("cr")));
+        craft.addProperty("mirrored", "true".equals(custom.get("mr")));
+        craft.addProperty("crafted", "true".equals(custom.get("crafted")));
+        craft.addProperty("sockets", gear.sockets == null ? 0 : gear.sockets.getTotalSockets());
+        craft.addProperty("enchantTimes", intOr(custom.get("et"), 0));
+
+        JsonObject uses = new JsonObject();
+        JsonObject raw = new JsonObject();
+        for (Map.Entry<String, String> e : custom.entrySet()) {
+            raw.addProperty(e.getKey(), e.getValue());
+            if (NAMED_CUSTOM_KEYS.contains(e.getKey())) {
+                continue;
+            }
+            int n = intOr(e.getValue(), 0);
+            if (n > 0) {
+                uses.addProperty(e.getKey(), n);
+            }
+        }
+        craft.add("uses", uses);
+        if (raw.size() > 0) {
+            craft.add("custom", raw);
+        }
+        item.add("craft", craft);
+    }
+
+    private static int intOr(String value, int fallback) {
+        if (value == null || !value.matches("-?\\d+")) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     /**
@@ -220,6 +288,19 @@ public final class GearExport {
         if (runes.size() > 0) {
             item.add("runes", runes);
             item.add("runeRolls", runeRolls);
+        }
+
+        // `sl` above the rarity's `sockets.max` is the corruption's socket (ChaosStat adds it with a
+        // bare `addSocket()`, past `canAddSocket`). The planner's NBT reader derives `bonusSockets`
+        // by this same rule; the document path used to have no way to learn it at all.
+        try {
+            int bonus = gear.sockets.getTotalSockets() - gear.getRarity().sockets.max;
+            if (bonus > 0) {
+                item.addProperty("bonusSockets", bonus);
+            }
+        } catch (Exception e) {
+            warn.add(where + ": its rarity `" + gear.rar + "` is not registered on this client, "
+                    + "so sockets added by corruption could not be counted.");
         }
 
         if (gear.sockets.hasRuneWord()) {

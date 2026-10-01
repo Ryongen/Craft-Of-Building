@@ -1,4 +1,4 @@
-import { type FullDpsResult, type FullDpsSkill } from "@cte2/engine";
+import { pressedForEffect, type FullDpsResult, type FullDpsSkill } from "@cte2/engine";
 import { type SkillSetup } from "@cte2/schema";
 import { type ReactNode } from "react";
 
@@ -131,12 +131,25 @@ export function FullDpsCard({
         {skills.map((skill, index) => {
           const entry = full.skills.find((e) => e.skill === skill);
           // Offered only where it changes something: a skill that hits *and* has an effect to
-          // wait on. A pure buff is already upkeep, and a pure hit has nothing to wait for.
+          // wait on. A pure buff is already upkeep, a pure hit has nothing to wait for, and an
+          // aura is a toggle either way. A curse qualifies and starts pressed — see
+          // `pressedForEffect` — so its hit can still be put back on every pass.
           const canBeBuff =
-            skill.fullDpsAsBuff === true ||
+            skill.fullDpsAsBuff !== undefined ||
             (entry !== undefined &&
-              entry.role === "rotation" &&
+              entry.role !== "aura" &&
+              entry.result.damagePerCast > 0 &&
               (entry.result.buff !== undefined || entry.result.debuff !== undefined));
+          const asBuff = entry !== undefined && pressedForEffect(entry.result, skill.fullDpsAsBuff);
+          // Hunter's Mark is pressed for what it leaves on the mob, and a button saying "buff"
+          // does not read as the answer to "only re-mark when the mark falls off". A curse also
+          // hands you `soul`, but the curse is what you are keeping up.
+          const effectWord =
+            entry !== undefined &&
+            entry.result.debuff !== undefined &&
+            (entry.result.buff === undefined || entry.result.declared.tags.includes("curse"))
+              ? "debuff"
+              : "buff";
           return (
             <span key={`${skill.spellId}-${index}`} className="row gap-3 text-sm">
               <label className="row gap-3">
@@ -160,16 +173,16 @@ export function FullDpsCard({
               </label>
               {canBeBuff && (
                 <button
-                  className={`nudge word${skill.fullDpsAsBuff === true ? " primary" : ""}`}
-                  aria-pressed={skill.fullDpsAsBuff === true}
+                  className={`nudge word${asBuff ? " primary" : ""}`}
+                  aria-pressed={asBuff}
                   title={
-                    skill.fullDpsAsBuff === true
-                      ? "Pressed only when its buff runs out; its hit counts once per re-cast. Click to put it back in the rotation."
-                      : "It deals damage, so it is pressed every pass. Click to press it only when its buff runs out instead."
+                    asBuff
+                      ? `Pressed only when its ${effectWord} runs out; its hit counts once per re-cast. Click to press it every pass for its damage instead.`
+                      : `Pressed every pass for its damage. Click to press it only when its ${effectWord} runs out instead.`
                   }
-                  onClick={() => setFullDpsAsBuff(index, skill.fullDpsAsBuff !== true)}
+                  onClick={() => setFullDpsAsBuff(index, !asBuff)}
                 >
-                  buff only
+                  {effectWord} only
                 </button>
               )}
             </span>

@@ -858,6 +858,32 @@ test("a damaging buff marked fullDpsAsBuff is pressed when it runs out, and its 
   );
 });
 
+test("a curse that also hits is upkeep on its debuff, not a step pressed every pass", () => {
+  // Agony's shape: a small `curse` hit beside a 300-tick debuff on the pack, behind a 60-tick
+  // cooldown. As a step, that cooldown paced the whole rotation and Effect Duration did nothing.
+  const snapshot = buffScenario({
+    potionDur: 300,
+    buffCooldownTicks: 60,
+    buffDamages: true,
+    onTarget: true,
+    buffTags: ["area", "curse", "magic", "chaos"],
+  });
+  const full = simulateFullDps(build({ skills: [ROTATION, BUFF] } as Partial<BuildDoc>), snapshot);
+  const entry = full.skills.find((e) => e.skill.spellId === "stance");
+  assert.ok(entry);
+  assert.equal(entry.role, "upkeep");
+  assert.equal(entry.upkeepHolder, "target");
+  closeTo(entry.upkeepSeconds ?? 0, 15);
+  assert.ok(full.rotationSeconds < 1.1);
+
+  // Saying `false` puts it back on every pass, for a build that casts the curse for its hit.
+  const forHit = simulateFullDps(
+    build({ skills: [ROTATION, { ...BUFF, fullDpsAsBuff: false }] } as Partial<BuildDoc>),
+    snapshot,
+  );
+  assert.equal(forHit.skills.find((e) => e.skill.spellId === "stance")?.role, "rotation");
+});
+
 test("ticking only buffs is a rotation of presses rather than a division by zero", () => {
   const snapshot = buffScenario({ potionDur: -1 });
   const full = simulateFullDps(
@@ -959,6 +985,7 @@ function procScenario({
   events = ["on_damage"],
   ele,
   converted = 0,
+  crit = 0,
 }: {
   chance?: number;
   ifs?: string[];
@@ -969,6 +996,8 @@ function procScenario({
   ele?: string;
   /** `phys_to_fire` on the sheet. */
   converted?: number;
+  /** `critical_hit` on the sheet. */
+  crit?: number;
 } = {}) {
   const main = spellEntry("strike", "Physical", "hit100", {
     config: { tags: { tags: ["melee"] }, use_support_gems_from: "", cooldown_ticks: 0, cast_time_ticks: 20 },
@@ -992,6 +1021,7 @@ function procScenario({
         effect: [{ effects: ["proc_spell_bolt"], events, ifs, order: "final_damage", side }],
       }),
       phys_to_fire: statEntry("phys_to_fire"),
+      critical_hit: statEntry("critical_hit", { max: 100 }),
     },
     mmorpg_stat_effect: {
       ...EFFECTS,
@@ -1002,11 +1032,13 @@ function procScenario({
       random_roll: condition("random_roll", "random_roll"),
       spell_has_tag_ranged: condition("spell_has_tag_ranged", "spell_has_tag", { tag: { id: "ranged" } }),
       ele_match_stat: condition("ele_match_stat", "ele_match_stat"),
+      is_crit_true: condition("is_crit_true", "is_bool_true", { bool_id: "crit" }),
     },
     mmorpg_base_stats: {
       original_mode_player: baseStats("original_mode_player", [
         exact("proc_bolt", "FLAT", chance),
         ...(converted > 0 ? [exact("phys_to_fire", "FLAT", converted)] : []),
+        ...(crit > 0 ? [exact("critical_hit", "FLAT", crit)] : []),
       ]),
     },
   });
@@ -1239,6 +1271,21 @@ test("an element-gated proc does not fire off a hit converted away entirely", ()
   closeTo(chanceWith(0), 1);
   closeTo(chanceWith(60), 1, "a partial conversion leaves a physical event to match");
   closeTo(chanceWith(100), 0);
+});
+
+test("an on-crit proc rolls once per element, each element with its own crit", () => {
+  // `buildBonusElementEvent` does not copy `EventData.CRIT`, and `critical_hit` rolls on
+  // `bonus_dmg`, so a hit split into physical and fire is two crit rolls and two proc rolls.
+  // Curse of Tongues' `proc_blood_explosion_on_crit` is the stat this was found on.
+  const onCrit = { chance: 100, ifs: ["random_roll", "is_crit_true"], crit: 50 };
+  const chanceWith = (converted: number): number => {
+    const result = simulateDps(build(), procScenario({ ...onCrit, converted }));
+    assert.ok(result);
+    return result.procs.find((p) => p.spellId === "bolt")?.chance ?? 0;
+  };
+  closeTo(chanceWith(0), 0.5, "one element: the crit chance");
+  // 1 - (1 - 0.5)^2, not 0.5: pinning both elements to the root's crit undercounts it.
+  closeTo(chanceWith(50), 0.75, "two elements: either one critting fires it");
 });
 
 test("proc_cooldown_ticks caps a proc however often the trigger fires", () => {

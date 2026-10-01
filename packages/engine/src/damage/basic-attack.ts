@@ -199,9 +199,9 @@ export function basicAttack(
           snapshot,
           build,
           effects,
-          onHit: hit.procs.onHit,
-          onCrit: hit.procs.onCrit,
-          critChance: hit.critChance,
+          onHit: hit.procs,
+          onCrit: [],
+          critChance: 0,
           hitsPerSecond: swings ?? 0,
           sheet: characterRun.stats,
           // A swing carries no spell, so every `spell_has_tag` gate on a proc correctly fails.
