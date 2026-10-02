@@ -23,7 +23,7 @@ import type { ReactNode } from "react";
 
 import cryoSpear from "../assets/cryo-spear.png";
 import { useBuild } from "../state/build-store.js";
-import { useWorld } from "../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 
 /**
  * Pass the item's `rarity` and `runeword`: a runeword spear on a Cryolancer is drawn with its own

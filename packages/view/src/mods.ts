@@ -14,8 +14,8 @@
 import type { Snapshot } from "@cte2/extractor";
 import { modifierLine, statName } from "@cte2/schema";
 
-import type { PickerOption } from "./Picker.js";
-import { resolveValue } from "./StatLines.js";
+import type { PickerOption } from "./picker-option.js";
+import { resolveValue } from "./stat-value.js";
 
 /** The modifier objects on a registry entry's `stats` array, whatever shape they arrived in. */
 export function modsOf(raw: unknown): Record<string, unknown>[] {

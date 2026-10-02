@@ -72,7 +72,7 @@ import { useWhatIf } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
 import { applyMove, benched, type Arrival, type Move, type WornAt } from "../../state/gear-moves.js";
 import { useItemCompare, type ComparePosition } from "../../state/item-compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { modDetail, modKeywords, useRevealOnNarrow, useWorld } from "@cte2/view";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { CopyJsonButton } from "../../ui/CopyJsonButton.js";
 import { GearIcon } from "../../ui/GearIcon.js";
@@ -81,14 +81,12 @@ import { ItemWindow, useItemTooltip } from "../../ui/ItemTooltip.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
 import { AugmentList } from "../../ui/Augments.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
-import { modDetail, modKeywords } from "../../ui/mods.js";
 
 import { ImportDialog } from "./ImportDialog.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { OmenEditor, omenWord } from "./OmenEditor.js";
 import { JewelList } from "./JewelList.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
-import { useRevealOnNarrow } from "../../ui/narrow.js";
 
 /**
  * One row of the paperdoll.

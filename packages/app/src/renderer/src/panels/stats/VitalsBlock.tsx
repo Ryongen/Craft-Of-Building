@@ -41,11 +41,19 @@ import {
 import { useState, type ReactNode } from "react";
 
 import { useDerived, type DerivedBuild } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, isOverCap, num, overCap, smart, usable } from "../../ui/format.js";
-import { StatIcon } from "../../ui/StatIcon.js";
-import { statLook } from "../../ui/stat-look.js";
-import { elementColour, elementLabel } from "../../ui/palette.js";
+import {
+  elementColour,
+  elementLabel,
+  isOverCap,
+  num,
+  overCap,
+  smart,
+  StatIcon,
+  statLook,
+  usable,
+  USABLE_NOUN,
+  useWorld,
+} from "@cte2/view";
 import { rotationCost, type SheetFocus } from "./SheetDetail.js";
 
 /**

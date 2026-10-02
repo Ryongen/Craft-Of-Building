@@ -15,7 +15,7 @@
     "fixtures": "npm run build && node packages/engine/dist/cli.js",
     "port-stats": "node tools/port-code-only-stats.mjs",
     "audit": "npm run build && node tools/audit-port-coverage.mjs --src \"/g/Projects/Mine-And-Slash-Rework-1.20-Forge\" --snapshot data/snapshot.json",
-    "build": "npm run -w @cte2/extractor build && npm run -w @cte2/schema build && npm run -w @cte2/engine build",
+    "build": "npm run -w @cte2/extractor build && npm run -w @cte2/schema build && npm run -w @cte2/engine build && npm run -w @cte2/view build",
     "dev": "npm run build && npm run -w @cte2/app dev",
     "build:app": "npm run build && npm run -w @cte2/app build",
     "dist:app": "npm run build:app && npm run -w @cte2/app dist",

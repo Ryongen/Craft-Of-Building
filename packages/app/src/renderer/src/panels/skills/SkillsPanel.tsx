@@ -55,22 +55,19 @@ import { useBuild } from "../../state/build-store.js";
 import { mainSkillIndex, useDerived } from "../../state/derived.js";
 import { vitalsOf } from "../../state/compare.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
-import { useWorld } from "../../state/snapshot.js";
+import { smart, spellCard, useRevealOnNarrow, useWorld } from "@cte2/view";
 import { useSpellTooltip } from "../../ui/SpellTooltip.js";
-import { spellCard } from "../../ui/spell-stats.js";
 import { Fact } from "../../ui/Fact.js";
 import { NumberField, useRollDraft } from "../../ui/fields.js";
 import { GemRarityRoll, bestGemPreset, gemBand, gemRarities, type GemPreset } from "../../ui/GemRoll.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
-import { smart } from "../../ui/format.js";
 import { SupportGemPicker, type GemSort } from "./SupportGemPicker.js";
 import { BasicAttackCard } from "./BasicAttackCard.js";
 import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 import { resolveHint } from "../../ui/copy/hint.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
-import { useRevealOnNarrow } from "../../ui/narrow.js";
 
 /** Which row of the left column is open. The basic attack is not a document index. */
 type Selection = { kind: "skill"; index: number } | { kind: "basic" };

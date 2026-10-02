@@ -27,7 +27,7 @@ import {
 } from "@cte2/schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "../world.js";
 
 import { IconCache } from "./icons.js";
 import { CELL, cellAtPoint, centreOn, draw, type NodeStatus, type Transform } from "./render.js";

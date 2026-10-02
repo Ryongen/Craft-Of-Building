@@ -30,7 +30,7 @@ import type { ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { NumberField } from "../../ui/fields.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 

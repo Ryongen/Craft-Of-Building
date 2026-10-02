@@ -18,7 +18,7 @@ import {
 import { useMemo, type ReactNode } from "react";
 
 import { useDerived, type ModContribution } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { StepRow as SharedStepRow } from "../../ui/StepRow.js";
 import {
   contributionSubtotal,

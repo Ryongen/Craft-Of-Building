@@ -21,15 +21,13 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../state/build-store.js";
 import { useDerived } from "../state/derived.js";
-import { useWorld } from "../state/snapshot.js";
+import { exactModSummary, modDetail, modKeywords, smart, useWorld } from "@cte2/view";
 import { AddPicker } from "./AddPicker.js";
 import { CopyJsonButton, copyEnvelope } from "./CopyJsonButton.js";
 import { GemRarityRoll, gemBand, gemRarities } from "./GemRoll.js";
 import { Picker, type PickerOption } from "./Picker.js";
 import { StatLines } from "./StatLines.js";
 import { useRollDraft } from "./fields.js";
-import { smart } from "./format.js";
-import { exactModSummary, modDetail, modKeywords } from "./mods.js";
 import { Plain, Tech, resolveHint } from "./copy/hint.js";
 import { AUGMENTS_COPY } from "./copy/augments.js";
 import { useTechnical } from "./detail-mode.js";

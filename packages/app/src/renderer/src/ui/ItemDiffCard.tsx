@@ -54,7 +54,7 @@ import { itemName, type Item } from "@cte2/schema";
 import { useBuild } from "../state/build-store.js";
 import { useWhatIfEach, type WhatIf } from "../state/compare.js";
 import { docWithSwap, useItemCompare, type ComparePosition } from "../state/item-compare.js";
-import { useWorld } from "../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { ComparisonBlock } from "./DeltaTable.js";
 import { RarityBadge } from "./RarityBadge.js";
 

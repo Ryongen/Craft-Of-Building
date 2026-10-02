@@ -18,7 +18,7 @@
 
 import { useState, type ReactNode } from "react";
 
-import type { At } from "./HoverCard.js";
+import type { At } from "@cte2/view";
 import { Picker, type PickerOption } from "./Picker.js";
 
 export function AddPicker({

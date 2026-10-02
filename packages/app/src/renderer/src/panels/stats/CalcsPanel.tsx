@@ -35,8 +35,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { breakdownsOf, mainSkillIndex, useDerived, type DerivedBuild } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
-import { num, smart } from "../../ui/format.js";
+import { num, smart, useWorld } from "@cte2/view";
 import { DockedPane } from "./DetailPane.js";
 import { SheetDetail, type SheetFocus } from "./SheetDetail.js";
 import { StatList } from "./StatList.js";

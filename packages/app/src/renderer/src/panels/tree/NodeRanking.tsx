@@ -19,8 +19,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 
 import { useBuild } from "../../state/build-store.js";
 import { useRanking, type Ranked, type Vitals } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
-import { percent, round, signGlyph, smart } from "../../ui/format.js";
+import { percent, round, signGlyph, smart, useWorld } from "@cte2/view";
 
 import { candidateFor } from "./candidate.js";
 

@@ -15,7 +15,7 @@
 
 import type { ReactNode } from "react";
 
-import { useWorld } from "../state/snapshot.js";
+import { useWorld } from "./world.js";
 import { statLook } from "./stat-look.js";
 
 export function StatIcon({

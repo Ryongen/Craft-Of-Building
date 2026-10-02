@@ -52,7 +52,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { AddEffect, AssumeSwitch, EffectToggles } from "../../ui/Effects.js";
 // Food buffs are not gems and carry no rarity, so they keep the plain slider.
 import { NumberField, RollSlider } from "../../ui/fields.js";

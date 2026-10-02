@@ -28,10 +28,8 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { HEADLINE, useBaselineComparison, type BaselineComparison } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { elementLabel, EMPTY, percent, signGlyph, useWorld } from "@cte2/view";
 import { DeltaTable, formatDelta } from "../../ui/DeltaTable.js";
-import { EMPTY, percent, signGlyph } from "../../ui/format.js";
-import { elementLabel } from "../../ui/palette.js";
 import { SearchInput } from "../../ui/SearchInput.js";
 
 export function ComparePanel(): ReactNode {

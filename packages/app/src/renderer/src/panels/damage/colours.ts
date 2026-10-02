@@ -2,7 +2,7 @@
  * The element colours the Damage panel paints with.
  */
 
-import { INK } from "../../ui/palette.js";
+import { INK } from "@cte2/view";
 
 // Keyed by the enum **name**, which is what `DamageResult` carries. `Shadow` displays as
 // "Chaos" and `Nature` as "Lightning" — the name and the GUID differ for three of the five

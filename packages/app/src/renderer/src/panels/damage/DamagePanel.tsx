@@ -25,7 +25,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { Panel, setAllPanels } from "../../ui/Panel.js";
 import { DockedPane, useDetailPane } from "../stats/DetailPane.js";
 import type { SheetFocus } from "../stats/SheetDetail.js";

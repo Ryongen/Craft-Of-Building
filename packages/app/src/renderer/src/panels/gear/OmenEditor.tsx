@@ -50,7 +50,7 @@ import type { Snapshot } from "@cte2/extractor";
 import { useMemo, type ReactNode } from "react";
 
 import { applyPatch, type Patch } from "../../state/patch.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { NumberField, smart } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";

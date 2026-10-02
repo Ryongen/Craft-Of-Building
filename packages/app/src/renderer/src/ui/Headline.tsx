@@ -35,7 +35,7 @@ import type { SheetFocus } from "../panels/stats/SheetDetail.js";
 import { damageRates, useBaselineComparison, type Delta } from "../state/compare.js";
 import { useDerived } from "../state/derived.js";
 import { Figure } from "./Figure.js";
-import { compact, percent, signGlyph } from "./format.js";
+import { compact, percent, signGlyph } from "@cte2/view";
 
 export function Headline({ onFocus }: { onFocus?: (focus: SheetFocus) => void }): ReactNode {
   const derived = useDerived();

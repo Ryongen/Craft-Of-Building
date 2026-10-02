@@ -22,12 +22,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { mergedPerkLines, signed, useWorld } from "@cte2/view";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
-import { signed } from "../../ui/format.js";
 
 import { candidateFor } from "./candidate.js";
-import { mergedPerkLines } from "./perk-lines.js";
 
 /** What the picker offers: the nodes people plan routes to. Flats are the route, not the goal. */
 const PICKABLE = new Set(["MAJOR", "SPECIAL", "ASC", "START"]);

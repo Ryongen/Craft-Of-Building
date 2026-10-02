@@ -331,3 +331,8 @@ function toComputed(result: ReturnType<typeof calculate>): Map<string, ComputedS
   }
   return out;
 }
+
+// --- everything a viewer shows, in one call ---------------------------------------------
+
+export { breakdownsOf, deriveBuild, mainSkillIndex } from "./derive.js";
+export type { DerivedBuild, ModContribution, StatBreakdown } from "./derive.js";

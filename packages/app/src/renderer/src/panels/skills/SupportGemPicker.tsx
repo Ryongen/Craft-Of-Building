@@ -39,11 +39,9 @@ import { useBuild } from "../../state/build-store.js";
 import { supportGemAffectsSheet } from "@cte2/engine";
 
 import { useRanking, type Ranked, type Vitals } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { percent, round, signGlyph, smart, supportGemCard, useWorld } from "@cte2/view";
 import type { GemPreset } from "../../ui/GemRoll.js";
 import { useGemTooltip } from "../../ui/SpellTooltip.js";
-import { supportGemCard } from "../../ui/spell-stats.js";
-import { percent, round, signGlyph, smart } from "../../ui/format.js";
 import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 import { resolveHint } from "../../ui/copy/hint.js";

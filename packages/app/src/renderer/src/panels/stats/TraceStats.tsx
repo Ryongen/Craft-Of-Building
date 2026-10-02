@@ -19,10 +19,7 @@ import type { EventTrace, LayerStep } from "@cte2/engine";
 import type { ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, isOverCap, num, smart } from "../../ui/format.js";
-import { StatIcon } from "../../ui/StatIcon.js";
-import { statLook } from "../../ui/stat-look.js";
+import { isOverCap, num, smart, StatIcon, statLook, USABLE_NOUN, useWorld } from "@cte2/view";
 import type { SheetFocus } from "./SheetDetail.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 

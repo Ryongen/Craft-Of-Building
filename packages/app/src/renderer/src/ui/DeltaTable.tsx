@@ -28,7 +28,7 @@ import { useCallback, useState, type CSSProperties, type ReactNode } from "react
 import { createPortal } from "react-dom";
 
 import type { Comparison, Delta } from "../state/compare.js";
-import { USABLE_NOUN, num, percent, round, signGlyph, smart, usable } from "./format.js";
+import { num, percent, round, signGlyph, smart, usable, USABLE_NOUN } from "@cte2/view";
 
 /**
  * Below this fraction a change is real but not worth looking at — a tenth of a percent.

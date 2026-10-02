@@ -41,7 +41,7 @@ function arg(name, fallback) {
 }
 
 const assetsDir = resolve(arg("assets", "data/assets"));
-const outPath = resolve(arg("out", "packages/app/src/renderer/src/ui/stat-icons.generated.ts"));
+const outPath = resolve(arg("out", "packages/view/src/stat-icons.generated.ts"));
 
 const index = JSON.parse(readFileSync(join(assetsDir, "index.json"), "utf8"));
 const paths = Object.keys(index.assets ?? {});

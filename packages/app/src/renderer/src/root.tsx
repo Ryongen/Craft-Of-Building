@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ExtractSummary } from "@shared/ipc";
 
 import { App } from "./app.js";
-import { SnapshotProvider } from "./state/snapshot.js";
+import { SnapshotProvider } from "@cte2/view";
 import { Plain, Tech } from "./ui/copy/hint.js";
 
 type Phase =
@@ -78,7 +78,7 @@ export function Root(): ReactNode {
 
   if (phase.kind === "ready") {
     return (
-      <SnapshotProvider snapshot={phase.snapshot} path={phase.path}>
+      <SnapshotProvider snapshot={phase.snapshot} path={phase.path} assets={window.cte2}>
         <App />
       </SnapshotProvider>
     );

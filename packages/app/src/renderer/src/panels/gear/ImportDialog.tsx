@@ -41,7 +41,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** What the in-game tooltip looks like when Shift is held, as a worked example. */

@@ -24,10 +24,9 @@ import type { ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { num, smart, useWorld } from "@cte2/view";
 import { Fact } from "../../ui/Fact.js";
 import { NumberField } from "../../ui/fields.js";
-import { num, smart } from "../../ui/format.js";
 import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
 import { SKILLS_COPY } from "../../ui/copy/skills.js";
 import { useTechnical } from "../../ui/detail-mode.js";

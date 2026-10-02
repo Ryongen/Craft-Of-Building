@@ -36,11 +36,8 @@ import type { EngineStat } from "@cte2/engine";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
-import { USABLE_NOUN, isOverCap, num, smart } from "../../ui/format.js";
+import { isOverCap, num, smart, StatIcon, statLook, USABLE_NOUN, useWorld } from "@cte2/view";
 import { SearchInput } from "../../ui/SearchInput.js";
-import { StatIcon } from "../../ui/StatIcon.js";
-import { statLook } from "../../ui/stat-look.js";
 import { useTechnical } from "../../ui/detail-mode.js";
 
 export type SheetRow = {

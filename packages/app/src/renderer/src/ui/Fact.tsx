@@ -17,7 +17,7 @@
 
 import type { ReactNode } from "react";
 
-import { num } from "./format.js";
+import { num } from "@cte2/view";
 
 /** `inline` sits several facts on a row; `block` stacks them one per line. */
 export type FactLayout = "inline" | "block";

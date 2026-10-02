@@ -19,7 +19,7 @@ import { packModVersion, samePackVersion, statName } from "@cte2/schema";
 import { useState, type ReactNode } from "react";
 
 import { useCaptureCheck } from "../../state/capture.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { SearchInput } from "../../ui/SearchInput.js";
 
 export function CaptureCheck(): ReactNode {

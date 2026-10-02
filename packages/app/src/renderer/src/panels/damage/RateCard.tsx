@@ -4,7 +4,7 @@ import { type ReactNode } from "react";
 import { Fact } from "../../ui/Fact.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
-import { ticksAsTime } from "../../ui/format.js";
+import { ticksAsTime } from "@cte2/view";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /**

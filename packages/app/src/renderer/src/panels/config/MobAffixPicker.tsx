@@ -25,10 +25,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { useBuild } from "../../state/build-store.js";
 import { useRanking, type Ranked } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { mobAffixCard, percent, useWorld } from "@cte2/view";
 import { useGemTooltip } from "../../ui/SpellTooltip.js";
-import { mobAffixCard } from "../../ui/spell-stats.js";
-import { percent } from "../../ui/format.js";
 
 /** What the list is ordered by. `desc` puts the biggest loss — the worst enemy — on top. */
 export type AffixSort = { by: "name" | "dps" | "ehp"; desc: boolean };

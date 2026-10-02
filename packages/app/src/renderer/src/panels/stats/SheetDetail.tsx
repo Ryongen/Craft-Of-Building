@@ -27,11 +27,9 @@ import type { ReactNode } from "react";
 
 import { damageRates } from "../../state/compare.js";
 import { useDerived, type DerivedBuild } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { elementLabel, isOverCap, num, overCap, smart, useWorld } from "@cte2/view";
 import { Plain, Tech, useHint, type Hint } from "../../ui/copy/hint.js";
 import { STATS_COPY } from "../../ui/copy/stats.js";
-import { isOverCap, num, overCap, smart } from "../../ui/format.js";
-import { elementLabel } from "../../ui/palette.js";
 import { StepRow } from "../../ui/StepRow.js";
 import { formatStep, layerLabel } from "../../ui/trace-format.js";
 import { StatBreakdown } from "./StatBreakdown.js";

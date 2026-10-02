@@ -16,15 +16,12 @@ import { balance, mapAffix, mapAffixIds, mapAffixRoll, mapTierBonus, mapTierOf }
 import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
-import { useWorld } from "../../state/snapshot.js";
+import { type At, mapAffixCard, num, useWorld } from "@cte2/view";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { NumberField, RollSlider } from "../../ui/fields.js";
 import type { PickerOption } from "../../ui/Picker.js";
-import type { At } from "../../ui/HoverCard.js";
 import { GemWindow, useGemTooltip } from "../../ui/SpellTooltip.js";
-import { mapAffixCard } from "../../ui/spell-stats.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
-import { num } from "../../ui/format.js";
 
 /** `map`, with `changes` laid over it — `undefined` in `changes` removes the field. */
 function withChanges(map: MapSetup | undefined, changes: { [K in keyof MapSetup]?: MapSetup[K] | undefined }): MapSetup {

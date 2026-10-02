@@ -36,7 +36,7 @@ export type Hint = string | { plain: string; tech: string };
 export type CopyTable = Record<string, Hint>;
 
 /** The wording for the mode given. Takes the flag rather than reading it, so it stays callable
- *  outside a component — `ui/item-stats.ts` and friends build strings well away from a render. */
+ *  outside a component — `item-stats.ts` in `@cte2/view` and friends build strings well away from a render. */
 export function resolveHint(hint: Hint | undefined, technical: boolean): string | undefined {
   if (hint === undefined) return undefined;
   return typeof hint === "string" ? hint : technical ? hint.tech : hint.plain;

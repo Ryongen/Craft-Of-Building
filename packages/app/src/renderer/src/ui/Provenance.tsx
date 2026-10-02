@@ -38,15 +38,24 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useBuild } from "../state/build-store.js";
 import { useDerived } from "../state/derived.js";
-import { useWorld } from "../state/snapshot.js";
-import { floatingStyle, useHoverCard, type At } from "./HoverCard.js";
+import {
+  type At,
+  auraCard,
+  CELL,
+  centreOn,
+  draw,
+  effectCard,
+  floatingStyle,
+  IconCache,
+  spellCard,
+  supportGemCard,
+  useHoverCard,
+  useWorld,
+} from "@cte2/view";
 import { ItemWindow, JewelWindow } from "./ItemTooltip.js";
 import { GemWindow, SpellWindow } from "./SpellTooltip.js";
-import { auraCard, effectCard, spellCard, supportGemCard } from "./spell-stats.js";
 import { provenanceOf, type Provenance } from "./mod-source.js";
 import type { ModContribution } from "../state/derived.js";
-import { IconCache } from "../panels/tree/icons.js";
-import { CELL, centreOn, draw } from "../panels/tree/render.js";
 import { useTechnical } from "./detail-mode.js";
 
 /** The mini map's viewport, in pixels. */

@@ -4,7 +4,7 @@ import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
 

@@ -1,6 +1,6 @@
 import { nodeKey, parseNodeKey, type BuildDoc, type NodeKey, type TreeCoord, type TreeKey } from "@cte2/schema";
 
-import type { HoverInfo } from "./TreeCanvas.js";
+import type { HoverInfo } from "@cte2/view";
 
 /**
  * The document that results from adding or removing exactly `keys`.

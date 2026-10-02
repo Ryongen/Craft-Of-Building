@@ -88,7 +88,7 @@ import {
 } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
-import { useWorld } from "../../state/snapshot.js";
+import { type At, exactModLines, floatingStyle, modDetail, modKeywords, useWorld } from "@cte2/view";
 import {
   BAND_ENDS,
   NumberField,
@@ -100,9 +100,7 @@ import {
 import { Accordion } from "../../ui/Accordion.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
-import { floatingStyle, type At } from "../../ui/HoverCard.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
-import { exactModLines, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
 import { Plain, Tech, resolveHint } from "../../ui/copy/hint.js";
 import { GEAR_COPY } from "../../ui/copy/gear.js";

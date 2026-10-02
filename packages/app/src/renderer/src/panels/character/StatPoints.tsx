@@ -47,9 +47,8 @@ import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { smart, useWorld } from "@cte2/view";
 import { NumberField } from "../../ui/fields.js";
-import { smart } from "../../ui/format.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 
 /** `AllocateStatPacket.MAX_ALLOCATE_AT_ONCE` — what a shift-click sends. */

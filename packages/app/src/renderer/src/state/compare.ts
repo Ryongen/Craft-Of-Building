@@ -55,7 +55,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useBuild, type Baseline } from "./build-store.js";
 import { useDerived, type DerivedBuild } from "./derived.js";
-import { useWorld } from "./snapshot.js";
+import { useWorld } from "@cte2/view";
 
 /**
  * The figures a choice is judged on.

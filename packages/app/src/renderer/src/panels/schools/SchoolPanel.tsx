@@ -64,10 +64,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { type At, perkCard, spellCard, useHoverCard, useWorld } from "@cte2/view";
 import { GemWindow, SpellWindow } from "../../ui/SpellTooltip.js";
-import { useHoverCard, type At } from "../../ui/HoverCard.js";
-import { perkCard, spellCard } from "../../ui/spell-stats.js";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 

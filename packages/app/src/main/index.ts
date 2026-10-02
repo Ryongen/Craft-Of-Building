@@ -30,7 +30,7 @@ import { initUpdater } from "./updater.js";
  * The app speaks en-US, including its numbers.
  *
  * Every figure here is read against the game's own rendering and against captures transcribed
- * from it, so `ui/format.ts` pins `toLocaleString` to `en-US` rather than following the system.
+ * from it, so `format.ts` in `@cte2/view` pins `toLocaleString` to `en-US` rather than following the system.
  * That left one surface disagreeing: Chromium renders `<input type="number">` in the *browser*
  * locale, so on this Spanish-locale machine the stat sheet read `2,420.64` while the hitbox-radius
  * box beside it read `0,3`. The input's `.value` was always canonical `"0.3"` — only the display
@@ -38,7 +38,7 @@ import { initUpdater } from "./updater.js";
  *
  * Forcing the switch is safe because there is no i18n to lose: the UI is English-only.
  *
- * This is one half of the decision; the other is `LOCALE` in `renderer/src/ui/format.ts`, which
+ * This is one half of the decision; the other is `LOCALE` in `packages/view/src/format.ts`, which
  * carries the full reasoning. Changing the app's mind means changing both, and nothing else.
  */
 app.commandLine.appendSwitch("lang", "en-US");

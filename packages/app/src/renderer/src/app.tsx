@@ -22,17 +22,15 @@ import type { UpdateStatus } from "@shared/ipc";
 import { SheetDetail, type SheetFocus } from "./panels/stats/SheetDetail.js";
 import { DockedPane } from "./panels/stats/DetailPane.js";
 import { VitalsBlock } from "./panels/stats/VitalsBlock.js";
-import { PackIcon } from "./ui/StatIcon.js";
+import { PackIcon, useNarrow, useWorld } from "@cte2/view";
 import { useBuild } from "./state/build-store.js";
 import { useDerived } from "./state/derived.js";
 import { useCaptureCheck } from "./state/capture.js";
-import { useWorld } from "./state/snapshot.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
 import { useTechnical } from "./ui/detail-mode.js";
-import { useNarrow } from "./ui/narrow.js";
 import { resolveHint, type Hint } from "./ui/copy/hint.js";
 import raiden from "./assets/raiden.png";
 

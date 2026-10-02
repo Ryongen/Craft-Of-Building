@@ -47,14 +47,21 @@ import {
 } from "@cte2/schema";
 import { useMemo, type ReactNode } from "react";
 
-import { floatingStyle, useHoverCard, type At } from "./HoverCard.js";
+import {
+  type At,
+  floatingStyle,
+  type ItemSection,
+  itemSections,
+  jewelSections,
+  type StatLine,
+  useHoverCard,
+  useWorld,
+} from "@cte2/view";
 
 import { checkRequirements } from "@cte2/engine";
 import { useBuild } from "../state/build-store.js";
 import { useDerived } from "../state/derived.js";
-import { useWorld } from "../state/snapshot.js";
 import { GearIcon, ItemIcon } from "./GearIcon.js";
-import { itemSections, jewelSections, type ItemSection, type StatLine } from "./item-stats.js";
 import { useTechnical } from "./detail-mode.js";
 
 /**

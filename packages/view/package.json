@@ -1,0 +1,32 @@
+{
+  "name": "@cte2/view",
+  "version": "0.0.1",
+  "description": "Read-only views of a build: the talent tree, stat lines, item and skill text — shared by the planner and the build catalogue",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cte2/engine": "0.0.1",
+    "@cte2/extractor": "0.0.1",
+    "@cte2/schema": "0.0.1"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}

@@ -53,13 +53,12 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useDerived } from "../../state/derived.js";
-import { useWorld } from "../../state/snapshot.js";
+import { exactModSummary, modDetail, modKeywords, useWorld } from "@cte2/view";
 import { Accordion } from "../../ui/Accordion.js";
 import { NumberField, RollSlider, useRollDraft } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { CopyJsonButton, copyEnvelope } from "../../ui/CopyJsonButton.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
-import { exactModSummary, modDetail, modKeywords } from "../../ui/mods.js";
 import { StatLines } from "../../ui/StatLines.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
 import { useJewelTooltip } from "../../ui/ItemTooltip.js";

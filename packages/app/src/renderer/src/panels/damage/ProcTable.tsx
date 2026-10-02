@@ -2,7 +2,7 @@ import type { Snapshot } from "@cte2/extractor";
 import { type Proc } from "@cte2/engine";
 import { type ReactNode } from "react";
 
-import { useWorld } from "../../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
 import { exileEffectName, spellName } from "@cte2/schema";

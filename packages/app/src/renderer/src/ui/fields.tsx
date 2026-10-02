@@ -450,7 +450,7 @@ export function Labelled({ label, children }: { label: string; children: ReactNo
 /**
  * Re-exported so the many panels that import `num`/`smart` from here keep working.
  *
- * They live in `format.ts` now, beside `signed`, `percent` and `compact`, because this is a
- * components file and they are not components. New code should import from there.
+ * They live in `@cte2/view`'s `format.ts` now, beside `signed`, `percent` and `compact`, because
+ * this is a components file and they are not components. New code should import from there.
  */
-export { num, smart } from "./format.js";
+export { num, smart } from "@cte2/view";

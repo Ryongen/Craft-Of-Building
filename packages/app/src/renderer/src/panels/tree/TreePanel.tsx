@@ -24,17 +24,14 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
-import { useWorld } from "../../state/snapshot.js";
+import { type HoverInfo, perkData, perkLines, TreeCanvas, useNarrow, useWorld } from "@cte2/view";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { SearchInput } from "../../ui/SearchInput.js";
-import { useNarrow } from "../../ui/narrow.js";
 
 import { StatPoints } from "../character/StatPoints.js";
 import { candidateFor } from "./candidate.js";
-import { perkLines } from "./perk-lines.js";
 import { StageList } from "./StageList.js";
 import { TreeDrawer } from "./TreeDrawer.js";
-import { perkData, TreeCanvas, type HoverInfo } from "./TreeCanvas.js";
 
 const TREES: { key: TreeKey; label: string }[] = [
   { key: "talents", label: "Talents" },

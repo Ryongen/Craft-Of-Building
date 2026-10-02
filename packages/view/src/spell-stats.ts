@@ -60,7 +60,7 @@ import {
 } from "@cte2/schema";
 
 import { totalLines, type StatLine, type StatTotal } from "./item-stats.js";
-import { resolveValue } from "./StatLines.js";
+import { resolveValue } from "./stat-value.js";
 import { modsOf } from "./mods.js";
 import { num, smart } from "./format.js";
 

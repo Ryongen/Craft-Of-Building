@@ -13,7 +13,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
  * `require()` an ESM package, so they are bundled in instead — which they should be anyway,
  * since a packaged app has no workspace symlinks to follow.
  */
-const workspacePackages = ["@cte2/extractor", "@cte2/schema", "@cte2/engine"];
+const workspacePackages = ["@cte2/extractor", "@cte2/schema", "@cte2/engine", "@cte2/view"];
 
 export default defineConfig({
   main: {

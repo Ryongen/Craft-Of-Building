@@ -16,7 +16,7 @@
 import { rarityName, type AuraSetup, type SupportLink } from "@cte2/schema";
 import type { ReactNode } from "react";
 
-import { useWorld } from "../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { RollSlider } from "./fields.js";
 import { AUGMENTS_COPY } from "./copy/augments.js";
 import { useTechnical } from "./detail-mode.js";

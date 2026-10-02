@@ -16,8 +16,7 @@ import type { LayerStep } from "@cte2/engine";
 import type { Snapshot } from "@cte2/extractor";
 import { statLayerName } from "@cte2/schema";
 
-import { elementLabel } from "./palette.js";
-import { num, smart } from "./format.js";
+import { elementLabel, num, smart } from "@cte2/view";
 
 /**
  * A layer's name, with the elements filled into the three that are templates.

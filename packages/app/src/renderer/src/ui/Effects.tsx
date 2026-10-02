@@ -26,7 +26,7 @@ import {
 import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../state/build-store.js";
-import { useWorld } from "../state/snapshot.js";
+import { useWorld } from "@cte2/view";
 import { useHint, type Hint } from "./copy/hint.js";
 import { useTechnical } from "./detail-mode.js";
 import { NumberField } from "./fields.js";

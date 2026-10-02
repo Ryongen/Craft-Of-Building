@@ -1,0 +1,12 @@
+{
+  // Browser code, so the DOM lib and React's JSX transform on top of the shared base.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

@@ -13,7 +13,7 @@
 
 import type { ReactNode } from "react";
 
-import { RARITY } from "./palette.js";
+import { RARITY } from "@cte2/view";
 
 export function RarityBadge({ rarity, title }: { rarity: string; title?: string }): ReactNode {
   const colour = RARITY[rarity.toLowerCase()];
