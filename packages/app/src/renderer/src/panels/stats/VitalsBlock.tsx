@@ -213,13 +213,13 @@ function SkillVitals({
         onSelect={pick({ kind: "skill-stat", statId: "critical_hit" })}
       />
       <Row
-        label="Crit multiplier"
+        label="Crit damage"
         statId="critical_damage"
-        value={`${num(critMulti, 2)}×`}
+        value={critDamageValue(critDamage, critMulti)}
         hint={
-          "What a crit is actually worth on this skill: the crit branch over the non-crit one, so double damage and the conversion children are in it." +
+          `The skill's crit damage stat, as the game shows it. A crit here actually lands for ${num(critMulti, 2)}× a non-crit: the crit branch over the non-crit one, so double damage and the conversion children are in it.` +
           (isOverCap(critDamage)
-            ? ` Crit damage is capped: ${overCap(critDamage!.value, critDamage!.uncapped!, true)}, and the part over the cap does nothing.`
+            ? ` Crit damage is capped at ${smart(critDamage!.value)}%, and the ${smart(critDamage!.uncapped! - critDamage!.value)}% over the cap does nothing.`
             : "")
         }
         active={same(focus, { kind: "figure", id: "crit-multi" })}
@@ -739,6 +739,17 @@ function StatRowOf({
 }
 
 /**
+ * The crit row in the game's own terms: the `critical_damage` percent a player sees on their
+ * character screen, capped value first. The realised ratio is the truer figure, but "5.00×"
+ * beside an in-game "400%" read as a different number. Falls back to the ratio only when the
+ * stat itself is missing.
+ */
+function critDamageValue(stat: { value: number; uncapped?: number } | undefined, ratio: number): string {
+  if (stat === undefined) return `${num(ratio, 2)}×`;
+  return isOverCap(stat) ? overCap(stat.value, stat.uncapped!, true) : `${smart(stat.value)}%`;
+}
+
+/**
  * The main figure when it is the weapon swing: the same questions, answered for a swing.
  *
  * No row opens a detail: the details behind the skill rows read the main Skill's run, and with
@@ -769,7 +780,12 @@ function SwingVitals({ derived }: { derived: DerivedBuild }): ReactNode {
         }
       />
       <Row label="Crit chance" statId="critical_hit" value={`${num(hit.critChance * 100, 2)}%`} />
-      <Row label="Crit multiplier" statId="critical_damage" value={`${num(critMulti, 2)}×`} />
+      <Row
+        label="Crit damage"
+        statId="critical_damage"
+        value={critDamageValue(derived.stats.get("critical_damage"), critMulti)}
+        hint={`The crit damage stat, as the game shows it. A crit actually lands for ${num(critMulti, 2)}× a non-crit.`}
+      />
       <Row label="Chance to hit" statId="accuracy" value={`${num(hit.hitChance * 100, 2)}%`} />
       <Row label="Swing DPS" statId="total_damage" value={smart(basic.dps)} />
       <Row

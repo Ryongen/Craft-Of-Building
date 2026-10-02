@@ -343,6 +343,14 @@ export type DamageSource = {
   valueCalcId: string;
   element: ElementName;
   carrier: Carrier;
+  /**
+   * The permanent effect you hold that produced this act, whatever carrier the act itself rides.
+   *
+   * Usually the carrier says so (`kind: "effect"`, `permanent`), but Power Surge's effect throws a
+   * `lightning_bolt` and the bolt is the act's carrier, so only this records that the damage runs
+   * on the effect's clock rather than on presses. Set by `auras.ts`.
+   */
+  heldAura?: string;
   trigger: Trigger;
   target: SourceTarget;
   /** Where this act resolves from, and the spawn chain that put its carrier there. */

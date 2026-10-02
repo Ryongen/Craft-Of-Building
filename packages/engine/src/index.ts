@@ -94,7 +94,15 @@ export type { BasicAttack, BasicAttackOptions } from "./damage/basic-attack.js";
 
 // --- the rate (phase 3) ---------------------------------------------------------------
 
-export { damageWithin, pressedForEffect, simulateDps, simulateFullDps, timeToKill } from "./damage/dps.js";
+export {
+  damageWithin,
+  pressedForEffect,
+  procPlacement,
+  simulateDps,
+  simulateFullDps,
+  simulateProc,
+  timeToKill,
+} from "./damage/dps.js";
 export type {
   DpsOptions,
   DpsResult,
@@ -144,7 +152,16 @@ export {
 export { procDps, resolveProcs, rotationProcs } from "./damage/procs.js";
 export type { Proc, ProcLimit, RotationPresses } from "./damage/procs.js";
 export { procChain, runChain } from "./damage/chain.js";
-export type { ChainGraph, ChainHit, ChainLink, ChainNode, ChainOptions, ChainSpell, ProcChain } from "./damage/chain.js";
+export type {
+  ChainGraph,
+  ChainHit,
+  ChainLink,
+  ChainNode,
+  ChainOptions,
+  ChainRoot,
+  ChainSpell,
+  ProcChain,
+} from "./damage/chain.js";
 export { effectSupply, stacksPerCast } from "./damage/effect-supply.js";
 export type { EffectSupply, SupplyBasis, SupplySource } from "./damage/effect-supply.js";
 export { grantedProcStats, grantedProcs } from "./damage/granted.js";

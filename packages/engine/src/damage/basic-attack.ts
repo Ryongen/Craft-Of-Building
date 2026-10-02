@@ -43,13 +43,13 @@
  */
 
 import type { Snapshot } from "@cte2/extractor";
-import type { BuildDoc, Diagnostic, SkillSetup } from "@cte2/schema";
+import type { BuildDoc, Diagnostic } from "@cte2/schema";
 
 import { resolveEffects, type EngineResult } from "../calculate.js";
 import {
-  procPlacement,
   simulateDps,
   simulateFullDps,
+  simulateProc,
   type DpsResult,
   type FullDpsResult,
 } from "./dps.js";
@@ -206,22 +206,19 @@ export function basicAttack(
           sheet: characterRun.stats,
           // A swing carries no spell, so every `spell_has_tag` gate on a proc correctly fails.
           spellTags: new Set<string>(),
-          damageOf: (spellId, position) => {
-            const entryData = snapshot.registries["mmorpg_spells"]?.[spellId]?.data;
-            if (!entryData) return 0;
-            const procSkill: SkillSetup = (build.skills ?? []).find((s) => s.spellId === spellId) ?? {
-              spellId,
-            };
-            const result = simulateDps(build, snapshot, {
-              ...options,
-              skill: procSkill,
-              procs: false,
-              // The same placement `simulateDps` would have read, with the enemy moved to the
-              // origin when the proc is cast from it.
-              placement: procPlacement(build.config?.target ?? DEFAULT_PLACEMENT, position),
-            });
-            return procCastOf(result);
-          },
+          // The same placement `simulateDps` would have read, with the enemy moved to the origin
+          // when the proc is cast from it.
+          damageOf: (spellId, position) =>
+            procCastOf(
+              simulateProc(
+                build,
+                snapshot,
+                spellId,
+                position,
+                build.config?.target ?? DEFAULT_PLACEMENT,
+                options,
+              ),
+            ),
           supplyOf: (effectId) => supplyFor(build, snapshot, effectId, options),
           diagnostics,
         });

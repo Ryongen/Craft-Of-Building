@@ -955,6 +955,59 @@ test("a proc whose spell is switched off on the Skills tab is listed, not counte
   closeTo(simulateFullDps(doc, snapshot).procDps, 0);
 });
 
+test("a skill marked proc only is not pressed, and lands only through the proc", () => {
+  // `bolt` is on the bar for its gems and the gear casts it. Ticked as a step, the pass presses it
+  // too; proc only, the pass is `strike` alone and bolt's damage is the proc's.
+  const snapshot = procScenario({ chance: 100 });
+  const strike = { spellId: "strike", main: true, includeInFullDps: true };
+  const alone = simulateFullDps(build({ skills: [strike] } as Partial<BuildDoc>), snapshot);
+  const pressed = simulateFullDps(
+    build({ skills: [strike, { spellId: "bolt", includeInFullDps: true }] } as Partial<BuildDoc>),
+    snapshot,
+  );
+  const doc = build({
+    skills: [strike, { spellId: "bolt", includeInFullDps: true, fullDpsAsProc: true }],
+  } as Partial<BuildDoc>);
+  const procOnly = simulateFullDps(doc, snapshot);
+
+  assert.equal(pressed.skills.length, 2);
+  assert.equal(pressed.proccable.length, 1);
+  assert.equal(pressed.proccable[0]!.spellId, "bolt");
+  assert.equal(procOnly.skills.length, 1);
+  assert.deepEqual(
+    procOnly.procOnly.map((s) => s.spellId),
+    ["bolt"],
+  );
+  closeTo(procOnly.rotationSeconds, alone.rotationSeconds);
+  closeTo(procOnly.skillDps, alone.skillDps);
+  closeTo(procOnly.procDps, alone.procDps);
+  assert.ok(procOnly.procDps > 0);
+  assert.ok(pressed.rotationSeconds > procOnly.rotationSeconds);
+});
+
+test("proc only is ignored for a skill nothing on the build procs", () => {
+  const snapshot = procScenario({ chance: 0 });
+  const full = simulateFullDps(
+    build({
+      skills: [
+        { spellId: "strike", main: true, includeInFullDps: true },
+        { spellId: "bolt", includeInFullDps: true, fullDpsAsProc: true },
+      ],
+    } as Partial<BuildDoc>),
+    snapshot,
+  );
+  assert.equal(full.skills.length, 2);
+  assert.equal(full.procOnly.length, 0);
+  assert.ok(full.diagnostics.some((d) => d.code === "full-dps-proc-only-unproccable"));
+});
+
+test("a proc carries where it is cast from", () => {
+  const snapshot = procScenario({ chance: 100 });
+  const doc = build({ skills: [{ spellId: "strike", main: true, includeInFullDps: true }] } as Partial<BuildDoc>);
+  assert.equal(simulateDps(doc, snapshot)?.procs[0]?.position, "CASTER");
+  assert.equal(simulateFullDps(doc, snapshot).procs[0]?.position, "CASTER");
+});
+
 test("a long individual cooldown stretches the whole rotation, and is named", () => {
   const snapshot = scenario({ spellConfig: { cast_time_ticks: 0, cooldown_ticks: 200, cast_speed_ticks: 20 } });
   const doc = build({ skills: [{ spellId: "strike", main: true, includeInFullDps: true }] } as Partial<BuildDoc>);

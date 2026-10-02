@@ -468,6 +468,16 @@ export type SkillSetup = {
    */
   fullDpsAsBuff?: boolean;
   /**
+   * Never pressed: in Full DPS this skill only lands when something procs it.
+   *
+   * A skill is often on the bar only so its support gems apply to the proc — a ring runeword
+   * casting Chain Lightning, Fan of Knives fired from gear — and ticking it read it as a button
+   * pressed every pass on top of the proc. With this set the skill costs the pass nothing and its
+   * damage comes in through the rotation's procs alone, at their real rate. Honoured only while
+   * the build carries a stat that procs it; otherwise the skill is pressed as usual.
+   */
+  fullDpsAsProc?: boolean;
+  /**
    * Whether this skill counts at all. Defaults to true; read it through `isSkillEnabled`.
    *
    * A disabled skill keeps everything it has — its level, its support gems, its place in the

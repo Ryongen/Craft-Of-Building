@@ -590,8 +590,15 @@ function SkillListRow({
         </span>
       )}
       {skill.includeInFullDps === true && (
-        <span className="badge" title="Ticked into the Full DPS rotation">
-          full
+        <span
+          className="badge"
+          title={
+            skill.fullDpsAsProc === true
+              ? "In Full DPS through its procs only, never pressed"
+              : "Ticked into the Full DPS rotation"
+          }
+        >
+          {skill.fullDpsAsProc === true ? "full · proc" : "full"}
         </span>
       )}
       {supports.length > 0 && (
@@ -638,6 +645,7 @@ function SkillCard({
   const setSkillEnabled = useBuild((s) => s.setSkillEnabled);
   const setMainSkill = useBuild((s) => s.setMainSkill);
   const setIncludeInFullDps = useBuild((s) => s.setIncludeInFullDps);
+  const setFullDpsAsProc = useBuild((s) => s.setFullDpsAsProc);
 
   const spell = entry(world.snapshot, CATEGORY.spell, skill.spellId)?.data;
   const config = (spell?.["config"] ?? {}) as Record<string, unknown>;
@@ -919,6 +927,22 @@ function SkillCard({
           />
           in Full DPS
         </label>
+
+        {/* Only where the gear procs it: the skill is then on the bar for its gems, not pressed. */}
+        {skill.includeInFullDps === true &&
+          (derived.fullDps?.proccable.includes(skill) === true || skill.fullDpsAsProc === true) && (
+            <label
+              className="field"
+              title="Your gear casts this skill for you. Tick if you never press it and keep it on the bar only for its support gems: Full DPS then counts it at the rate it's procced instead of as a press every pass."
+            >
+              <input
+                type="checkbox"
+                checked={skill.fullDpsAsProc === true}
+                onChange={(event) => setFullDpsAsProc(index, event.target.checked)}
+              />
+              proc only
+            </label>
+          )}
 
         <label
           className="field"

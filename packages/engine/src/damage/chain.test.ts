@@ -24,8 +24,7 @@ function graph(
   }
   return {
     nodes: map,
-    root: "root",
-    rootPeriodTicks,
+    roots: [{ node: "root", periodTicks: rootPeriodTicks }],
     cooldownTicks: (spellId) => cooldowns[spellId] ?? 10,
     childOf: (l, summon) => (summon && map.has(`${l.spellId}|summon`) ? `${l.spellId}|summon` : l.spellId),
   };
@@ -46,6 +45,29 @@ test("hits on the same tick share one cooldown: one cast, the rest blocked", () 
   closeTo(spell(result, "a")!.castsPerSecond, 1);
   closeTo(spell(result, "a")!.blockedPerSecond, 4);
   closeTo(result.dps, 100);
+});
+
+test("a rotation starts the chain from every pressed skill, each on its own period", () => {
+  // `root` once a second and `other` every two, half a second later, each a certain proc of `a`
+  // on a 1-tick cooldown: 1.5 casts a second, none blocked, because they never share a tick.
+  const g = graph(
+    {
+      root: { hits: [{ tick: 0, lands: 1, links: [link("a")] }], damagePerCast: 0 },
+      other: { hits: [{ tick: 0, lands: 1, links: [link("a")] }], damagePerCast: 0 },
+      a: { hits: [], damagePerCast: 100 },
+    },
+    { cooldowns: { a: 1 } },
+  );
+  const result = run({
+    ...g,
+    roots: [
+      { node: "root", periodTicks: 20 },
+      { node: "other", periodTicks: 40, offsetTicks: 10 },
+    ],
+  });
+  assert.deepEqual(result.rootSpellIds, ["root", "other"]);
+  closeTo(spell(result, "a")!.castsPerSecond, 1.5);
+  closeTo(spell(result, "a")!.blockedPerSecond, 0);
 });
 
 test("a spell cannot re-proc itself off its own hit: the cooldown is stamped before it lands", () => {

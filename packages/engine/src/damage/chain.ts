@@ -47,7 +47,14 @@ import { isSkillEnabled } from "@cte2/schema";
 
 import type { ProcHit } from "./ctx.js";
 import { DEFAULT_PLACEMENT, type TargetPlacement } from "./geometry.js";
-import { PET_ATTACK_GROUP, procPlacement, simulateDps, type DpsOptions, type DpsResult } from "./dps.js";
+import {
+  PET_ATTACK_GROUP,
+  procPlacement,
+  simulateDps,
+  type DpsOptions,
+  type DpsResult,
+  type FullDpsResult,
+} from "./dps.js";
 import { procCooldownOf } from "./procs.js";
 import { TICKS_PER_SECOND } from "./spell-calc.js";
 
@@ -68,11 +75,13 @@ export type ChainNode = {
   pets?: { node: string; perCast: number; lifeTicks: number; attackTicks: number; damagePerBite: number };
 };
 
+/** A pressed skill that starts the chain: its node, how often it is cast, and its first cast. */
+export type ChainRoot = { node: string; periodTicks: number; offsetTicks?: number };
+
 export type ChainGraph = {
   nodes: ReadonlyMap<string, ChainNode>;
-  root: string;
-  /** Ticks between presses of the root skill. */
-  rootPeriodTicks: number;
+  /** The pressed skills. One for the main skill alone; one per pressed skill for a rotation. */
+  roots: readonly ChainRoot[];
   cooldownTicks: (spellId: string) => number;
   /** Which node a link from a node in `summon` context casts. */
   childOf: (link: ChainLink, summon: boolean) => string;
@@ -92,7 +101,8 @@ export type ChainSpell = {
 };
 
 export type ProcChain = {
-  rootSpellId: string;
+  /** The pressed skills the chain was started from. */
+  rootSpellIds: string[];
   /** Everything the chain casts, per second, once it has built up. The pressed skill is not in it. */
   dps: number;
   spells: ChainSpell[];
@@ -107,6 +117,11 @@ export type ProcChain = {
 };
 
 export type ChainOptions = DpsOptions & {
+  /**
+   * Start the chain from every skill this rotation presses, each at its own rate in the pass,
+   * rather than from the main skill alone. Ignored when it ticks nothing.
+   */
+  rotation?: FullDpsResult;
   /** Seconds measured, after the warm-up. */
   seconds?: number;
   warmupSeconds?: number;
@@ -120,18 +135,20 @@ const RAMP_SECONDS = 15;
 const MAX_NODES = 40;
 
 /**
- * The chain the pressed skill starts, or undefined when it procs nothing that procs anything.
+ * The chain the pressed skills start, or undefined when they proc nothing that procs anything.
  *
- * Builds the graph with one `simulateDps` per reachable spell and context — rolls only, no proc
- * resolution — then {@link runChain}s it.
+ * The main skill alone by default; every skill a ticked rotation presses when `rotation` is given,
+ * which is the chain whose first link the Full DPS figure counts. Builds the graph with one
+ * `simulateDps` per reachable spell and context — rolls only, no proc resolution — then
+ * {@link runChain}s it.
  */
 export function procChain(build: BuildDoc, snapshot: Snapshot, options: ChainOptions = {}): ProcChain | undefined {
-  const { seconds, warmupSeconds, seed, ...dpsOptions } = options;
+  const { seconds, warmupSeconds, seed, rotation, ...dpsOptions } = options;
   const placement: TargetPlacement = dpsOptions.placement ?? build.config?.target ?? DEFAULT_PLACEMENT;
   const base: DpsOptions = { ...dpsOptions, procs: true, procRollsOnly: true, granted: false, breakdown: false };
 
-  const rootResult = simulateDps(build, snapshot, base);
-  if (rootResult === undefined || rootResult.rate.cycleSeconds <= 0) return undefined;
+  const pressed = rootsOf(build, snapshot, base, rotation);
+  if (pressed.length === 0) return undefined;
 
   const disabled = new Set((build.skills ?? []).filter((s) => !isSkillEnabled(s)).map((s) => s.spellId));
   const setupOf = (spellId: string): SkillSetup =>
@@ -142,9 +159,17 @@ export function procChain(build: BuildDoc, snapshot: Snapshot, options: ChainOpt
     `${spellId}|${summon ? "summon" : "you"}|${position}`;
   const childOf = (link: ChainLink, summon: boolean): string => keyOf(link.spellId, summon, link.position);
 
-  const root = keyOf(rootResult.spellId, false, "root");
-  const queue: { key: string; result: DpsResult; summon: boolean }[] = [{ key: root, result: rootResult, summon: false }];
-  const pending = new Set([root]);
+  const roots: ChainRoot[] = pressed.map((p, i) => ({
+    node: keyOf(p.result.spellId, false, `root${i}`),
+    periodTicks: p.periodTicks,
+    offsetTicks: p.offsetTicks,
+  }));
+  const queue: { key: string; result: DpsResult; summon: boolean }[] = roots.map((r, i) => ({
+    key: r.node,
+    result: pressed[i]!.result,
+    summon: false,
+  }));
+  const pending = new Set(roots.map((r) => r.node));
 
   while (queue.length > 0 && nodes.size < MAX_NODES) {
     const { key, result, summon } = queue.shift()!;
@@ -198,8 +223,9 @@ export function procChain(build: BuildDoc, snapshot: Snapshot, options: ChainOpt
   }
 
   // Nothing procs a second link: the single-skill proc figures already say everything.
+  const rootNodes = new Set(roots.map((r) => nodes.get(r.node)));
   const reachesAChain = [...nodes.values()].some(
-    (n) => n !== nodes.get(root) && (n.hits.some((h) => h.links.length > 0) || n.pets !== undefined),
+    (n) => !rootNodes.has(n) && (n.hits.some((h) => h.links.length > 0) || n.pets !== undefined),
   );
   if (!reachesAChain) return undefined;
 
@@ -207,8 +233,7 @@ export function procChain(build: BuildDoc, snapshot: Snapshot, options: ChainOpt
   return runChain(
     {
       nodes,
-      root,
-      rootPeriodTicks: Math.max(1, Math.round((rootResult.rate.cycleSeconds * TICKS_PER_SECOND) / Math.max(1, rootResult.rate.castsPerCycle))),
+      roots,
       cooldownTicks: (spellId) => {
         let ticks = cooldowns.get(spellId);
         if (ticks === undefined) cooldowns.set(spellId, (ticks = procCooldownOf(snapshot, spellId)));
@@ -218,6 +243,51 @@ export function procChain(build: BuildDoc, snapshot: Snapshot, options: ChainOpt
     },
     { seconds: seconds ?? DEFAULT_SECONDS, warmupSeconds: warmupSeconds ?? DEFAULT_WARMUP, seed: seed ?? 1 },
   );
+}
+
+/**
+ * What starts the chain, and how often each is cast.
+ *
+ * Alone, the main skill on its own cycle. In a rotation, each skill at its share of the pass:
+ * a step once per pass, an upkeep press as often as it is re-cast, staggered by the presses
+ * before it. A skill holding an aura lands its pulses on the aura's clock whatever the pass does,
+ * so it keeps its own cycle — the same answer the single-skill chain gives it. A toggle pressed
+ * once, and a proc-only skill, start nothing.
+ */
+function rootsOf(
+  build: BuildDoc,
+  snapshot: Snapshot,
+  base: DpsOptions,
+  rotation: FullDpsResult | undefined,
+): { result: DpsResult; periodTicks: number; offsetTicks: number }[] {
+  const ticksOf = (seconds: number): number => Math.max(1, Math.round(seconds * TICKS_PER_SECOND));
+  const ownCycle = (result: DpsResult): number =>
+    result.rate.cycleSeconds / Math.max(1, result.rate.castsPerCycle);
+
+  if (rotation === undefined || rotation.skills.length === 0) {
+    const result = simulateDps(build, snapshot, base);
+    if (result === undefined || result.rate.cycleSeconds <= 0) return [];
+    return [{ result, periodTicks: ticksOf(ownCycle(result)), offsetTicks: 0 }];
+  }
+
+  const out: { result: DpsResult; periodTicks: number; offsetTicks: number }[] = [];
+  let offset = 0;
+  for (const entry of rotation.skills) {
+    const result = simulateDps(build, snapshot, { ...base, skill: entry.skill });
+    if (result === undefined || result.rate.cycleSeconds <= 0) continue;
+    const presses = entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+    const period =
+      entry.role === "aura" || result.auraDps > 0
+        ? ownCycle(result)
+        : presses > 0 && rotation.rotationSeconds > 0
+          ? rotation.rotationSeconds / (presses * Math.max(1, result.rate.castsPerCycle))
+          : Number.POSITIVE_INFINITY;
+    if (Number.isFinite(period)) {
+      out.push({ result, periodTicks: ticksOf(period), offsetTicks: Math.round(offset * TICKS_PER_SECOND) });
+    }
+    if (entry.role === "rotation") offset += entry.pressSeconds;
+  }
+  return out;
 }
 
 /** One cast's hits, read off its sources: each landing tick, and that source's rolls. */
@@ -357,9 +427,10 @@ export function runChain(
     const queue: string[] = scheduled.get(tick) ?? [];
     scheduled.delete(tick);
 
-    if (tick % graph.rootPeriodTicks === 0) {
+    for (const root of graph.roots) {
+      const since = tick - (root.offsetTicks ?? 0);
       // The press itself: not a proc, so no proc cooldown, and its damage is the skill's own figure.
-      cast(graph.root, tick, queue, false);
+      if (since >= 0 && since % root.periodTicks === 0) cast(root.node, tick, queue, false);
     }
 
     while (queue.length > 0) {
@@ -419,9 +490,8 @@ export function runChain(
     }
   }
 
-  const rootNode = graph.nodes.get(graph.root);
   return {
-    rootSpellId: rootNode?.spellId ?? graph.root,
+    rootSpellIds: graph.roots.map((r) => graph.nodes.get(r.node)?.spellId ?? r.node),
     dps,
     spells,
     petsAlive: measuredTicks > 0 ? petTicks / measuredTicks : 0,

@@ -3,12 +3,17 @@ import { spellName } from "@cte2/schema";
 import { useMemo, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
+import { useDerived } from "../../state/derived.js";
 import { useWorld } from "../../state/snapshot.js";
 import { Figure } from "../../ui/Figure.js";
 import { num, smart } from "../../ui/fields.js";
 
 /**
- * Procs of procs: what the chain this skill starts settles at, simulated tick by tick.
+ * Procs of procs: what the chain your pressed skills start settles at, simulated tick by tick.
+ *
+ * Started from the Full DPS rotation when anything is ticked — every skill it presses, at its own
+ * rate in the pass — and from the main skill otherwise. Started from the main skill alone, this
+ * card ignored the rotation entirely: unticking Slice moved Full DPS and left this unchanged.
  *
  * The Procs card above counts what this skill's own hits trigger and stops there. A proc build
  * does not — the spells it casts proc more spells, and the pets it summons bite and proc again —
@@ -22,18 +27,22 @@ import { num, smart } from "../../ui/fields.js";
 export function ProcChainCard(): ReactNode {
   const doc = useBuild((s) => s.doc);
   const world = useWorld();
+  const full = useDerived().fullDps;
+  const rotation = full !== undefined && full.skills.length > 0 ? full : undefined;
   const chain = useMemo(() => {
     try {
-      return procChain(doc, world.snapshot);
+      return procChain(doc, world.snapshot, rotation === undefined ? {} : { rotation });
     } catch {
       return undefined;
     }
-  }, [doc, world.snapshot]);
+  }, [doc, world.snapshot, rotation]);
 
   if (chain === undefined) {
     return (
       <div className="card faint text-sm">
-        Nothing this skill procs goes on to proc anything else, so the Procs card is the whole story.
+        {rotation === undefined
+          ? "Nothing this skill procs goes on to proc anything else, so the Procs card is the whole story."
+          : "Nothing the rotation procs goes on to proc anything else, so Full DPS already counts every proc."}
       </div>
     );
   }
@@ -45,8 +54,24 @@ export function ProcChainCard(): ReactNode {
         <Figure
           label="Chain DPS"
           value={smart(chain.dps)}
-          hint="Everything the chain casts once it has built up, pets included; this skill's own hits are not in it. Averaged over five simulated minutes."
+          hint={
+            (rotation === undefined
+              ? "Everything the chain this skill starts casts once it has built up, pets included; this skill's own hits are not in it."
+              : "Everything the chain the Full DPS rotation starts casts once it has built up, pets included; the pressed skills' own hits are not in it.") +
+            " Averaged over five simulated minutes."
+          }
         />
+        {rotation !== undefined && (
+          <Figure
+            label="Beyond Full DPS"
+            value={smart(Math.max(0, chain.dps - rotation.procDps))}
+            hint={
+              `Full DPS counts what the pressed skills proc directly, ${smart(rotation.procDps)}/s, and ` +
+              "stops there. The rest of the chain — procs of procs, and what the pets they summon " +
+              "proc — is this much more, and is not in Full DPS."
+            }
+          />
+        )}
         {chain.rampSeconds !== undefined && (
           <Figure
             label="Builds up in"
@@ -95,6 +120,11 @@ export function ProcChainCard(): ReactNode {
         </tbody>
       </table>
 
+      <div className="faint text-xs mt-4">
+        Started from{" "}
+        {chain.rootSpellIds.map((id) => spellName(world.snapshot, id)).join(", ")}
+        {rotation === undefined ? " (the main skill)" : " (the Full DPS rotation)"}.
+      </div>
       <div className="faint text-xs mt-4">
         First seconds after the first press:{" "}
         {chain.rampDps.map((d) => smart(d)).join(" → ")}

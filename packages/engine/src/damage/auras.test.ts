@@ -364,6 +364,26 @@ function surgeScenario() {
   return snap;
 }
 
+test("a buff toggle whose effect throws bolts is paid on the effect's clock in a rotation", () => {
+  // Power Surge is tagged `buff`, not `aura`, so the pass files it as a free upkeep toggle with no
+  // presses. Its bolts ride a projectile, not the effect, and read as press damage: times zero
+  // presses, they were nothing, along with every proc they set off.
+  const snapshot = surgeScenario();
+  const config = (snapshot.registries["mmorpg_spells"]!["pulse_aura"]!.data as Record<string, unknown>)[
+    "config"
+  ] as Record<string, unknown>;
+  config["tags"] = { tags: ["magic", "buff", "damage"] };
+
+  const single = simulateDps(rotationBuild([AURA, { ...ATTACK, main: false }]), snapshot, { skill: AURA });
+  assert.ok(single);
+  assert.ok(single.auraDps > 0, "the bolt is the held effect's doing");
+
+  const alone = simulateFullDps(rotationBuild([ATTACK]), snapshot);
+  const withSurge = simulateFullDps(rotationBuild([ATTACK, { ...AURA, fullDpsAsBuff: true }]), snapshot);
+  assert.equal(withSurge.skills.find((e) => e.skill.spellId === "pulse_aura")?.role, "upkeep");
+  closeTo(withSurge.skillDps, alone.skillDps + single.auraDps);
+});
+
 test("an effect's tick can spawn a group declared on the spell that granted it", () => {
   const result = simulateDps(build(), surgeScenario());
   assert.ok(result);

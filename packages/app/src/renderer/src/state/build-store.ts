@@ -314,6 +314,8 @@ export type BuildState = {
   setIncludeInFullDps(index: number, include: boolean): void;
   /** Charge a skill that hits as a buff in Full DPS: pressed when its effect runs out. */
   setFullDpsAsBuff(index: number, asBuff: boolean): void;
+  /** Count this skill in Full DPS only through what procs it, never as a press. */
+  setFullDpsAsProc(index: number, asProc: boolean): void;
   /** Fill the enemy block from a built-in target, and record which one it came from. */
   applyTargetPreset(id: TargetPresetId, snapshot: Snapshot, level: number): void;
   /** Fills `enemy.offence`'s hit from a built-in attacker profile. */
@@ -777,6 +779,7 @@ export const useBuild = create<BuildState>((set) => ({
       delete copy.main;
       delete copy.includeInFullDps;
       delete copy.fullDpsAsBuff;
+      delete copy.fullDpsAsProc;
       skills.splice(index + 1, 0, copy);
       return prune(doc, "skills", skills);
     }),
@@ -829,6 +832,16 @@ export const useBuild = create<BuildState>((set) => ({
         // Kept when false: a curse defaults to being pressed for its debuff, so "every pass" has
         // to be written down or it reads as the default again.
         return { ...skill, fullDpsAsBuff: asBuff };
+      });
+      return prune(doc, "skills", skills);
+    }),
+
+  setFullDpsAsProc: (index, asProc) =>
+    edit(set, (doc) => {
+      const skills = (doc.skills ?? []).map((skill, i) => {
+        if (i !== index) return skill;
+        const { fullDpsAsProc: _drop, ...rest } = skill;
+        return asProc ? { ...rest, fullDpsAsProc: true } : rest;
       });
       return prune(doc, "skills", skills);
     }),

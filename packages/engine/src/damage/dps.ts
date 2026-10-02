@@ -721,6 +721,16 @@ export type FullDpsResult = {
   ailmentDps: number;
   /** The Shatter and Shock share of {@link ailmentDps}, summed over the rotation. Inside it. */
   ailmentProcDps: number;
+  /**
+   * Ticked skills a stat on this build's sheet procs — the ones that can be marked
+   * `fullDpsAsProc`. The same objects as in `build.skills`, so compare by identity.
+   */
+  proccable: SkillSetup[];
+  /**
+   * Ticked skills left out of the pass because they only land when procced. Not in
+   * {@link skills}: their damage is whatever {@link procs} says they fire for, and nothing else.
+   */
+  procOnly: SkillSetup[];
   diagnostics: Diagnostic[];
 };
 
@@ -1161,9 +1171,7 @@ export function simulateDps(
     .reduce((sum, s) => sum + s.damagePerCast * s.sustained, 0);
   // What a permanent aura contributed, kept separately for the one caller that must not pace it
   // by this skill's cycle. See `DpsResult.auraDamagePerCast`.
-  const auraSourceResults = sources.filter(
-    (s) => s.source.carrier.kind === "effect" && s.source.carrier.permanent,
-  );
+  const auraSourceResults = sources.filter(isHeldAura);
   const auraPerCast = auraSourceResults.reduce((sum, s) => sum + s.damagePerCast * s.sustained, 0);
   const auraCritPerCast = auraSourceResults.reduce(
     (sum, s) => sum + s.critDamagePerCast * s.sustained,
@@ -1507,20 +1515,8 @@ export function simulateDps(
           ),
           // The procced spell is resolved as its own cast, with its procs off so a chain cannot
           // recurse, and at the same placement — it lands where you are fighting.
-          damageOf: (spellId, position) => {
-            const entryData = snapshot.registries["mmorpg_spells"]?.[spellId]?.data;
-            if (!entryData) return 0;
-            const procSkill: SkillSetup = (build.skills ?? []).find((s) => s.spellId === spellId) ?? {
-              spellId,
-            };
-            const result = simulateDps(build, snapshot, {
-              ...options,
-              skill: procSkill,
-              procs: false,
-              placement: procPlacement(placement, position),
-            });
-            return procCastOf(result);
-          },
+          damageOf: (spellId, position) =>
+            procCastOf(simulateProc(build, snapshot, spellId, position, placement, options)),
           diagnostics,
         });
 
@@ -1611,8 +1607,7 @@ export function simulateDps(
   // Every hit that lands rolls its own ailments, and the DoTs among them stack, so the rate is
   // per landing hit and per source — not the headline's one application. A spell with no damage
   // act of its own is one synthetic hit a cast, as it always was.
-  const isAura = (s: SourceResult): boolean =>
-    s.source.carrier.kind === "effect" && s.source.carrier.permanent;
+  const isAura = isHeldAura;
   const ailmentFeeds = (only?: (s: SourceResult) => boolean): (AilmentFeed & { perCast: number })[] =>
     !ailmentsLand
       ? []
@@ -1888,6 +1883,45 @@ export function procPlacement(
   return position === "TARGET" ? { ...placement, distance: 0 } : placement;
 }
 
+/**
+ * One cast of a procced spell, the way the proc figures resolve it.
+ *
+ * The bar's own setup when the spell is on it — that is how its support gems reach the proc —
+ * and a bare cast otherwise. Procs off, so a chain cannot recurse, at `procPlacement`. The
+ * Damage tab calls this with `breakdown` on to trace a proc's hit, which is only honest if it is
+ * the same call the proc's damage came from.
+ */
+export function simulateProc(
+  build: BuildDoc,
+  snapshot: Snapshot,
+  spellId: string,
+  position: "CASTER" | "TARGET",
+  placement: TargetPlacement,
+  options: DpsOptions = {},
+): DpsResult | undefined {
+  if (snapshot.registries["mmorpg_spells"]?.[spellId]?.data === undefined) return undefined;
+  const skill: SkillSetup = (build.skills ?? []).find((s) => s.spellId === spellId) ?? { spellId };
+  return simulateDps(build, snapshot, {
+    ...options,
+    skill,
+    procs: false,
+    placement: procPlacement(placement, position),
+  });
+}
+
+/**
+ * Whether a source is a permanent effect's doing, on the effect's clock rather than on presses.
+ *
+ * The carrier answers for Holy Fire's pulse; Power Surge's bolt rides a projectile the effect
+ * throws, and only `heldAura` remembers where it came from.
+ */
+function isHeldAura(s: SourceResult): boolean {
+  return (
+    s.source.heldAura !== undefined ||
+    (s.source.carrier.kind === "effect" && s.source.carrier.permanent)
+  );
+}
+
 /** How finely, and how far out, `reachOf` looks for a distance this skill does land at. */
 const REACH_STEP = 0.1;
 const REACH_LIMIT = 24;
@@ -2121,6 +2155,8 @@ export function simulateFullDps(
 ): FullDpsResult {
   const skills = (build.skills ?? []).filter((s) => s.includeInFullDps === true && isSkillEnabled(s));
   const diagnostics: Diagnostic[] = [];
+  const proccable: SkillSetup[] = [];
+  const procOnly: SkillSetup[] = [];
 
   const empty = (extra: Diagnostic[]): FullDpsResult => ({
     skills: [],
@@ -2135,6 +2171,8 @@ export function simulateFullDps(
     packDps: 0,
     ailmentDps: 0,
     ailmentProcDps: 0,
+    proccable,
+    procOnly,
     diagnostics: [...diagnostics, ...extra],
   });
 
@@ -2166,6 +2204,29 @@ export function simulateFullDps(
       });
       continue;
     }
+    // A skill the gear casts for you. Read off the sheet this result was built on, so a proc
+    // only an aura or a buff grants still counts as one the build has.
+    const procced = procSourcesFor(snapshot, skill.spellId, result.hit.sheets.character.stats).some(
+      (s) => s.onSheet,
+    );
+    if (procced) proccable.push(skill);
+    if (skill.fullDpsAsProc === true) {
+      if (procced) {
+        // Not pressed, so not an entry: it costs the pass nothing and lands only through the
+        // `rotationProcs` merge below, which already resolves it with this skill's gems.
+        procOnly.push(skill);
+        continue;
+      }
+      diagnostics.push({
+        severity: "info",
+        code: "full-dps-proc-only-unproccable",
+        path: "skills",
+        message:
+          `\`${skill.spellId}\` is marked proc only, but nothing on this build procs it, so it is ` +
+          `counted as pressed every pass instead.`,
+      });
+    }
+
     // What one press of this skill takes out of the pass: its cast, then the shared arm it puts
     // on everything else. A skill off the global cooldown contributes only its cast time.
     const pressSeconds = result.rate.castSeconds + result.rate.globalCooldownSeconds;
@@ -2206,7 +2267,23 @@ export function simulateFullDps(
     }
   }
 
-  if (entries.length === 0) return empty([]);
+  if (entries.length === 0) {
+    return empty(
+      procOnly.length === 0
+        ? []
+        : [
+            {
+              severity: "info",
+              code: "full-dps-procs-only",
+              path: "skills",
+              message:
+                "Every skill ticked into Full DPS is proc only, so nothing in the rotation is " +
+                "pressed to trigger them. Tick the skill whose hits proc them; what your basic " +
+                "attacks proc is still counted beside this figure.",
+            },
+          ],
+    );
+  }
 
   const rotation = entries.filter((e) => e.role === "rotation");
   // An aura is charged nothing and waits for nothing, so it never appears in the solve below —
@@ -2273,6 +2350,9 @@ export function simulateFullDps(
 
   const pressesOf = (entry: Entry): number =>
     entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+  // Hits that land on a held effect's clock rather than on presses: an aura's pulses, and a
+  // toggle whose effect strikes on its own, like Power Surge's bolts. Neither pays out per press.
+  const ownClock = (entry: Entry): boolean => entry.role === "aura" || entry.result.auraDps > 0;
 
   // The aura share comes out of every per-press figure and goes back in as a rate. A permanent
   // carrier was counted over *its own* skill's cycle so that the division would cancel; a pass
@@ -2319,8 +2399,8 @@ export function simulateFullDps(
       // is already a real rate for it — two Holy Fire pulses a second, not two per cast — so the
       // pass length is what it multiplies by. Zeroing it with the presses is how a Holy Fire
       // build's procs would have disappeared the moment the aura stopped being a rotation step.
-      cycleSeconds: e.role === "aura" ? rotationSeconds : e.result.rate.cycleSeconds,
-      presses: e.role === "aura" ? 1 : pressesOf(e),
+      cycleSeconds: ownClock(e) ? rotationSeconds : e.result.rate.cycleSeconds,
+      presses: ownClock(e) ? 1 : pressesOf(e),
     })),
     rotationSeconds,
   );
@@ -2347,7 +2427,7 @@ export function simulateFullDps(
   // The Shatter/Shock pool is not linear in the hit rate, so scaling it by the rotation's share
   // of the skill's own pace is an approximation — but a closer one than counting presses.
   const procWeight = (e: Entry): number =>
-    e.role === "aura"
+    ownClock(e)
       ? 1
       : rotationSeconds > 0
         ? (pressesOf(e) * e.result.rate.cycleSeconds) / rotationSeconds
@@ -2369,6 +2449,8 @@ export function simulateFullDps(
     ailmentDps:
       entries.reduce((sum, e) => sum + castAilmentDps(e) + auraAilmentDps(e), 0) + ailmentProcDps,
     ailmentProcDps,
+    proccable,
+    procOnly,
     diagnostics: [...diagnostics, ...entries.flatMap((e) => e.result.diagnostics)],
   };
 }

@@ -19,7 +19,7 @@
  * mean of the two totals and says so.
  */
 
-import { sourceLabel, type DpsResult } from "@cte2/engine";
+import { DEFAULT_PLACEMENT, simulateProc, sourceLabel, type DpsResult, type Proc } from "@cte2/engine";
 import { ELEMENTS } from "@cte2/schema";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -61,25 +61,44 @@ import { useTechnical } from "../../ui/detail-mode.js";
 import { resolveHint } from "../../ui/copy/hint.js";
 
 /**
- * The tab, choosing between the two things a main figure can be.
+ * The tab, choosing between the three things it can be about: a Skill, the swing, or a proc.
  *
- * Two components rather than a branch inside one: the skill view holds a dozen hooks and the
- * swing view a few, and switching between them inside one component would change the hook count
+ * Separate components rather than a branch inside one: the skill view holds a dozen hooks and the
+ * others a few, and switching between them inside one component would change the hook count
  * between renders.
+ *
+ * A proc is a view rather than a main figure. Blood Explosion is cast by whatever crits, and
+ * Soul Wound by any melee hit, so it is not one skill's doing and is not a thing the document
+ * marks `main`; picking one only changes what this tab shows, and it is not saved.
  */
 export function DamagePanel(): ReactNode {
   const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
-  return swingIsMain ? <BasicAttackDamage header={<MainSelect />} /> : <SkillDamagePanel />;
+  const derived = useDerived();
+  const [procKey, setProcKey] = useState<string | null>(null);
+  const procs = useMemo(() => procChoicesOf(derived), [derived]);
+  const proc = procs.find((c) => c.key === procKey);
+  const header = <MainSelect procs={procs} proc={proc} onProc={setProcKey} />;
+  if (proc !== undefined) return <ProcDamagePanel key={proc.key} choice={proc} header={header} />;
+  return swingIsMain ? <BasicAttackDamage header={header} /> : <SkillDamagePanel header={header} />;
 }
 
 /**
- * Which figure the tab is about: one of the Skills, or the weapon swing.
+ * Which figure the tab is about: one of the Skills, the weapon swing, or a spell your gear procs.
  *
  * The swing is listed after the Skills because it is not one — it is not on the hotbar and has
  * no `SkillSetup` — but it is chosen from the same place, since "what am I judged on" is one
- * question whichever the answer is.
+ * question whichever the answer is. The procs come last, as a view: choosing one leaves the main
+ * skill as it was.
  */
-function MainSelect(): ReactNode {
+function MainSelect({
+  procs,
+  proc,
+  onProc,
+}: {
+  procs: readonly ProcChoice[];
+  proc: ProcChoice | undefined;
+  onProc: (key: string | null) => void;
+}): ReactNode {
   const world = useWorld();
   const skills = useBuild((s) => s.doc.skills ?? []);
   const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
@@ -97,8 +116,13 @@ function MainSelect(): ReactNode {
     <div className="row wrap mb-5">
       <label className="muted">Skill</label>
       <select
-        value={swingIsMain ? BASIC : mainIndex}
+        value={proc !== undefined ? `proc:${proc.key}` : swingIsMain ? BASIC : mainIndex}
         onChange={(event) => {
+          if (event.target.value.startsWith("proc:")) {
+            onProc(event.target.value.slice("proc:".length));
+            return;
+          }
+          onProc(null);
           const value = Number(event.target.value);
           if (value === BASIC) setMainBasicAttack(true);
           else setMainSkill(value);
@@ -112,8 +136,23 @@ function MainSelect(): ReactNode {
         <option value={BASIC} disabled={derived.basic === undefined}>
           Basic attack
         </option>
+        {procs.length > 0 && (
+          <optgroup label="Procs">
+            {procs.map((choice) => (
+              <option key={choice.key} value={`proc:${choice.key}`}>
+                {spellName(world.snapshot, choice.spellId)} (proc)
+              </option>
+            ))}
+          </optgroup>
+        )}
       </select>
-      <span className="badge mono">{swingIsMain ? "basic attack" : (derived.dps?.spellId ?? "")}</span>
+      <span className="badge mono">
+        {proc !== undefined
+          ? `${proc.spellId} · proc`
+          : swingIsMain
+            ? "basic attack"
+            : (derived.dps?.spellId ?? "")}
+      </span>
       <div className="grow" />
       <button onClick={() => setAllPanels(DAMAGE_PANELS, false)}>Collapse all</button>
       <button onClick={() => setAllPanels(DAMAGE_PANELS, true)}>Expand all</button>
@@ -121,36 +160,13 @@ function MainSelect(): ReactNode {
   );
 }
 
-function SkillDamagePanel(): ReactNode {
+function SkillDamagePanel({ header }: { header: ReactNode }): ReactNode {
   const [technical] = useTechnical();
   const derived = useDerived();
   const doc = useBuild((s) => s.doc);
   const setIncludeInFullDps = useBuild((s) => s.setIncludeInFullDps);
   const setTargetPlacement = useBuild((s) => s.setTargetPlacement);
   const setPackSize = useBuild((s) => s.setPackSize);
-  const [branch, setBranch] = useState<Branch>("hit");
-  /**
-   * Which damage act the breakdown below is about, or null for "whichever is the headline".
-   *
-   * Null rather than a remembered act so that the choice survives editing the build: a skill
-   * whose sources are renumbered by a support gem, or swapped out entirely by changing the main
-   * skill, would otherwise leave a stale selection and silently fall back anyway.
-   *
-   * An **index**, not `DamageSource.id`, and that is load-bearing: the id is
-   * `${group}#${partIndex}`, so one part declaring a physical act and a cold one produces two
-   * sources under the same id. `tailwind_sweep` is exactly that, and keying the picker by id
-   * meant its cold act — the one carrying the freeze, and the larger of the two — could not be
-   * selected at all: both options carried the same value and both resolved to the first.
-   */
-  const [sourceIndex, setSourceIndex] = useState<number | null>(null);
-  /**
-   * Which ailment the right-hand column is about, or null for the first one inflicted.
-   *
-   * Lifted out of the ailment column because its buttons, its summary and its trace are three
-   * separate cells of the breakdown grid now — they have to line up with the hit column's three,
-   * so they cannot share a component, and therefore cannot share its state.
-   */
-  const [ailmentId, setAilmentId] = useState<string | null>(null);
   const detail = useDetailPane(340);
   /**
    * The Effects assumed up, docked where the detail pane goes.
@@ -191,46 +207,6 @@ function SkillDamagePanel(): ReactNode {
     );
   }
 
-  /**
-   * The source the breakdown is showing.
-   *
-   * `meteor_arrow` is why this is a choice at all: one press is an arrow that hits for physical
-   * and a meteor that lands for fire, with different value calculations, different elements and
-   * therefore different layers. A single trace describes one of them, and which one was never
-   * something the reader could pick — it was whichever `DpsResult.hit` had settled on.
-   */
-  const headlineIndex = Math.max(
-    0,
-    // By identity: `dps.hit` *is* one of these entries' hits, and `headlineSourceId` cannot tell
-    // two acts of one part apart.
-    dps.sources.findIndex((s) => s.hit === dps.hit),
-  );
-  const shown = dps.sources[sourceIndex ?? headlineIndex] ?? dps.sources[headlineIndex];
-  const shownHit = shown?.hit ?? damage;
-  const trace = branch === "crit" ? shownHit.crit.trace : shownHit.hit.trace;
-  const branchOutcome =
-    branch === "hit" ? shownHit.hit : branch === "crit" ? shownHit.crit : shownHit.average;
-  const branchAilments = branchOutcome.ailments;
-  const ailment = shownAilment(branchAilments, ailmentId);
-  /**
-   * Which ailments this act can inflict, for the folded card's head.
-   *
-   * Off the average branch rather than the shown one so the chip does not appear and disappear
-   * as you press Crit: whether a build bleeds is a fact about the build, not about the branch.
-   */
-  const ailments = inflicted(shownHit.average.ailments);
-  /**
-   * The other acts of this cast that do inflict something, when the shown one does not.
-   *
-   * One part can declare a physical act and a cold one, and only the cold one freezes — so the
-   * ailment column being empty is a fact about the act on the left, not about the build.
-   */
-  const elsewhere =
-    ailments.length > 0
-      ? []
-      : dps.sources
-          .filter((s) => s !== shown && inflicted(s.hit.average.ailments).length > 0)
-          .map((s) => sourceChoice(s));
   const sustain = sustainVerdict(dps);
   /**
    * Procs this skill cannot fire that the ticked rotation can, for the folded Procs card's head.
@@ -265,222 +241,20 @@ function SkillDamagePanel(): ReactNode {
   return (
     <div className="panel damage-panel">
       <div className="calcs-body">
-        <MainSelect />
+        {header}
 
-        {/*
-          The breakdown, first, because it is what the tab is for.
-
-          It used to be the last thing on the screen, below fourteen cards and below a full-width
-          card that printed each of Hit, Crit and Average with its element split and its ailments.
-          Two thirds of that card was answering a question nobody had asked yet: only one branch
-          can be traced at a time, so the other two totals were there to be compared against
-          nothing. The branch is a choice now, the chosen one prints its own total and split above
-          its rows, and the ailments have the column to the right of it.
-
-          Two columns because it is *two* events: the hit's own layer stack on the left, and on
-          the right the second `DamageEvent` an ailment runs with its own base and its own
-          multipliers. Side by side is the only arrangement in which you can see which of your
-          stats crossed from one to the other.
-        */}
-        <Panel
-          id="damage.breakdown"
-          title="Damage breakdown"
-          summary={
-            <>
-              <span className="muted">
-                {ELEMENTS[shownHit.element]?.displayName || shownHit.element} damage
-              </span>
-              {ailments.length > 0 && (
-                <span className="badge" title="Ailments this hit can inflict">
-                  inflicts {ailments.map((a) => a.ailment).join(" · ")}
-                </span>
-              )}
-              <span title="Average damage per hit, with crits weighted in">
-                <span className="muted">average hit </span>
-                <span className="mono">{smart(shownHit.average.total)}</span>
-              </span>
-            </>
-          }
-        >
-          {/*
-            One act picker for both columns, above them.
-
-            It governs the whole panel — the ailments on the right are the selected act's, not the
-            cast's — so it belongs above the split rather than in the left column, where it was
-            also the single biggest reason the two columns' headers were different heights.
-          */}
-          {dps.sources.length > 1 && (
-            <div className="row wrap mb-4">
-              <label className="muted">Act</label>
-              <select
-                value={sourceIndex ?? headlineIndex}
-                onChange={(event) => setSourceIndex(Number(event.target.value))}
-              >
-                {dps.sources.map((entry, index) => (
-                  <option key={`${entry.source.id}#${index}`} value={index}>
-                    {sourceChoice(entry)}
-                  </option>
-                ))}
-              </select>
-              <span className="muted text-sm">
-                One cast produces {dps.sources.length} damage acts, each with its own value
-                calculation and element.
-              </span>
-              {/*
-                The acts summed, because the picker can only show one at a time and a skill like
-                Clamor, Crash, Clatter is four hits of four elements whose whole point is the sum.
-              */}
-              <span
-                title={dps.sources
-                  .filter((s) => s.damagePerCast > 0)
-                  .map((s) => `${sourceChoice(s)}: ${smart(s.damagePerCast)}`)
-                  .join("\n")}
-              >
-                <span className="muted">all acts, per cast </span>
-                <span className="mono">{smart(dps.damagePerCast)}</span>
-              </span>
-            </div>
-          )}
-
-          {/*
-            One grid, not two stacked columns.
-
-            Each band — title, buttons, summary, trace — is a grid row holding both columns' cells,
-            so a row is as tall as its taller half and the two traces start level whatever is above
-            them. Stacked independently, the ailment's own event began 120px above the hit's,
-            which is the one comparison this layout exists to make.
-          */}
-          <div className="breakdown-grid">
-            <div className="bd-cell bd-left bd-band-1 section-title mt-0">The hit</div>
-            <div className="bd-cell bd-left bd-band-2">
-              <div className="row wrap">
-                {BRANCHES.map(([id, label]) => (
-                  <button
-                    key={id}
-                    className={branch === id ? "primary" : ""}
-                    onClick={() => setBranch(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
+        <DamageBreakdown
+          view={dps}
+          footer={
+            hasEffects && (
+              <div className="row mt-5">
+                <button className={effectsOpen ? "primary" : ""} onClick={toggleEffects}>
+                  Effects assumed up <span className="faint">· {assumedCount(derived)} up</span>
+                </button>
               </div>
-            </div>
-            <div className="bd-cell bd-left bd-band-3">
-              <Outcome
-                outcome={branchOutcome}
-                accent={
-                  branch === "hit"
-                    ? "var(--text)"
-                    : branch === "crit"
-                      ? "var(--warn)"
-                      : "var(--accent)"
-                }
-                /*
-                  What this act is, *under* the number rather than over it.
-
-                  Over it, this line pushed the total down by its own height and the ailment's
-                  headline opposite — which has no such line — sat twenty pixels higher than the
-                  number it is meant to be read against. Both columns now lead with the figure and
-                  qualify it underneath, which is the order the ailment column already used.
-
-                  Per act rather than once for the whole cast: `quake` is two acts of 591 base at
-                  139% effectiveness and 1182 at 278%, and the card this replaced printed the
-                  headline act's pair as though it described both. `baseValue` is not here at all
-                  — it is the trace's own first row, identical on every fixture, and printing it
-                  twice invited the two to disagree.
-                */
-                note={
-                  <>
-                    {ELEMENTS[shownHit.element]?.displayName || shownHit.element}
-                    <span title={resolveHint(DAMAGE_COPY.dmgEffectiveness, technical)}>
-                      {" · "}
-                      {num(shownHit.dmgEffectiveness * 100, 0)}% effectiveness
-                    </span>
-                    {/*
-                      What fraction of these hits land, beside the element and the crit chance.
-
-                      The ailment column opposite leads with its own Chance and always has, and
-                      the hit had no equivalent: dodge is folded into the total as expectation,
-                      so a build missing one attack in ten showed a number 10% smaller with
-                      nothing saying why. `damage_block` is the layer dodge and magic dodge
-                      average onto, and its multiplier is exactly this.
-                    */}
-                    <span
-                      title={
-                        "The mob's evasion against your accuracy, as a share of hits that land. " +
-                        "Dodge takes every non-magic hit, whatever its element, and magic dodge takes `magic` spells; the " +
-                        "figure above already has it folded in. Open the layer's row for the " +
-                        "subtraction."
-                      }
-                    >
-                      {" · "}
-                      {num(shownHit.hitChance * 100)}% chance to hit
-                    </span>
-                    <span title="What weights the Average branch">
-                      {" · "}
-                      {branch === "average"
-                        ? `weighted by ${num(shownHit.critChance * 100)}% crit chance`
-                        : `${num(shownHit.critChance * 100)}% crit`}
-                    </span>
-                  </>
-                }
-              />
-            </div>
-            <div className="bd-cell bd-left bd-band-4">
-              {/*
-                Average is a real branch to select and the only one with nothing to trace, so it
-                says what it is instead of printing rows the game never produces.
-                `critical_damage` gates a multiplicative layer and `double_damage` is clamped to
-                exactly x2, so a layer averaged between the two outcomes is a multiplier no hit
-                ever applies.
-              */}
-              {branch === "average" ? (
-                <div className="notice">
-                  Average has no rows of its own: it is{" "}
-                  <strong>{num((1 - shownHit.critChance) * 100)}%</strong> of the Hit branch&apos;s{" "}
-                  {smart(shownHit.hit.total)} and{" "}
-                  <strong>{num(shownHit.critChance * 100)}%</strong> of the Crit branch&apos;s{" "}
-                  {smart(shownHit.crit.total)}. The game never applies an averaged layer, so
-                  pick <strong>Hit</strong> or <strong>Crit</strong> to see the rows.
-                </div>
-              ) : trace === undefined ? (
-                <div className="notice">No trace was recorded for this branch.</div>
-              ) : (
-                <TraceBlock trace={trace} target={shownHit.target} />
-              )}
-            </div>
-            <div className="bd-cell bd-right bd-band-1 section-title mt-0">
-              What it inflicts
-              <span className="muted text-sm" style={{ fontWeight: 400, marginLeft: 8 }}>
-                each ailment&apos;s own event, on the {BRANCH_WORD[branch]} branch beside it
-              </span>
-            </div>
-
-            <div className="bd-cell bd-right bd-band-2">
-              <AilmentButtons
-                ailments={branchAilments}
-                shown={ailment}
-                onSelect={setAilmentId}
-              />
-            </div>
-
-            <div className="bd-cell bd-right bd-band-3">
-              <AilmentSummary ailment={ailment} elsewhere={elsewhere} stacks={dps.ailmentStacks} />
-            </div>
-
-            <div className="bd-cell bd-right bd-band-4">
-              <AilmentTrace ailment={ailment} target={shownHit.target} />
-            </div>
-          </div>
-
-          {hasEffects && (
-            <div className="row mt-5">
-              <button className={effectsOpen ? "primary" : ""} onClick={toggleEffects}>
-                Effects assumed up <span className="faint">· {assumedCount(derived)} up</span>
-              </button>
-            </div>
-          )}
-        </Panel>
+            )
+          }
+        />
 
         {/*
           Everything else, two columns of cards that fold.
@@ -520,6 +294,7 @@ function SkillDamagePanel(): ReactNode {
               skills={skills}
               onToggle={setIncludeInFullDps}
               swingProcDps={derived.basic?.procDps ?? 0}
+              swingProcs={derived.basic?.procs ?? []}
             />
           </Panel>
 
@@ -599,10 +374,18 @@ function SkillDamagePanel(): ReactNode {
 
           {/*
             The chain those procs start: procs of procs and the pets' bites, simulated. Closed by
-            default and only computed when opened — it is a simulation, not a formula.
+            default and only computed when opened — it is a simulation, not a formula. Started from
+            the rotation when anything is ticked, so it is offered whenever that procs, too.
           */}
-          {dps.procs.some((p) => p.perSecond > 0) && (
-            <Panel id="damage.proc-chain" title="Procs triggering procs" summary="simulated" defaultOpen={false}>
+          {(rotating
+            ? (derived.fullDps?.procs ?? []).some((p) => p.perSecond > 0)
+            : dps.procs.some((p) => p.perSecond > 0)) && (
+            <Panel
+              id="damage.proc-chain"
+              title="Procs triggering procs"
+              summary={rotating ? "simulated from the rotation" : "simulated"}
+              defaultOpen={false}
+            >
               <ProcChainCard />
             </Panel>
           )}
@@ -804,6 +587,414 @@ function sourceChoice(entry: DpsResult["sources"][number]): string {
   return `${name} · ${element} · ${sourceLabel(entry.source)}${per}${self}`;
 }
 
+/**
+ * The damage breakdown of one cast: the skill's, or a procced spell's.
+ *
+ * Its own component so the proc view can show exactly what the skill view does. It owns the
+ * branch, act and ailment it is showing; a caller that swaps `view` gives it a new `key`.
+ */
+function DamageBreakdown({ view, footer }: { view: DpsResult; footer?: ReactNode }): ReactNode {
+  const [technical] = useTechnical();
+  const [branch, setBranch] = useState<Branch>("hit");
+  /**
+   * Which damage act the breakdown below is about, or null for "whichever is the headline".
+   *
+   * Null rather than a remembered act so that the choice survives editing the build: a skill
+   * whose sources are renumbered by a support gem, or swapped out entirely by changing the main
+   * skill, would otherwise leave a stale selection and silently fall back anyway.
+   *
+   * An **index**, not `DamageSource.id`, and that is load-bearing: the id is
+   * `${group}#${partIndex}`, so one part declaring a physical act and a cold one produces two
+   * sources under the same id. `tailwind_sweep` is exactly that, and keying the picker by id
+   * meant its cold act — the one carrying the freeze, and the larger of the two — could not be
+   * selected at all: both options carried the same value and both resolved to the first.
+   */
+  const [sourceIndex, setSourceIndex] = useState<number | null>(null);
+  /**
+   * Which ailment the right-hand column is about, or null for the first one inflicted.
+   *
+   * Lifted out of the ailment column because its buttons, its summary and its trace are three
+   * separate cells of the breakdown grid now — they have to line up with the hit column's three,
+   * so they cannot share a component, and therefore cannot share its state.
+   */
+  const [ailmentId, setAilmentId] = useState<string | null>(null);
+
+  /**
+   * The source the breakdown is showing.
+   *
+   * `meteor_arrow` is why this is a choice at all: one press is an arrow that hits for physical
+   * and a meteor that lands for fire, with different value calculations, different elements and
+   * therefore different layers. A single trace describes one of them, and which one was never
+   * something the reader could pick — it was whichever `DpsResult.hit` had settled on.
+   */
+  const headlineIndex = Math.max(
+    0,
+    // By identity: `dps.hit` *is* one of these entries' hits, and `headlineSourceId` cannot tell
+    // two acts of one part apart.
+    view.sources.findIndex((s) => s.hit === view.hit),
+  );
+  const shown = view.sources[sourceIndex ?? headlineIndex] ?? view.sources[headlineIndex];
+  const shownHit = shown?.hit ?? view.hit;
+  const trace = branch === "crit" ? shownHit.crit.trace : shownHit.hit.trace;
+  const branchOutcome =
+    branch === "hit" ? shownHit.hit : branch === "crit" ? shownHit.crit : shownHit.average;
+  const branchAilments = branchOutcome.ailments;
+  const ailment = shownAilment(branchAilments, ailmentId);
+  /**
+   * Which ailments this act can inflict, for the folded card's head.
+   *
+   * Off the average branch rather than the shown one so the chip does not appear and disappear
+   * as you press Crit: whether a build bleeds is a fact about the build, not about the branch.
+   */
+  const ailments = inflicted(shownHit.average.ailments);
+  /**
+   * The other acts of this cast that do inflict something, when the shown one does not.
+   *
+   * One part can declare a physical act and a cold one, and only the cold one freezes — so the
+   * ailment column being empty is a fact about the act on the left, not about the build.
+   */
+  const elsewhere =
+    ailments.length > 0
+      ? []
+      : view.sources
+          .filter((s) => s !== shown && inflicted(s.hit.average.ailments).length > 0)
+          .map((s) => sourceChoice(s));
+
+  return (
+    <>
+          {/*
+            The breakdown, first, because it is what the tab is for.
+
+            It used to be the last thing on the screen, below fourteen cards and below a full-width
+            card that printed each of Hit, Crit and Average with its element split and its ailments.
+            Two thirds of that card was answering a question nobody had asked yet: only one branch
+            can be traced at a time, so the other two totals were there to be compared against
+            nothing. The branch is a choice now, the chosen one prints its own total and split above
+            its rows, and the ailments have the column to the right of it.
+
+            Two columns because it is *two* events: the hit's own layer stack on the left, and on
+            the right the second `DamageEvent` an ailment runs with its own base and its own
+            multipliers. Side by side is the only arrangement in which you can see which of your
+            stats crossed from one to the other.
+          */}
+          <Panel
+            id="damage.breakdown"
+            title="Damage breakdown"
+            summary={
+              <>
+                <span className="muted">
+                  {ELEMENTS[shownHit.element]?.displayName || shownHit.element} damage
+                </span>
+                {ailments.length > 0 && (
+                  <span className="badge" title="Ailments this hit can inflict">
+                    inflicts {ailments.map((a) => a.ailment).join(" · ")}
+                  </span>
+                )}
+                <span title="Average damage per hit, with crits weighted in">
+                  <span className="muted">average hit </span>
+                  <span className="mono">{smart(shownHit.average.total)}</span>
+                </span>
+              </>
+            }
+          >
+            {/*
+              One act picker for both columns, above them.
+
+              It governs the whole panel — the ailments on the right are the selected act's, not the
+              cast's — so it belongs above the split rather than in the left column, where it was
+              also the single biggest reason the two columns' headers were different heights.
+            */}
+            {view.sources.length > 1 && (
+              <div className="row wrap mb-4">
+                <label className="muted">Act</label>
+                <select
+                  value={sourceIndex ?? headlineIndex}
+                  onChange={(event) => setSourceIndex(Number(event.target.value))}
+                >
+                  {view.sources.map((entry, index) => (
+                    <option key={`${entry.source.id}#${index}`} value={index}>
+                      {sourceChoice(entry)}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted text-sm">
+                  One cast produces {view.sources.length} damage acts, each with its own value
+                  calculation and element.
+                </span>
+                {/*
+                  The acts summed, because the picker can only show one at a time and a skill like
+                  Clamor, Crash, Clatter is four hits of four elements whose whole point is the sum.
+                */}
+                <span
+                  title={view.sources
+                    .filter((s) => s.damagePerCast > 0)
+                    .map((s) => `${sourceChoice(s)}: ${smart(s.damagePerCast)}`)
+                    .join("\n")}
+                >
+                  <span className="muted">all acts, per cast </span>
+                  <span className="mono">{smart(view.damagePerCast)}</span>
+                </span>
+              </div>
+            )}
+
+            {/*
+              One grid, not two stacked columns.
+
+              Each band — title, buttons, summary, trace — is a grid row holding both columns' cells,
+              so a row is as tall as its taller half and the two traces start level whatever is above
+              them. Stacked independently, the ailment's own event began 120px above the hit's,
+              which is the one comparison this layout exists to make.
+            */}
+            <div className="breakdown-grid">
+              <div className="bd-cell bd-left bd-band-1 section-title mt-0">The hit</div>
+              <div className="bd-cell bd-left bd-band-2">
+                <div className="row wrap">
+                  {BRANCHES.map(([id, label]) => (
+                    <button
+                      key={id}
+                      className={branch === id ? "primary" : ""}
+                      onClick={() => setBranch(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="bd-cell bd-left bd-band-3">
+                <Outcome
+                  outcome={branchOutcome}
+                  accent={
+                    branch === "hit"
+                      ? "var(--text)"
+                      : branch === "crit"
+                        ? "var(--warn)"
+                        : "var(--accent)"
+                  }
+                  /*
+                    What this act is, *under* the number rather than over it.
+
+                    Over it, this line pushed the total down by its own height and the ailment's
+                    headline opposite — which has no such line — sat twenty pixels higher than the
+                    number it is meant to be read against. Both columns now lead with the figure and
+                    qualify it underneath, which is the order the ailment column already used.
+
+                    Per act rather than once for the whole cast: `quake` is two acts of 591 base at
+                    139% effectiveness and 1182 at 278%, and the card this replaced printed the
+                    headline act's pair as though it described both. `baseValue` is not here at all
+                    — it is the trace's own first row, identical on every fixture, and printing it
+                    twice invited the two to disagree.
+                  */
+                  note={
+                    <>
+                      {ELEMENTS[shownHit.element]?.displayName || shownHit.element}
+                      <span title={resolveHint(DAMAGE_COPY.dmgEffectiveness, technical)}>
+                        {" · "}
+                        {num(shownHit.dmgEffectiveness * 100, 0)}% effectiveness
+                      </span>
+                      {/*
+                        What fraction of these hits land, beside the element and the crit chance.
+
+                        The ailment column opposite leads with its own Chance and always has, and
+                        the hit had no equivalent: dodge is folded into the total as expectation,
+                        so a build missing one attack in ten showed a number 10% smaller with
+                        nothing saying why. `damage_block` is the layer dodge and magic dodge
+                        average onto, and its multiplier is exactly this.
+                      */}
+                      <span
+                        title={
+                          "The mob's evasion against your accuracy, as a share of hits that land. " +
+                          "Dodge takes every non-magic hit, whatever its element, and magic dodge takes `magic` spells; the " +
+                          "figure above already has it folded in. Open the layer's row for the " +
+                          "subtraction."
+                        }
+                      >
+                        {" · "}
+                        {num(shownHit.hitChance * 100)}% chance to hit
+                      </span>
+                      <span title="What weights the Average branch">
+                        {" · "}
+                        {branch === "average"
+                          ? `weighted by ${num(shownHit.critChance * 100)}% crit chance`
+                          : `${num(shownHit.critChance * 100)}% crit`}
+                      </span>
+                    </>
+                  }
+                />
+              </div>
+              <div className="bd-cell bd-left bd-band-4">
+                {/*
+                  Average is a real branch to select and the only one with nothing to trace, so it
+                  says what it is instead of printing rows the game never produces.
+                  `critical_damage` gates a multiplicative layer and `double_damage` is clamped to
+                  exactly x2, so a layer averaged between the two outcomes is a multiplier no hit
+                  ever applies.
+                */}
+                {branch === "average" ? (
+                  <div className="notice">
+                    Average has no rows of its own: it is{" "}
+                    <strong>{num((1 - shownHit.critChance) * 100)}%</strong> of the Hit branch&apos;s{" "}
+                    {smart(shownHit.hit.total)} and{" "}
+                    <strong>{num(shownHit.critChance * 100)}%</strong> of the Crit branch&apos;s{" "}
+                    {smart(shownHit.crit.total)}. The game never applies an averaged layer, so
+                    pick <strong>Hit</strong> or <strong>Crit</strong> to see the rows.
+                  </div>
+                ) : trace === undefined ? (
+                  <div className="notice">No trace was recorded for this branch.</div>
+                ) : (
+                  <TraceBlock trace={trace} target={shownHit.target} />
+                )}
+              </div>
+              <div className="bd-cell bd-right bd-band-1 section-title mt-0">
+                What it inflicts
+                <span className="muted text-sm" style={{ fontWeight: 400, marginLeft: 8 }}>
+                  each ailment&apos;s own event, on the {BRANCH_WORD[branch]} branch beside it
+                </span>
+              </div>
+
+              <div className="bd-cell bd-right bd-band-2">
+                <AilmentButtons
+                  ailments={branchAilments}
+                  shown={ailment}
+                  onSelect={setAilmentId}
+                />
+              </div>
+
+              <div className="bd-cell bd-right bd-band-3">
+                <AilmentSummary ailment={ailment} elsewhere={elsewhere} stacks={view.ailmentStacks} />
+              </div>
+
+              <div className="bd-cell bd-right bd-band-4">
+                <AilmentTrace ailment={ailment} target={shownHit.target} />
+              </div>
+            </div>
+
+            {footer}
+          </Panel>
+    </>
+  );
+}
+
+/** A spell your gear procs, from wherever the build fires it. */
+type ProcChoice = {
+  key: string;
+  spellId: string;
+  position: "CASTER" | "TARGET";
+  /** Every figure that fires it, and how: the main skill, its buff, the rotation, the swing. */
+  firedBy: { from: string; proc: Proc }[];
+};
+
+/**
+ * Every proc that actually fires somewhere on this tab: the main skill's, its buff's, the
+ * rotation's and the swing's. One entry per spell and cast position, since that pair is all the
+ * per-cast damage depends on — two stats procing one spell cast the same spell.
+ */
+function procChoicesOf(derived: ReturnType<typeof useDerived>): ProcChoice[] {
+  const lists: [string, readonly Proc[] | undefined][] = [
+    ["Main skill", derived.dps?.procs],
+    ["Main skill's buff", derived.dps?.granted],
+    ["Full DPS rotation", derived.fullDps?.procs],
+    ["Basic attacks", derived.basic?.procs],
+  ];
+  const out = new Map<string, ProcChoice>();
+  for (const [from, procs] of lists) {
+    for (const proc of procs ?? []) {
+      if (proc.perSecond <= 0 || proc.damagePerProc <= 0) continue;
+      const position = proc.position ?? "CASTER";
+      const key = `${proc.spellId}@${position}`;
+      const seen = out.get(key);
+      if (seen === undefined) out.set(key, { key, spellId: proc.spellId, position, firedBy: [{ from, proc }] });
+      else seen.firedBy.push({ from, proc });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * One procced spell: what a single cast of it does, and every figure that fires it.
+ *
+ * The cast is `simulateProc` with the trace on — the same call the proc figures priced it with, so
+ * the hit here is the hit they counted, with the spell's own support gems when it is on the bar
+ * and cast from the enemy when the proc says so.
+ */
+function ProcDamagePanel({ choice, header }: { choice: ProcChoice; header: ReactNode }): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const world = useWorld();
+  const view = useMemo(
+    () =>
+      simulateProc(
+        doc,
+        world.snapshot,
+        choice.spellId,
+        choice.position,
+        doc.config?.target ?? DEFAULT_PLACEMENT,
+        { breakdown: true },
+      ),
+    [doc, world.snapshot, choice.spellId, choice.position],
+  );
+  const onBar = (doc.skills ?? []).some((s) => s.spellId === choice.spellId);
+  const pets = choice.firedBy.find((f) => f.proc.pets !== undefined)?.proc.pets;
+  const perProc = Math.max(...choice.firedBy.map((f) => f.proc.damagePerProc));
+
+  return (
+    <div className="panel damage-panel">
+      <div className="calcs-body">
+        {header}
+
+        <div className="notice info mb-5">
+          Cast by your gear, not pressed: <strong>{smart(perProc)}</strong> per proc.{" "}
+          {onBar
+            ? "It uses the support gems linked to it on your skill bar."
+            : "It is not on your skill bar, so no support gems apply to it."}
+          {choice.position === "TARGET" && " It is cast from the enemy that triggered it."}
+          {pets !== undefined &&
+            ` Each proc summons ${num(pets.perProc, 0)} for ${num(pets.lifeSeconds, 1)}s, and the ` +
+              "figure is their whole life's damage; the breakdown below is one bite."}
+        </div>
+
+        {view === undefined ? (
+          <div className="notice">This proc resolved no damage to break down.</div>
+        ) : (
+          <DamageBreakdown view={view} />
+        )}
+
+        <Panel
+          id="damage.proc-rates"
+          title="What fires it"
+          summary={`${choice.firedBy.length} source${choice.firedBy.length === 1 ? "" : "s"}`}
+        >
+          <table className="grid">
+            <thead>
+              <tr>
+                <th>Fired by</th>
+                <th>Stat</th>
+                <th className="num">Chance</th>
+                <th className="num">Per second</th>
+                <th className="num">DPS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {choice.firedBy.map(({ from, proc }) => (
+                <tr key={`${from}:${proc.statId}`}>
+                  <td>{from}</td>
+                  <td className="mono text-sm">{proc.statId}</td>
+                  <td className="num">{num(proc.chance * 100, 1)}%</td>
+                  <td className="num">{num(proc.perSecond, 2)}</td>
+                  <td className="num">{smart(proc.dps)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="faint text-sm mt-3">
+            Full DPS includes the rotation and basic-attack rows; the main skill&apos;s row is part
+            of that skill&apos;s own figure. None of them counts this spell when another proc casts
+            it — that is under <strong>Procs triggering procs</strong> on the skill view.
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
 /** How many exile effects the pipeline settled on as up, for the card's head. */
 function assumedCount(derived: ReturnType<typeof useDerived>): number {
   return derived.effects.options.filter(
@@ -831,6 +1022,7 @@ const DAMAGE_PANELS = [
   "damage.summons",
   "damage.procs",
   "damage.proc-chain",
+  "damage.proc-rates",
   "damage.granted",
   "damage.full",
   "damage.rotation-procs",

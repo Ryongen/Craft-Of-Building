@@ -129,6 +129,8 @@ export type Proc = {
   /** The stat that carries it. */
   statId: string;
   spellId: string;
+  /** Where the procced spell is cast from — `proc_spell`'s `pos`. See `procPlacement`. */
+  position?: "CASTER" | "TARGET";
   /** 0..1, per triggering hit. Every `ifs` on the block folded together. */
   chance: number;
   /** `proc_cooldown_ticks` on the procced spell — the ceiling on how often it can go off. */
@@ -385,6 +387,7 @@ export function resolveProcs(input: ProcInput): Proc[] {
     out.push({
       statId: hit.statId,
       spellId: hit.spellId,
+      position: hit.position,
       chance: hit.chance,
       cooldownTicks,
       triggersPerSecond,
@@ -565,6 +568,7 @@ export function rotationProcs(
   type Acc = {
     statId: string;
     spellId: string;
+    position?: Proc["position"];
     cooldownTicks: number;
     triggersPerPass: number;
     /** Σ (triggers × chance), so the merged chance is a trigger-weighted mean. */
@@ -589,6 +593,7 @@ export function rotationProcs(
         acc = {
           statId: proc.statId,
           spellId: proc.spellId,
+          ...(proc.position === undefined ? {} : { position: proc.position }),
           cooldownTicks: proc.cooldownTicks,
           triggersPerPass: 0,
           weighted: 0,
@@ -634,6 +639,7 @@ export function rotationProcs(
     out.push({
       statId: acc.statId,
       spellId: acc.spellId,
+      ...(acc.position === undefined ? {} : { position: acc.position }),
       chance,
       cooldownTicks: acc.cooldownTicks,
       triggersPerSecond,

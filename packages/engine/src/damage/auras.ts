@@ -153,6 +153,7 @@ export function auraSources(input: AuraInput): AuraResult {
         // keyed on exactly this string.
         id: `effect:${option.id}:${source.id}`,
         path: [`${option.id} aura`, ...source.path.slice(1)],
+        ...(permanent ? { heldAura: option.id } : {}),
       });
     }
   }

@@ -1,4 +1,4 @@
-import { pressedForEffect, type FullDpsResult, type FullDpsSkill } from "@cte2/engine";
+import { pressedForEffect, type FullDpsResult, type FullDpsSkill, type Proc } from "@cte2/engine";
 import { type SkillSetup } from "@cte2/schema";
 import { type ReactNode } from "react";
 
@@ -39,6 +39,7 @@ export function FullDpsCard({
   skills,
   onToggle,
   swingProcDps = 0,
+  swingProcs = [],
 }: {
   full: FullDpsResult | undefined;
   skills: SkillSetup[];
@@ -49,9 +50,12 @@ export function FullDpsCard({
    * a rotation that showed nothing for them read as the buffs doing nothing.
    */
   swingProcDps?: number;
+  /** The same swing procs, itemised, so a proc-only skill can show what its swing procs add. */
+  swingProcs?: readonly Proc[];
 }): ReactNode {
   const world = useWorld();
   const setFullDpsAsBuff = useBuild((s) => s.setFullDpsAsBuff);
+  const setFullDpsAsProc = useBuild((s) => s.setFullDpsAsProc);
   if (full === undefined) return null;
 
   // The toggles and the timed re-presses share one table: both answer "how often do I press this
@@ -134,12 +138,20 @@ export function FullDpsCard({
           // wait on. A pure buff is already upkeep, a pure hit has nothing to wait for, and an
           // aura is a toggle either way. A curse qualifies and starts pressed — see
           // `pressedForEffect` — so its hit can still be put back on every pass.
+          // Offered when the build's gear procs this skill. On, the skill is never pressed and the
+          // only damage it adds is what the rotation's procs of it are worth.
+          const canProc = full.proccable.includes(skill);
+          const asProc = full.procOnly.includes(skill);
+          const procced = [...full.procs, ...swingProcs].filter(
+            (proc) => proc.spellId === skill.spellId && proc.perSecond > 0,
+          );
           const canBeBuff =
-            skill.fullDpsAsBuff !== undefined ||
-            (entry !== undefined &&
-              entry.role !== "aura" &&
-              entry.result.damagePerCast > 0 &&
-              (entry.result.buff !== undefined || entry.result.debuff !== undefined));
+            !asProc &&
+            (skill.fullDpsAsBuff !== undefined ||
+              (entry !== undefined &&
+                entry.role !== "aura" &&
+                entry.result.damagePerCast > 0 &&
+                (entry.result.buff !== undefined || entry.result.debuff !== undefined)));
           const asBuff = entry !== undefined && pressedForEffect(entry.result, skill.fullDpsAsBuff);
           // Hunter's Mark is pressed for what it leaves on the mob, and a button saying "buff"
           // does not read as the answer to "only re-mark when the mark falls off". A curse also
@@ -159,7 +171,11 @@ export function FullDpsCard({
                   onChange={(event) => onToggle(index, event.target.checked)}
                 />
                 <span>{spellName(world.snapshot, skill.spellId)}</span>
-                {entry !== undefined && entry.role !== "rotation" ? (
+                {asProc ? (
+                  <span className="badge" title={procOnlyTitle(procced)}>
+                    proc {"·"} {smart(procced.reduce((sum, p) => sum + p.dps, 0))}/s
+                  </span>
+                ) : entry !== undefined && entry.role !== "rotation" ? (
                   <span className="badge" title={upkeepTitle(entry)}>
                     {upkeepBadge(entry)}
                   </span>
@@ -183,6 +199,20 @@ export function FullDpsCard({
                   onClick={() => setFullDpsAsBuff(index, !asBuff)}
                 >
                   {effectWord} only
+                </button>
+              )}
+              {canProc && (
+                <button
+                  className={`nudge word${asProc ? " primary" : ""}`}
+                  aria-pressed={asProc}
+                  title={
+                    asProc
+                      ? "Never pressed: it only lands when your gear procs it, at the proc's rate. Click to count it as pressed every pass as well."
+                      : "Pressed every pass, on top of what your gear procs. Click if you only keep it on the bar for its support gems and let the proc cast it."
+                  }
+                  onClick={() => setFullDpsAsProc(index, !asProc)}
+                >
+                  proc only
                 </button>
               )}
             </span>
@@ -260,7 +290,9 @@ export function FullDpsCard({
         alone. A <strong>buff</strong> or <strong>curse</strong> only costs the time to recast it
         when it runs out (never, for a toggle like Banishing Blade). An <strong>aura</strong>{" "}
         costs nothing and adds its own damage. Their stats count whether or not they&apos;re ticked
-        here; to remove one, untick <strong>enabled</strong> on the Skills tab.
+        here; to remove one, untick <strong>enabled</strong> on the Skills tab. A skill your gear
+        casts for you can be set to <strong>proc only</strong>: it is never pressed and counts at
+        the rate it&apos;s procced, still with its support gems.
       </div>
     </div>
   );
@@ -285,7 +317,18 @@ function upkeepCost(seconds: number): string {
   return `${num(seconds, 2)}s`;
 }
 
-/** The chip beside a ticked buff: what it costs the pass, at a glance. */
+/** What a proc-only skill's chip adds up, for the hover. */
+function procOnlyTitle(procs: readonly Proc[]): string {
+  if (procs.length === 0) {
+    return "Never pressed, and nothing in this rotation procs it right now, so it adds nothing. Tick the skill whose hits proc it.";
+  }
+  const perSecond = procs.reduce((sum, p) => sum + p.perSecond, 0);
+  const dps = procs.reduce((sum, p) => sum + p.dps, 0);
+  return (
+    `Never pressed. Procced ${num(perSecond, 2)} times a second for ${smart(dps / perSecond)} each, ` +
+    "using this skill's support gems. Included in Full DPS above."
+  );
+}
 
 /** The chip beside a ticked buff: what it costs the pass, at a glance. */
 function upkeepBadge(entry: FullDpsSkill): string {
