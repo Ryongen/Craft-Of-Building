@@ -336,3 +336,5 @@ function toComputed(result: ReturnType<typeof calculate>): Map<string, ComputedS
 
 export { breakdownsOf, deriveBuild, mainSkillIndex } from "./derive.js";
 export type { DerivedBuild, ModContribution, StatBreakdown } from "./derive.js";
+export { damageRates } from "./rates.js";
+export type { DamageRates } from "./rates.js";
