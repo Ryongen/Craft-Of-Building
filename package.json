@@ -22,6 +22,7 @@
     "build:site": "npm run build && node tools/build-site.mjs",
     "preview:site": "npm run build:site && npx --yes serve packages/app/out/web",
     "publish:site-data": "node tools/publish-site-data.mjs",
+    "catalogue-data": "npm run build && node tools/build-catalogue-data.mjs",
     "test": "npm run build && npm run -ws --if-present test",
     "typecheck": "npm run build && npm run -ws --if-present typecheck"
   },

@@ -399,3 +399,12 @@ export {
  * comparison between a document and a snapshot has to go through here. See `pack-version.ts`.
  */
 export { packModVersion, samePackVersion } from "./pack-version.js";
+
+export {
+  FACET_KINDS,
+  INDEX_DATA_VERSION,
+  buildIndexData,
+  summarizeBuild,
+  summaryFacets,
+} from "./summarize.js";
+export type { BuildSummary, Facet, FacetKind, IndexData, PerkRole } from "./summarize.js";
