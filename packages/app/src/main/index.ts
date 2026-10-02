@@ -12,7 +12,7 @@ import { join, normalize, sep } from "node:path";
 import { isSafeAssetPath } from "@cte2/extractor";
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from "electron";
 
-import { ASSET_SCHEME, CHANNEL } from "@shared/ipc";
+import { ASSET_SCHEME, CHANNEL, LINK_SCHEME, type MenuCommand } from "@shared/ipc";
 
 import { autosave, loadAutosave, openBuild, openBuildAt, saveBuild } from "./builds.js";
 import { installMenu } from "./menu.js";
@@ -42,6 +42,52 @@ import { initUpdater } from "./updater.js";
  * carries the full reasoning. Changing the app's mind means changing both, and nothing else.
  */
 app.commandLine.appendSwitch("lang", "en-US");
+
+/**
+ * The `cob://` link this process was started with — what the build catalogue's "Open in CoB"
+ * button launches. Handed to the renderer once, through `takeLaunchLink`, after it has restored
+ * the last session; importing before that would have the restore overwrite the build.
+ */
+let launchLink = linkIn(process.argv);
+
+/**
+ * Whether this is the copy of the app that links are delivered to.
+ *
+ * Asked for unconditionally, but only *acted on* when there is a link to deliver: a second copy
+ * started from the Start menu keeps running beside the first exactly as it always has, while one
+ * started by a clicked link hands it to the window already open — via `second-instance` below —
+ * and quits, rather than opening a second planner with the same autosave underneath it.
+ */
+const handedOff = !app.requestSingleInstanceLock() && launchLink !== null;
+if (handedOff) app.quit();
+
+/** Windows and Linux pass the URL as an argument; anything else on the command line is not one. */
+function linkIn(argv: readonly string[]): string | null {
+  return argv.find((arg) => arg.startsWith(`${LINK_SCHEME}://`)) ?? null;
+}
+
+/** A link for a window that is already showing a build: bring it forward and let it ask. */
+function deliverLink(link: string): void {
+  if (mainWindow === null) {
+    launchLink = link;
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+  const command: MenuCommand = `open-link:${link}`;
+  mainWindow.webContents.send(CHANNEL.menuCommand, command);
+}
+
+app.on("second-instance", (_event, argv) => {
+  const link = linkIn(argv);
+  if (link !== null) deliverLink(link);
+});
+
+// macOS delivers the URL as an event instead, before `ready` on a cold start.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  deliverLink(url);
+});
 
 // Must be declared before `ready`. `standard` gives the scheme normal URL parsing so relative
 // paths resolve; `supportFetchAPI` lets the renderer preload images through fetch if it wants.
@@ -233,12 +279,24 @@ function registerHandlers(): void {
     });
     return result.response === 0;
   });
+  ipcMain.handle(CHANNEL.takeLaunchLink, () => {
+    const link = launchLink;
+    launchLink = null;
+    return link;
+  });
   ipcMain.handle(CHANNEL.tell, async (_event, message: string) => {
     await dialog.showMessageBox(mainWindow ?? undefined!, { type: "warning", message });
   });
 }
 
 void app.whenReady().then(() => {
+  // `quit` before `ready` does not stop `ready` arriving; a copy that only came to pass a link on
+  // must not flash a window of its own first.
+  if (handedOff) return;
+  // Only a packaged copy claims the scheme. A dev run would point every `cob://` link on the
+  // machine at a bare Electron binary; the installer registers it too (`protocols` in
+  // electron-builder.yml), so this is what makes the portable .exe answer links.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME);
   registerAssetProtocol();
   registerHandlers();
   createWindow();

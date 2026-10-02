@@ -22,6 +22,8 @@ export const CHANNEL = {
   recentBuilds: "build:recent",
   autosave: "build:autosave",
   loadAutosave: "build:load-autosave",
+  /** The `cob://` link the app was launched with, handed over once. See {@link Cte2Api.takeLaunchLink}. */
+  takeLaunchLink: "link:take-launch",
 
   /** A native yes/no box. See {@link Cte2Api.ask}. */
   ask: "dialog:ask",
@@ -79,6 +81,8 @@ export type MenuCommand =
   | "save"
   | "save-as"
   | "copy-json"
+  | "copy-code"
+  | "import-text"
   | "undo"
   | "redo"
   | "toggle-sidebar"
@@ -86,7 +90,9 @@ export type MenuCommand =
   | "clear-baseline"
   | `tab:${string}`
   /** Reopen a known path from the Open Recent submenu. */
-  | `open-at:${string}`;
+  | `open-at:${string}`
+  /** A `cob://` link clicked while the app was already running. */
+  | `open-link:${string}`;
 
 /**
  * A loaded snapshot, as JSON text rather than a parsed object.
@@ -291,6 +297,17 @@ export type Cte2Api = {
   loadAutosave(): Promise<AutosaveSession | null>;
 
   /**
+   * The build link this window was opened with, if any — once. A second call answers `null`, so a
+   * reload does not import the same build over whatever has been done to it since.
+   *
+   * Desktop: the `cob://` URL Windows passed on the command line. Web: the page's own address when
+   * it carries `?build=` or `#code=`, which is also stripped from the address bar.
+   *
+   * Links that arrive while the app is running come through `onMenuCommand` as `open-link:`.
+   */
+  takeLaunchLink(): Promise<string | null>;
+
+  /**
    * Yes/no confirmation, and a plain message. Use these instead of `confirm()` and `alert()`.
    *
    * On Windows, Electron's `confirm()` and `alert()` leave the page without keyboard focus when
@@ -344,6 +361,12 @@ export type SnapshotFileResult =
  * sandboxed, and main keeps the only mapping from a resource path to a location on disk.
  */
 export const ASSET_SCHEME = "cte2-asset";
+
+/**
+ * The scheme build links use — `cob://build/<id>`, `cob://code/<code>`. The desktop app registers
+ * it with the OS; `renderer/src/platform/links.ts` reads what it carries.
+ */
+export const LINK_SCHEME = "cob";
 
 /**
  * The placeholder Mine and Slash ships for a texture that is not there.

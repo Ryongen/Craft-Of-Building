@@ -32,6 +32,11 @@ The planner is organised as tabs, roughly in the order you'd use them:
 
 Builds are saved as you go, and you can export one to a file to back it up or share it.
 
+To share a build without a file, copy its **build code** (File → Copy Build Code on desktop, *Copy code*
+on the website). It is a short line starting with `cob1:` that anyone can paste into **Import**
+(Ctrl+I). A link of the form `https://ryongen.github.io/Craft-Of-Building/#code=cob1:…` opens the
+build straight away, and on desktop `cob://code/cob1:…` does the same in the installed app.
+
 ## Bringing your character in from the game
 
 Rather than re-entering a character by hand, you can export the one you're playing.

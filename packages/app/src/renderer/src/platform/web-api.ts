@@ -51,6 +51,7 @@ import {
   setValue,
   type RecentRecord,
 } from "./idb.js";
+import { parseBuildLink } from "./links.js";
 
 /** What `tools/build-site.mjs` writes beside the data it stages. */
 type SiteManifest = {
@@ -490,6 +491,19 @@ export function createWebApi(): Cte2Api {
     async loadAutosave(): Promise<AutosaveSession | null> {
       const text = await getValue<string>(SESSION_KEY);
       return text === null ? null : parseSession(text);
+    },
+
+    // The page's own address is the launch link. Taken once and scrubbed from the address bar, so
+    // a reload — or a bookmark made afterwards — does not import the same build over the edits
+    // made to it since.
+    async takeLaunchLink(): Promise<string | null> {
+      const href = window.location.href;
+      if (parseBuildLink(href) === null) return null;
+      const url = new URL(href);
+      url.searchParams.delete("build");
+      url.hash = "";
+      window.history.replaceState(null, "", url.toString());
+      return href;
     },
 
     // A browser's own dialogs give focus back properly; only Electron's are broken.

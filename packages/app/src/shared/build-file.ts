@@ -11,7 +11,7 @@
  * Nothing here touches `node:fs` or `electron`, so the renderer can import it.
  */
 
-import { BUILD_DOC_VERSION, parseFixture, type BuildDoc, type Observation } from "@cte2/schema";
+import { parseBuild, type BuildDoc } from "@cte2/schema";
 
 import type { AutosaveSession, PinnedBaseline } from "./ipc.js";
 
@@ -41,51 +41,10 @@ export function serializeSession(doc: BuildDoc, baseline: PinnedBaseline | null)
 }
 
 /**
- * Accepts either a bare `BuildDoc` or a fixture wrapper, so a file from `fixtures/` opens
- * without being unwrapped by hand first — that round trip is the whole point of the exporter.
- *
- * Validation against a snapshot happens in the renderer, where the snapshot lives. This only
- * checks that the thing is shaped like a document at all.
+ * Accepts a bare `BuildDoc` or a capture wrapper. The rules live in `@cte2/schema`, because the
+ * build catalogue and the Discord bot have to accept exactly what the planner accepts.
  */
-export function parseBuild(text: string): { doc: BuildDoc; observed: Observation | null } {
-  const parsed: unknown = JSON.parse(text);
-  if (parsed === null || typeof parsed !== "object") throw new Error("Not a JSON object");
-
-  const node = parsed as Record<string, unknown>;
-  const isFixture =
-    node["build"] !== undefined && typeof node["build"] === "object" && node["build"] !== null;
-  const candidate = isFixture ? (node["build"] as Record<string, unknown>) : node;
-
-  // A capture's `observed` block is the game's own stat sheet. Keeping it lets the app check
-  // itself against the character the numbers came from, which is the whole point of having
-  // captured it — the CLI could already do this and the app could not.
-  let observed: Observation | null = null;
-  if (isFixture) {
-    try {
-      observed = parseFixture(parsed, "opened build").observed;
-    } catch {
-      // A build that is not a well-formed fixture still opens; it just has nothing to check
-      // against. Refusing the whole file over a malformed `observed` would be perverse.
-      observed = null;
-    }
-  }
-
-  const character = candidate["character"];
-  if (character === null || typeof character !== "object") {
-    throw new Error("Missing `character` — this does not look like a build document");
-  }
-  if (typeof (character as Record<string, unknown>)["level"] !== "number") {
-    throw new Error("Missing `character.level`");
-  }
-  if (typeof candidate["schemaVersion"] !== "number") {
-    throw new Error("Missing `schemaVersion`");
-  }
-  if (candidate["schemaVersion"] !== BUILD_DOC_VERSION) {
-    // Not fatal: the validator reports version drift with far more detail than this can.
-    // Loading it and letting the diagnostics panel explain is more useful than refusing.
-  }
-  return { doc: candidate as unknown as BuildDoc, observed };
-}
+export { parseBuild };
 
 /**
  * The last session, in whichever of the two shapes the text is in.

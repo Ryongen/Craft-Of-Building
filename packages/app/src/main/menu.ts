@@ -55,6 +55,11 @@ export function installMenu(window: BrowserWindow | null): void {
       { label: "New Build", accelerator: "CmdOrCtrl+N", click: () => send(window, "new") },
       { label: "Open…", accelerator: "CmdOrCtrl+O", click: () => send(window, "open") },
       {
+        label: "Import from Code or JSON…",
+        accelerator: "CmdOrCtrl+I",
+        click: () => send(window, "import-text"),
+      },
+      {
         label: "Open Recent",
         enabled: recent.length > 0,
         submenu:
@@ -71,6 +76,7 @@ export function installMenu(window: BrowserWindow | null): void {
       { type: "separator" },
       { label: "Save", accelerator: "CmdOrCtrl+S", click: () => send(window, "save") },
       { label: "Save As…", accelerator: "CmdOrCtrl+Shift+S", click: () => send(window, "save-as") },
+      { label: "Copy Build Code", click: () => send(window, "copy-code") },
       { label: "Copy Build as JSON", click: () => send(window, "copy-json") },
       { type: "separator" },
       { role: "quit" },

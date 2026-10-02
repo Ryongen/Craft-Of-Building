@@ -64,6 +64,7 @@ const api: Cte2Api = {
   autosave: (doc: BuildDoc, baseline: PinnedBaseline | null) =>
     ipcRenderer.invoke(CHANNEL.autosave, doc, baseline),
   loadAutosave: () => ipcRenderer.invoke(CHANNEL.loadAutosave),
+  takeLaunchLink: () => ipcRenderer.invoke(CHANNEL.takeLaunchLink),
 
   ask: (message: string) => ipcRenderer.invoke(CHANNEL.ask, message),
   tell: (message: string) => ipcRenderer.invoke(CHANNEL.tell, message),

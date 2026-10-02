@@ -60,3 +60,9 @@ nsis:
 
 portable:
   artifactName: Craft-of-Building-${version}-portable.${ext}
+
+# `cob://build/<id>` and `cob://code/<code>` — the build catalogue's "Open in CoB" button. The
+# installer registers the scheme; a portable copy registers itself when run (src/main/index.ts).
+protocols:
+  - name: Craft of Building build link
+    schemes: [cob]

@@ -8,4 +8,9 @@ declare global {
   }
 }
 
+interface ImportMetaEnv {
+  /** The build catalogue's API root. Unset in a build that should not offer catalogue links. */
+  readonly VITE_CATALOGUE_API?: string;
+}
+
 export {};

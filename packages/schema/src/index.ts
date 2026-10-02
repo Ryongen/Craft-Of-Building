@@ -401,6 +401,17 @@ export {
 export { packModVersion, samePackVersion } from "./pack-version.js";
 
 export {
+  BUILD_CODE_PREFIX,
+  decodeBuildCode,
+  encodeBuildCode,
+  isBuildCode,
+  parseBuild,
+  readBuild,
+  readBuildText,
+} from "./build-code.js";
+export type { ReadBuild } from "./build-code.js";
+
+export {
   FACET_KINDS,
   INDEX_DATA_VERSION,
   buildIndexData,

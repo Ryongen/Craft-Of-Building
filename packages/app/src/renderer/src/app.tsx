@@ -8,11 +8,13 @@
 
 import {
   EPILOGUE_BONUS_POINTS,
+  encodeBuildCode,
   maxLevel,
   packModVersion,
   samePackVersion,
   type BuildDoc,
   type Observation,
+  type ReadBuild,
 } from "@cte2/schema";
 import { ATTACK_SPEED_ATTRIBUTE, baseAttackSpeedFrom } from "@cte2/engine";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
@@ -30,6 +32,8 @@ import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { Headline } from "./ui/Headline.js";
 import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
+import { ImportBuildDialog } from "./ui/ImportBuildDialog.js";
+import { parseBuildLink, resolveBuildLink } from "./platform/links.js";
 import { useTechnical } from "./ui/detail-mode.js";
 import { resolveHint, type Hint } from "./ui/copy/hint.js";
 import raiden from "./assets/raiden.png";
@@ -219,6 +223,13 @@ export function App(): ReactNode {
     const timer = setTimeout(() => setCopied(false), 1500);
     return () => clearTimeout(timer);
   }, [copied]);
+  const [codeCopied, setCodeCopied] = useState(false);
+  useEffect(() => {
+    if (!codeCopied) return;
+    const timer = setTimeout(() => setCodeCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [codeCopied]);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Version drift: a document authored against another pack version describes ids and roll
   // bands that may since have moved. `meta` records it precisely so this can be checked.
@@ -265,6 +276,46 @@ export function App(): ReactNode {
     );
   }, [doc]);
 
+  // The short form for sharing: a link fragment or a chat message, where 25 KB of JSON is not.
+  const copyCode = useCallback(() => {
+    void encodeBuildCode(doc)
+      .then((code) => navigator.clipboard.writeText(code))
+      .then(
+        () => setCodeCopied(true),
+        () => setCodeCopied(false),
+      );
+  }, [doc]);
+
+  /*
+   * A build arriving from outside — the import box, a build code, the catalogue's "Open in CoB".
+   *
+   * It always asks first, unlike File → Open, because it can arrive without the person at the
+   * keyboard having asked for anything in *this* window: a click on another site. Replacing an
+   * hour of unsaved tree work because a link was clicked would be the worst thing this app could do.
+   * `replacing` is false only for a window that has nothing in it yet.
+   */
+  const importBuild = useCallback(
+    async (read: ReadBuild, replacing: boolean) => {
+      const name = read.doc.meta?.name ?? "this build";
+      if (replacing && !(await window.cte2.ask(`Open ${name}? It replaces the build you have open.`))) return;
+      loadBuild(withWeaponSpeed(read.doc, read.observed), null, read.observed);
+    },
+    [loadBuild],
+  );
+
+  const openLink = useCallback(
+    async (href: string, replacing: boolean) => {
+      const link = parseBuildLink(href);
+      if (link === null) return;
+      try {
+        await importBuild(await resolveBuildLink(link), replacing);
+      } catch (err) {
+        void window.cte2.tell(`Could not open that build:\n\n${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [importBuild],
+  );
+
   const startNew = useCallback(async () => {
     if (!dirty || (await window.cte2.ask("Discard unsaved changes?"))) newBuild();
   }, [dirty, newBuild]);
@@ -294,12 +345,18 @@ export function App(): ReactNode {
         void openAt(command.slice(8));
         return;
       }
+      if (command.startsWith("open-link:")) {
+        void openLink(command.slice(10), true);
+        return;
+      }
       switch (command) {
         case "new": void startNew(); return;
         case "open": void open(); return;
         case "save": void save(false); return;
         case "save-as": void save(true); return;
         case "copy-json": copyJson(); return;
+        case "copy-code": copyCode(); return;
+        case "import-text": setImportOpen(true); return;
         case "undo": undo(); return;
         case "redo": redo(); return;
         case "toggle-sidebar": setSheetOpen((v) => !v); return;
@@ -310,7 +367,7 @@ export function App(): ReactNode {
         case "clear-baseline": clearBaseline(); return;
       }
     });
-  }, [openAt, startNew, open, save, copyJson, undo, redo, pinBaseline, clearBaseline, goTo]);
+  }, [openAt, openLink, startNew, open, save, copyJson, copyCode, undo, redo, pinBaseline, clearBaseline, goTo]);
 
   // Restore the last session before the first autosave can overwrite it. A planner that
   // forgets what you were doing when you close it is a planner you stop using; `New` is there
@@ -319,17 +376,22 @@ export function App(): ReactNode {
   const [restored, setRestored] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    void window.cte2.loadAutosave().then((session) => {
+    void window.cte2.loadAutosave().then(async (session) => {
       if (!cancelled && session !== null) {
         loadBuild(session.doc, null);
         if (session.baseline !== null) restoreBaseline(session.baseline);
       }
-      if (!cancelled) setRestored(true);
+      if (cancelled) return;
+      setRestored(true);
+      // A build link the window was opened with, read only now: imported before the restore, the
+      // restore would overwrite it. A restored session is somebody's work, so it asks first.
+      const link = await window.cte2.takeLaunchLink();
+      if (!cancelled && link !== null) void openLink(link, session !== null);
     });
     return () => {
       cancelled = true;
     };
-  }, [loadBuild, restoreBaseline]);
+  }, [loadBuild, restoreBaseline, openLink]);
 
   // Autosave the working document so a crash costs nothing. `baseline` is in the dependencies
   // because pinning one is a change to the session that has to survive the same crash.
@@ -355,6 +417,9 @@ export function App(): ReactNode {
       } else if (key === "o") {
         event.preventDefault();
         void open();
+      } else if (key === "i") {
+        event.preventDefault();
+        setImportOpen(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -468,6 +533,13 @@ export function App(): ReactNode {
         <button onClick={() => void open()} title="Ctrl+O">
           Open
         </button>
+        {/* Desktop has both of these in the File menu, and a toolbar with two more buttons wraps to
+            a second row at the default window size. The site has no menu, so they live here. */}
+        {!window.cte2.capabilities.nativeMenu && (
+          <button onClick={() => setImportOpen(true)} title="Ctrl+I. Open a build code, a build's JSON or an exported character">
+            Import…
+          </button>
+        )}
         {/* Nothing to list in a browser with no File System Access API: a file opened through
             an `<input>` leaves behind no handle, so there is no way to reopen it and a menu
             offering to would be a menu of dead entries. */}
@@ -500,12 +572,27 @@ export function App(): ReactNode {
         >
           {copied ? "Copied" : "Copy JSON"}
         </button>
+        {!window.cte2.capabilities.nativeMenu && (
+          <button title="Copy a short code for this build, to share or to paste into Import" onClick={copyCode}>
+            {codeCopied ? "Copied" : "Copy code"}
+          </button>
+        )}
         <button
           onClick={startNew}
         >
           New
         </button>
       </div>
+
+      {importOpen && (
+        <ImportBuildDialog
+          onClose={() => setImportOpen(false)}
+          onImport={(read) => {
+            setImportOpen(false);
+            void importBuild(read, true);
+          }}
+        />
+      )}
 
       {drift !== null && (
         <div className="notice" style={{ margin: "8px 12px 0" }}>
