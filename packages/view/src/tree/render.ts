@@ -238,7 +238,9 @@ export function draw(
   }
 
   // --- nodes -------------------------------------------------------------------------
-  const drawIcons = transform.scale > 0.45;
+  // Icons stay on until they would shrink below a few screen pixels; even a smudge of
+  // colour tells nodes apart when zoomed out.
+  const MIN_ICON_PX = 4;
   const searching = highlighted.size > 0;
 
   for (const node of graph.nodes.values()) {
@@ -284,7 +286,7 @@ export function draw(
       ctx.stroke();
     }
 
-    if (drawIcons) {
+    if (nodeStyle.iconSize * transform.scale >= MIN_ICON_PX) {
       const image = input.texture(node.perk?.icon ?? "");
       if (image !== null) {
         const size = nodeStyle.iconSize;
