@@ -873,9 +873,9 @@ test("omen requirements are counted over GearRarityType, not over rarities", () 
   assert.ok(codes(diagnostics, "error").includes("unknown-rarity-type"));
 });
 
-test("an omen slot requirement can never name the mainhand", () => {
-  // `Omen.getRandomSlotReq` excludes weapons — "they're a lot of times swapped" — and
-  // `recalcGears` never reads the mainhand, so such a requirement is unsatisfiable.
+test("an omen slot requirement can never name a weapon slot", () => {
+  // `Omen.getRandomSlotReq` excludes weapons — "they're a lot of times swapped" — so no omen
+  // the game generates carries one.
   const diagnostics = validateBuild(
     build({ omen: { ...legalOmen(), slotRequirements: [{ slot: "bow", rarityType: "NORMAL" }] } }),
     standardSnapshot(),
@@ -982,7 +982,7 @@ test("the stat percent truncates the stat_multi, as Java's compound assignment d
   assert.equal(omenStatPercent(snapshot, { NORMAL: 4 }, 3, "mythic"), 87);
 });
 
-test("piece counting excludes the mainhand, caps per type, and needs the level", () => {
+test("piece counting includes the mainhand, caps per type, and needs the level", () => {
   const snapshot = standardSnapshot();
   const setup = { ...legalOmen(), requires: { NORMAL: 2 }, slotRequirements: [] };
 
@@ -995,9 +995,9 @@ test("piece counting excludes the mainhand, caps per type, and needs the level",
   // < rarities.getOrDefault(type, 0)` is the cap.
   assert.equal(countOmenPieces(snapshot, armour, setup, 60), 2);
 
-  // A weapon never counts: `recalcGears` collects armour, the offhand and the curios only.
+  // A weapon counts: `getGear()` appends the mainhand to the armour, offhand and curio list.
   const weaponOnly: Item[] = [{ base: "bow", rarity: "rare", itemLevel: 1 }];
-  assert.equal(countOmenPieces(snapshot, weaponOnly, setup, 60), 0);
+  assert.equal(countOmenPieces(snapshot, weaponOnly, setup, 60), 1);
 
   // `getGear()` filters on `isUsableBy`, which refuses an item above the holder's level.
   assert.equal(countOmenPieces(snapshot, armour, setup, 0), 0);

@@ -52,7 +52,7 @@ import {
   corruptionSockets,
   gearRarity,
   omen,
-  omenCountsSlot,
+  omenSlotRequirementAllowed,
   omenMinLevel,
   omenStatPercent,
   isGearRarityType,
@@ -2541,17 +2541,15 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     const at = `omen.slotRequirements[${i}]`;
     if (!has(snapshot, CATEGORY.gearSlot, req.slot)) {
       add("error", "unknown-slot", `${at}.slot`, `No ${CATEGORY.gearSlot} entry "${req.slot}".`);
-    } else if (!omenCountsSlot(snapshot, req.slot)) {
+    } else if (!omenSlotRequirementAllowed(snapshot, req.slot)) {
       // `Omen.getRandomSlotReq` excludes weapons outright, with the reason in a comment:
-      // "they're a lot of times swapped". And `recalcGears` never reads the mainhand anyway,
-      // so a weapon requirement could never be met.
+      // "they're a lot of times swapped" — so the game never generates one on a weapon slot.
       add(
         "error",
         "omen-slot-requirement-on-weapon",
         `${at}.slot`,
-        `"${req.slot}" is a mainhand slot. Omen counting never reads the mainhand ` +
-          `(CachedEntityStats.recalcGears), and Omen.getRandomSlotReq excludes weapons, so this ` +
-          `requirement could never be satisfied.`,
+        `"${req.slot}" is a weapon slot. Omen.getRandomSlotReq excludes weapons, so no ` +
+          `omen in the game carries this requirement.`,
       );
     }
     if (!isGearRarityType(req.rarityType)) {

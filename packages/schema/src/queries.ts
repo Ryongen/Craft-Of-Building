@@ -1952,11 +1952,13 @@ export function omenStatMulti(snapshot: Snapshot, rarityId: string): number {
  *  - **A type the omen did not ask for contributes nothing**, because the cap it is compared
  *    against is `getOrDefault(type, 0)` — zero.
  *
- * And the piece list itself excludes the mainhand. `CachedEntityStats.recalcGears` collects
- * `CHEST, FEET, LEGS, HEAD, OFFHAND` plus every curio slot, with the weapon tracked separately
- * in `recalcWeapon` — the mod's own source carries the note
- * `// todo note somewhere the weapon isnt included in omen counting`. It also filters on
- * `isUsableBy`, so a piece above the character's level is not worn as far as this is concerned.
+ * And the piece list **includes the mainhand**. `recalcGears` collects `CHEST, FEET, LEGS,
+ * HEAD, OFFHAND` plus every curio slot, and the weapon is tracked separately in `recalcWeapon`
+ * — but `CachedEntityStats.getGear()`, which is what this loop iterates, copies that list and
+ * appends the weapon (read off the **6.4.13 jar**; the fork's
+ * `// todo note somewhere the weapon isnt included in omen counting` describes an older
+ * `getGear`). Both halves filter on `isUsableBy`, so a piece above the character's level is
+ * not worn as far as this is concerned.
  */
 export function countOmenPieces(
   snapshot: Snapshot,
@@ -1972,9 +1974,6 @@ export function countOmenPieces(
     const base = baseGearType(snapshot, item.base);
     const slotId = base?.gearSlot;
     if (slotId === undefined) continue;
-
-    // `recalcGears` never looks at the mainhand, so a weapon can never satisfy an omen.
-    if (!omenCountsSlot(snapshot, slotId)) continue;
 
     // `isUsableBy` refuses an item above the holder's level, and `getGear()` filters on it.
     if (item.itemLevel > characterLevel) continue;
@@ -1995,15 +1994,15 @@ export function countOmenPieces(
 }
 
 /**
- * Whether a gear slot is one the omen counter can see.
+ * Whether a gear slot can carry an omen slot requirement.
  *
- * Armour, the offhand and the jewellery curios — everything in `recalcGears` except the
- * mainhand, which is `recalcWeapon`'s. Expressed through `slotFamily` rather than a list of
- * slot ids so a pack-added armour slot is included without an edit here.
+ * `Omen.getRandomSlotReq` draws from `GearSlots().getFilterWrapped(x -> !x.fam.isWeapon())`,
+ * so the generator never names a weapon slot. That is a rule about requirements only: the
+ * mainhand still *counts* toward the pieces (see {@link countOmenPieces}).
  */
-export function omenCountsSlot(snapshot: Snapshot, slotId: string): boolean {
+export function omenSlotRequirementAllowed(snapshot: Snapshot, slotId: string): boolean {
   const family = slotFamily(snapshot, slotId);
-  return family === "Armor" || family === "OffHand" || family === "Jewelry";
+  return family !== undefined && family !== "Weapon";
 }
 
 /**

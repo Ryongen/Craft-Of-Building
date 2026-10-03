@@ -34,7 +34,7 @@ import {
   omenAffixRoll,
   omen as omenView,
   omenBuckets,
-  omenCountsSlot,
+  omenSlotRequirementAllowed,
   omenIds,
   omenMinLevel,
   omenName,
@@ -164,7 +164,7 @@ export function OmenEditor({
       <>
       <Plain>
         <div className="faint text-sm mb-4" style={{ lineHeight: 1.5 }}>
-          An {omenWord(snapshot).toLowerCase()} grants nothing by itself. More requirements mean a bigger bonus (10% per required piece and per slot requirement, scaled by rarity), but you need more matching gear to activate it. Your mainhand never counts; only armour, offhand and jewellery do.
+          An {omenWord(snapshot).toLowerCase()} grants nothing by itself. More requirements mean a bigger bonus (10% per required piece and per slot requirement, scaled by rarity), but you need more matching gear to activate it. Every worn piece counts, your weapon included.
         </div>
       </Plain>
       <Tech>
@@ -172,8 +172,9 @@ export function OmenEditor({
           An {omenWord(snapshot).toLowerCase()} grants nothing on its own. Raising a requirement
           raises the payout (<code>getStatPercent</code> is ten per required piece plus ten per
           slot requirement, times the rarity&apos;s <code>stat_multi</code>) but also raises what
-          you have to wear to collect it. The <strong>mainhand never counts</strong>:
-          <code>recalcGears</code> collects armour, the offhand and the jewellery curios only.
+          you have to wear to collect it. Every worn piece counts, <strong>the mainhand
+          included</strong>: <code>getGear()</code> appends the weapon to the armour, offhand and
+          curio list.
         </div>
       </Tech>
       </>
@@ -298,10 +299,10 @@ function SlotRequirements({
   const { snapshot } = useWorld();
   const reqs = omen.slotRequirements ?? [];
 
-  // `Omen.getRandomSlotReq` filters weapons out — "they're a lot of times swapped" — and the
-  // counter never reads the mainhand anyway, so a weapon here could never be satisfied.
+  // `Omen.getRandomSlotReq` filters weapons out — "they're a lot of times swapped" — so no
+  // omen in the game carries a weapon-slot requirement.
   const slots = useMemo(
-    () => ids(snapshot, CATEGORY.gearSlot).filter((id) => omenCountsSlot(snapshot, id)).sort(),
+    () => ids(snapshot, CATEGORY.gearSlot).filter((id) => omenSlotRequirementAllowed(snapshot, id)).sort(),
     [snapshot],
   );
 

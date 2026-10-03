@@ -165,7 +165,7 @@ export {
   omen,
   omenAffixRoll,
   omenBuckets,
-  omenCountsSlot,
+  omenSlotRequirementAllowed,
   omenIds,
   omenMinLevel,
   omenStatMulti,

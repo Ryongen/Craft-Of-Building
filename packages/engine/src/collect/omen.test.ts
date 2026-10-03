@@ -112,12 +112,12 @@ test("one piece short of the requirement is worth exactly nothing", () => {
   closeTo(result.stats.get("armor")?.value, 100);
 });
 
-test("the mainhand never counts toward a set", () => {
-  // `CachedEntityStats.recalcGears` collects CHEST, FEET, LEGS, HEAD, OFFHAND and the curios;
-  // the weapon is `recalcWeapon`'s and is never in the list the omen counts.
+test("the mainhand counts toward a set", () => {
+  // `CachedEntityStats.getGear()` is `recalcGears`' armour, offhand and curios with the
+  // `recalcWeapon` mainhand appended — so a weapon fills a piece like anything else.
   const weapon: Item = { base: "bow", rarity: "rare", itemLevel: 1 };
   const result = calculate(build([HELMET, weapon]), snapshot());
-  assert.equal(result.contexts.find((c) => c.path === "omen"), undefined);
+  assert.ok(result.contexts.find((c) => c.path === "omen") !== undefined);
 });
 
 test("the omen's stats enter as MISC, the way MiscStatCtx does", () => {

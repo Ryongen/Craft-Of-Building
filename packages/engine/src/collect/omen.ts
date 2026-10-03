@@ -58,8 +58,8 @@ export function collectOmen(env: Env, build: BuildDoc): StatContext[] {
     return [];
   }
 
-  // `recalcGears` never looks at the mainhand, and filters on `isUsableBy` — both are handled
-  // inside `countOmenPieces`, which is the port of `OmenData.calcPiecesEquipped`.
+  // `getGear()` is armour, offhand, curios and the mainhand, each filtered on `isUsableBy` —
+  // handled inside `countOmenPieces`, which is the port of `OmenData.calcPiecesEquipped`.
   const filled = countOmenPieces(env.snapshot, wornItems(env.snapshot, build.gear ?? []), setup, build.character.level);
   const buckets = omenBuckets(env.snapshot, setup);
 
@@ -116,8 +116,7 @@ export function collectOmen(env: Env, build: BuildDoc): StatContext[] {
       "omen-not-satisfied",
       "omen",
       `\`${setup.id}\` grants nothing: ${filled} qualifying piece(s) equipped, and its cheapest ` +
-        `bonus needs ${Number.isFinite(needed) ? needed : "?"}. Note the mainhand never counts ` +
-        `(CachedEntityStats.recalcGears collects armour, the offhand and the curios only).`,
+        `bonus needs ${Number.isFinite(needed) ? needed : "?"}.`,
     );
   }
 
