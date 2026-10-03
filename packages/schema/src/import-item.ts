@@ -82,6 +82,7 @@ import {
   CATEGORY,
   affixesFor,
   baseGearType,
+  baseSocketCap,
   corruptionSockets,
   gearRarity,
   has,
@@ -323,12 +324,10 @@ function importFromDocument(node: Record<string, unknown>, snapshot: Snapshot): 
     item.craft = craft;
     // An exporter that predates `bonusSockets` still sent the socket count here; it is the same
     // `sl` the NBT reader derives the corruption's socket from, by the same rule.
-    if (item.bonusSockets === undefined) {
-      const max = gearRarity(snapshot, item.rarity)?.sockets.max;
-      if (max !== undefined) {
-        const bonus = Math.min(craft.sockets - max, corruptionSockets(snapshot, item.rarity));
-        if (bonus > 0) item.bonusSockets = bonus;
-      }
+    if (item.bonusSockets === undefined && gearRarity(snapshot, item.rarity) !== undefined) {
+      const max = baseSocketCap(snapshot, item.rarity);
+      const bonus = Math.min(craft.sockets - max, corruptionSockets(snapshot, item.rarity));
+      if (bonus > 0) item.bonusSockets = bonus;
     }
   }
 
@@ -671,11 +670,12 @@ function readSockets(snapshot: Snapshot, node: unknown, item: Item): void {
     item.runeword = runeword;
   }
 
-  // `sl` above the rarity's `sockets.max` is the corruption's socket: nothing else adds one
-  // past `canAddSocket`, and a rarity upgrade trims back down to the new rarity's max.
+  // `sl` above `baseSocketCap` is the corruption's socket: nothing else adds one past
+  // `canAddSocket`. A Perfected Orb's two-socket mythic is within that cap, so an Ascended
+  // mythic at two sockets reads as uncorrupted; the count, which is what matters, is the same.
   const total = obj["sl"];
-  const max = gearRarity(snapshot, item.rarity)?.sockets.max;
-  if (typeof total === "number" && max !== undefined) {
+  if (typeof total === "number" && gearRarity(snapshot, item.rarity) !== undefined) {
+    const max = baseSocketCap(snapshot, item.rarity);
     const bonus = Math.min(total - max, corruptionSockets(snapshot, item.rarity));
     if (bonus > 0) item.bonusSockets = bonus;
   }

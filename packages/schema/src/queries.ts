@@ -243,12 +243,44 @@ export function corruptionSockets(snapshot: Snapshot, rarityId: string): number 
 }
 
 /**
- * How many sockets this item has room for: the rarity's `sockets.max`, plus whatever its
- * corruption added (`Item.bonusSockets`). Gems and runes share them.
+ * Item modification serializers that turn a common item straight into another rarity without
+ * touching its sockets, keyed to the rarity they set.
+ *
+ * `CommonToEpicGuaranteedTagItemMod` and `CommonToMythicGuaranteedTagItemMod` hardcode
+ * `rar = "epic"` / `"mythic"`, rescale base stats and reroll affixes, and never call
+ * `removeSocket` (checked against the 6.4.13 jar). `UpgradeRarityItemMod` is the one that trims
+ * to the new rarity's `sockets.max`. The currencies that run these require `is_common`.
+ */
+const SOCKET_KEEPING_UPGRADES: Record<string, string> = {
+  common_to_epic_guaranteed_tag: "epic",
+  common_to_mythic_guaranteed_tag: "mythic",
+};
+
+/**
+ * The most sockets an uncorrupted item of this rarity can carry: its own `sockets.max`, or a
+ * common's when the pack has a mod that turns a common into this rarity sockets and all — a
+ * two-socket common through a Perfected Orb is a two-socket mythic.
+ */
+export function baseSocketCap(snapshot: Snapshot, rarityId: string): number {
+  let most = gearRarity(snapshot, rarityId)?.sockets.max ?? 0;
+  const common = gearRarity(snapshot, "common")?.sockets.max ?? 0;
+  if (common <= most) return most;
+  for (const id of ids(snapshot, CATEGORY.itemModification)) {
+    const serializer = str(data(snapshot, CATEGORY.itemModification, id) ?? {}, "serializer");
+    if (serializer !== undefined && SOCKET_KEEPING_UPGRADES[serializer] === rarityId) {
+      most = common;
+      break;
+    }
+  }
+  return most;
+}
+
+/**
+ * How many sockets this item has room for: {@link baseSocketCap}, plus whatever its corruption
+ * added (`Item.bonusSockets`). Gems and runes share them.
  */
 export function socketCap(snapshot: Snapshot, item: Item): number {
-  const rarity = gearRarity(snapshot, item.rarity);
-  return (rarity?.sockets.max ?? 0) + (item.bonusSockets ?? 0);
+  return baseSocketCap(snapshot, item.rarity) + (item.bonusSockets ?? 0);
 }
 
 /**

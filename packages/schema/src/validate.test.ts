@@ -232,8 +232,8 @@ test("socket and rune caps come from the rarity", () => {
   const diagnostics = validateBuild(build({ gear: [item] }), standardSnapshot());
   const found = codes(diagnostics, "error");
   // `sockets.max` gates `canAddSocket` when an orb is used, not what an item may already
-  // carry: a captured mythic helmet holds two socketed gems and the game applies both. So the
-  // socket count reports as a warning while the rune and runeword rules still refuse.
+  // carry. So the socket count reports as a warning while the rune and runeword rules still
+  // refuse.
   assert.ok(!found.includes("too-many-sockets"));
   assert.ok(codes(diagnostics, "warning").includes("too-many-sockets"));
   assert.ok(found.includes("too-many-runes"));
@@ -265,6 +265,37 @@ test("an Ascended corruption's socket raises the cap by one and no further", () 
   item.bonusSockets = 2;
   diagnostics = validateBuild(build({ gear: [item] }), standardSnapshot());
   assert.ok(codes(diagnostics, "error").includes("too-many-bonus-sockets"));
+});
+
+test("a common turned mythic by a Perfected Orb keeps its two sockets", () => {
+  // `CommonToMythicGuaranteedTagItemMod` sets the rarity and never calls `removeSocket`, so a
+  // two-socket common comes out a two-socket mythic. Only when the pack registers that mod.
+  const item = legalBoots();
+  item.rarity = "mythic";
+  item.sockets = ["amethyst0", "amethyst0"];
+  const snapshot = standardSnapshot();
+  let diagnostics = validateBuild(build({ gear: [item] }), snapshot);
+  assert.ok(codes(diagnostics, "warning").includes("too-many-sockets"));
+
+  snapshot.registries["library_of_exile_item_modification"] = {
+    common_to_mythic_with_tag_strength: {
+      id: "common_to_mythic_with_tag_strength",
+      origin: "test",
+      source: { kind: "pack", packId: "test" },
+      data: { serializer: "common_to_mythic_guaranteed_tag" },
+    },
+  };
+  diagnostics = validateBuild(build({ gear: [item] }), snapshot);
+  assert.ok(!codes(diagnostics, "warning").includes("too-many-sockets"));
+
+  // Legendary has no such orb, and three is past even a common's two.
+  item.rarity = "legendary";
+  diagnostics = validateBuild(build({ gear: [item] }), snapshot);
+  assert.ok(codes(diagnostics, "warning").includes("too-many-sockets"));
+  item.rarity = "mythic";
+  item.sockets = ["amethyst0", "amethyst0", "amethyst0"];
+  diagnostics = validateBuild(build({ gear: [item] }), snapshot);
+  assert.ok(codes(diagnostics, "warning").includes("too-many-sockets"));
 });
 
 test("a runed base refuses gems outright rather than capping them", () => {

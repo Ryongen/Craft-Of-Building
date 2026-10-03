@@ -1640,10 +1640,9 @@ const AS_IS = "\u0000as-is";
  * The "Ascended" corruption outcome, the one that adds a socket.
  *
  * `ChaosStat.applyToGear` calls `gear.sockets.addSocket()` once per `bonus_sockets`, and
- * `addSocket` is a bare `sl++` that skips `canAddSocket` — so this is the only way a rare or
- * better item gets a second socket. Upgrading a two-socket common does not: the rarity upgrade
- * removes sockets above the new rarity's max on the way to rare. Turning it off keeps whatever
- * is socketed; the socket count then reads over the cap until something is taken out.
+ * `addSocket` is a bare `sl++` that skips `canAddSocket`, past `baseSocketCap`. Turning it off
+ * keeps whatever is socketed; the socket count then reads over the cap until something is
+ * taken out.
  */
 function AscendedToggle({
   item,
@@ -1661,8 +1660,8 @@ function AscendedToggle({
       className="field mt-2"
       title={
         "The Ascended corruption outcome adds a socket past the rarity's limit. " +
-        "It's the only way to get a second socket on a rare, epic, legendary or mythic item: " +
-        "upgrading a two-socket common trims it back to one socket at rare."
+        "Upgrading a two-socket common up the ladder trims it to one socket at rare, but the " +
+        "common-to-epic and Perfected (common-to-mythic) orbs keep both."
       }
     >
       <input

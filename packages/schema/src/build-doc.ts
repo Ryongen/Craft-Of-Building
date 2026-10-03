@@ -107,10 +107,10 @@ export type Item = {
    *
    * `ChaosStat.applyToGear` runs `for (i < bonus_sockets) gear.sockets.addSocket()`, and
    * `addSocket` is a bare `sl++` — no `canAddSocket` check — so the "Ascended" outcome
-   * (`bonus_sockets: 1`) is the one way a rare-or-better item holds two sockets. A rarity
-   * upgrade cannot do it: `UpgradeRarityItemMod` removes every socket above the new rarity's
-   * `sockets.max` (checked against the 6.4.13 jar), so a two-socket common is trimmed to one
-   * on its way to rare.
+   * (`bonus_sockets: 1`) adds a socket past the rarity's limit. The ordinary rarity upgrade
+   * cannot: `UpgradeRarityItemMod` removes every socket above the new rarity's `sockets.max`
+   * (checked against the 6.4.13 jar). The common-to-epic and common-to-mythic orbs skip that
+   * trim, so their two sockets are part of `baseSocketCap`, not a bonus.
    */
   bonusSockets?: number;
   /** `mmorpg_gems` ids, one per filled socket. */
