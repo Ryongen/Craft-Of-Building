@@ -97,6 +97,7 @@ export type { BasicAttack, BasicAttackOptions } from "./damage/basic-attack.js";
 export {
   damageWithin,
   pressedForEffect,
+  pressesPerPass,
   procPlacement,
   simulateDps,
   simulateFullDps,

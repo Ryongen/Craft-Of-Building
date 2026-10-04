@@ -1018,6 +1018,51 @@ test("a long individual cooldown stretches the whole rotation, and is named", ()
   assert.ok(full.diagnostics.some((d) => d.code === "full-dps-cooldown-bound"));
 });
 
+test("the wait on a long cooldown is spent pressing what is ready, not standing still", () => {
+  // `strike` is a 1s press with nothing to wait on; `nuke` hits for twice as much but sits on a
+  // 10s cooldown. A player casts nuke, then strike until nuke is back — not one of each and idle.
+  const config = (cooldown: number) => ({
+    config: { tags: { tags: [] }, use_support_gems_from: "", cast_time_ticks: 0, cast_speed_ticks: 20, cooldown_ticks: cooldown },
+  });
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: {
+      hit100: valueCalcEntry("hit100", { min: 100, max: 100 }),
+      hit200: valueCalcEntry("hit200", { min: 200, max: 200 }),
+    },
+    mmorpg_spells: {
+      strike: spellEntry("strike", "Physical", "hit100", config(0)),
+      nuke: spellEntry("nuke", "Physical", "hit200", config(200)),
+    },
+    mmorpg_stat: {},
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: { original_mode_player: baseStats("original_mode_player", []) },
+  });
+  const strikeOnly = build({ skills: [{ spellId: "strike", main: true, includeInFullDps: true }] } as Partial<BuildDoc>);
+  const both = build({
+    skills: [
+      { spellId: "strike", main: true, includeInFullDps: true },
+      { spellId: "nuke", includeInFullDps: true },
+    ],
+  } as Partial<BuildDoc>);
+
+  const alone = simulateFullDps(strikeOnly, snapshot);
+  const full = simulateFullDps(both, snapshot);
+  const strike = full.skills.find((e) => e.skill.spellId === "strike")!;
+  const nuke = full.skills.find((e) => e.skill.spellId === "nuke")!;
+  const nukeCycle = nuke.result.rate.cycleSeconds;
+
+  // The pass is still the nuke's cycle, and every second of it not spent on the nuke is strikes.
+  closeTo(full.rotationSeconds, nukeCycle);
+  assert.equal(nuke.pressesPerRotation, 1);
+  closeTo(strike.pressesPerRotation!, (nukeCycle - nuke.pressSeconds) / strike.pressSeconds);
+  // So ticking the nuke in adds to the build rather than dragging strike down to one cast a pass.
+  assert.ok(full.dps > alone.dps);
+  const expected =
+    (strike.result.damagePerCast * strike.pressesPerRotation! + nuke.result.damagePerCast) / nukeCycle;
+  closeTo(full.skillDps, expected);
+});
+
 
 // ---------------------------------------------------------------------------
 // Procs

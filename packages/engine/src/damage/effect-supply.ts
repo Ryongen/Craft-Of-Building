@@ -44,7 +44,7 @@ import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc, SkillSetup } from "@cte2/schema";
 import { CATEGORY, entry, isSkillEnabled } from "@cte2/schema";
 
-import type { DpsResult, FullDpsResult } from "./dps.js";
+import { pressesPerPass, type DpsResult, type FullDpsResult } from "./dps.js";
 import { grantsToTarget } from "./effect-state.js";
 import { TICKS_PER_SECOND } from "./spell-calc.js";
 
@@ -114,7 +114,7 @@ export function effectSupply(
     for (const entry of rotation.skills) {
       const stacks = stacksPerCast(snapshot, entry.result, effectId);
       if (stacks <= 0) continue;
-      const presses = entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+      const presses = pressesPerPass(entry);
       const castsPerSecond = (presses * entry.result.rate.castsPerCycle) / rotation.rotationSeconds;
       from.push({ spellId: entry.skill.spellId, stacksPerCast: stacks, castsPerSecond, stacksPerSecond: stacks * castsPerSecond });
     }

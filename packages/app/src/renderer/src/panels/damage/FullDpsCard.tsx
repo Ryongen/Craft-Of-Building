@@ -183,6 +183,7 @@ export function FullDpsCard({
                   entry && (
                     <span className="faint">
                       {num(entry.rotationSeconds, 2)}s {"·"} {smart(entry.result.damagePerCast)}
+                      {(entry.pressesPerRotation ?? 1) > 1.005 && <> {"·"} ×{num(entry.pressesPerRotation!, 2)} a pass</>}
                     </span>
                   )
                 )}

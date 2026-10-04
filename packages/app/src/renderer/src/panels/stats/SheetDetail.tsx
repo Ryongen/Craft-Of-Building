@@ -21,7 +21,7 @@
  * under it.
  */
 
-import type { LayerStep } from "@cte2/engine";
+import { pressesPerPass, type LayerStep } from "@cte2/engine";
 import { spellName, statName, type ElementName } from "@cte2/schema";
 import type { ReactNode } from "react";
 
@@ -1029,7 +1029,7 @@ export type RotationCostEntry = {
 /**
  * What one pass through the ticked skills spends.
  *
- * A rotation step is pressed once a pass and an upkeep buff `pressesPerRotation` times, so a
+ * A rotation step is pressed once a pass, or more when it fills a cooldown wait, and an upkeep buff `pressesPerRotation` times, so a
  * toggle costs nothing. Costs go to the pool that pays them (`manaSpentAs`), which is how a
  * Blood Magic build's mana and energy costs end up on one blood row. The sidebar row and the
  * detail below both read this, so they cannot disagree.
@@ -1043,7 +1043,7 @@ export function rotationCost(derived: DerivedBuild): {
   const seconds = full?.rotationSeconds ?? 0;
   const entries: RotationCostEntry[] = [];
   for (const entry of full?.skills ?? []) {
-    const presses = entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+    const presses = pressesPerPass(entry);
     const { cost } = entry.result;
     const spends: [string, number][] = [
       [cost.manaSpentAs, cost.manaPerCast],

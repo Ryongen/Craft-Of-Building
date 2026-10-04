@@ -634,7 +634,7 @@ export type FullDpsSkill = {
   /**
    * Seconds this skill takes out of one pass through the rotation.
    *
-   * For a rotation step that is one press. For an upkeep buff it is one press amortised over
+   * For a rotation step that is its presses — one, or more when it fills a cooldown wait. For an upkeep buff it is one press amortised over
    * how often the press comes round, so a toggle costs the pass nothing at all.
    */
   rotationSeconds: number;
@@ -665,11 +665,22 @@ export type FullDpsSkill = {
    * cooldown. The figures here assume it is up throughout and a diagnostic says so.
    */
   upkeepDurationSeconds?: number;
-  /** Upkeep only: presses in one pass — `rotationSeconds / upkeepSeconds`. 0 for a toggle. */
+  /**
+   * Presses in one pass. Upkeep: `rotationSeconds / upkeepSeconds`, 0 for a toggle. Rotation: 1,
+   * plus however many fit in the wait on a longer cooldown. Read it through {@link pressesPerPass}.
+   */
   pressesPerRotation?: number;
   /** Upkeep only: the effect whose duration set the period. */
   upkeepEffectId?: string;
 };
+
+/**
+ * Times one pass presses this skill. A rotation step is pressed at least once and more when a
+ * longer cooldown elsewhere leaves room; an upkeep buff is pressed `pressesPerRotation` times.
+ */
+export function pressesPerPass(entry: FullDpsSkill): number {
+  return entry.pressesPerRotation ?? (entry.role === "rotation" ? 1 : 0);
+}
 
 export type FullDpsResult = {
   skills: FullDpsSkill[];
@@ -2316,6 +2327,30 @@ export function simulateFullDps(
   const slowest = paced.reduce((max, e) => Math.max(max, e.result.rate.cycleSeconds), 0);
   const base = Math.max(sequential, slowest);
 
+  // Nobody stands still while that cooldown runs: the gap goes to more presses of whatever is
+  // ready, best damage per second of press first, each no faster than its own cycle allows.
+  // `strike` at 1s beside a `nuke` on 8s is one nuke and seven strikes a pass, not one of each
+  // and six seconds of nothing — which made ticking a cooldown skill cost the build DPS.
+  const pressDamage = (e: Entry): number =>
+    (e.result.damagePerCast - e.result.auraDamagePerCast + e.result.ailmentDamagePerCast -
+      e.result.auraAilmentDamagePerCast) *
+    e.result.rate.castsPerCycle;
+  let slack = buffsOnly ? 0 : base - sequential;
+  for (const entry of rotation) entry.pressesPerRotation = 1;
+  const fillers = [...rotation]
+    .filter((e) => e.pressSeconds > 0 && e.result.rate.cycleSeconds > 0 && pressDamage(e) > 0)
+    .sort((a, b) => pressDamage(b) / b.pressSeconds - pressDamage(a) / a.pressSeconds);
+  for (const entry of fillers) {
+    if (slack <= 1e-9) break;
+    const extra = Math.max(
+      0,
+      Math.min(slack / entry.pressSeconds, base / entry.result.rate.cycleSeconds - 1),
+    );
+    entry.pressesPerRotation = 1 + extra;
+    entry.rotationSeconds = entry.pressSeconds * entry.pressesPerRotation;
+    slack -= extra * entry.pressSeconds;
+  }
+
   // Every upkeep press is a slice of the pass it interrupts, and the slices are a fraction *of*
   // the pass -- hence the solve rather than an addition. A toggle's period is Infinity, so it
   // contributes exactly nothing and the pass is the rotation's own length.
@@ -2348,8 +2383,7 @@ export function simulateFullDps(
     entry.rotationSeconds = entry.pressSeconds * presses;
   }
 
-  const pressesOf = (entry: Entry): number =>
-    entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+  const pressesOf = pressesPerPass;
   // Hits that land on a held effect's clock rather than on presses: an aura's pulses, and a
   // toggle whose effect strikes on its own, like Power Surge's bolts. Neither pays out per press.
   const ownClock = (entry: Entry): boolean => entry.role === "aura" || entry.result.auraDps > 0;
@@ -2384,7 +2418,15 @@ export function simulateFullDps(
       message:
         `The rotation waits on \`${bound.skill.spellId}\`: its own cooldown of ` +
         `${bound.result.rate.cycleSeconds.toFixed(2)}s is longer than the ` +
-        `${sequential.toFixed(2)}s the casts themselves take.`,
+        `${sequential.toFixed(2)}s the casts themselves take.` +
+        (rotation.some((e) => (e.pressesPerRotation ?? 1) > 1 + 1e-9)
+          ? ` The rest of the wait is spent on more presses of what is ready: ` +
+            rotation
+              .filter((e) => (e.pressesPerRotation ?? 1) > 1 + 1e-9)
+              .map((e) => `\`${e.skill.spellId}\` ×${e.pressesPerRotation!.toFixed(2)}`)
+              .join(", ") +
+            `.`
+          : ""),
     });
   }
 

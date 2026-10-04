@@ -49,6 +49,7 @@ import type { ProcHit } from "./ctx.js";
 import { DEFAULT_PLACEMENT, type TargetPlacement } from "./geometry.js";
 import {
   PET_ATTACK_GROUP,
+  pressesPerPass,
   procPlacement,
   simulateDps,
   type DpsOptions,
@@ -275,7 +276,7 @@ function rootsOf(
   for (const entry of rotation.skills) {
     const result = simulateDps(build, snapshot, { ...base, skill: entry.skill });
     if (result === undefined || result.rate.cycleSeconds <= 0) continue;
-    const presses = entry.role === "rotation" ? 1 : (entry.pressesPerRotation ?? 0);
+    const presses = pressesPerPass(entry);
     const period =
       entry.role === "aura" || result.auraDps > 0
         ? ownCycle(result)
