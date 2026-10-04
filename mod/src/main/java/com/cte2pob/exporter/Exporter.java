@@ -16,6 +16,8 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Puts the pieces together and writes them out.
@@ -50,12 +52,14 @@ public final class Exporter {
         String mnsVersion = modVersion("mmorpg");
 
         if (packVersion == null || packVersion.isEmpty()) {
+            packVersion = packVersionFromConfig(mc.gameDirectory.toPath());
+        }
+        if (packVersion == null) {
             packVersion = "unknown";
-            // Nothing on the client knows which pack build is installed - a modpack version is
-            // launcher metadata, not game state - and a fixture's whole purpose is to be
-            // invalidated by a pack update. So it is asked for rather than invented.
-            warn.add("packVersion is \"unknown\". Nothing in game exposes the Craft to Exile 2 version, so "
-                    + "pass it yourself with /cobexport \"2.0.2\" or edit the field afterwards. Without it a "
+            // A modpack version is launcher metadata, not game state, and a fixture's whole
+            // purpose is to be invalidated by a pack update. So it is asked for rather than invented.
+            warn.add("packVersion is \"unknown\". config/bcc-common.toml had no modpackVersion, so "
+                    + "pass it yourself with /cobexport \"2.1.4\" or edit the field afterwards. Without it a "
                     + "stale fixture cannot be told from a regression.");
         }
 
@@ -100,6 +104,25 @@ public final class Exporter {
         }
 
         report(player, file, rawFile, observed, warn);
+    }
+
+    private static final Pattern BCC_VERSION = Pattern.compile("^\\s*modpackVersion\\s*=\\s*\"([^\"]+)\"", Pattern.MULTILINE);
+
+    /**
+     * Craft to Exile 2 ships Better Compatibility Checker, whose config the pack author fills in
+     * with the pack's version on every release. It is the one place on the client that knows it.
+     * Returns null when the file is missing or the field is empty.
+     */
+    static String packVersionFromConfig(Path gameDir) {
+        try {
+            Matcher m = BCC_VERSION.matcher(Files.readString(gameDir.resolve("config/bcc-common.toml")));
+            if (m.find() && !m.group(1).isBlank()) {
+                return m.group(1).trim();
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // Not there, or not readable: fall through to "unknown".
+        }
+        return null;
     }
 
     private static String notes(JsonObject observed, Warnings warn) {

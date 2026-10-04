@@ -1,7 +1,7 @@
 modLoader="javafml"
 loaderVersion="[47,)"
 license="MIT"
-issueTrackerURL="https://github.com/Ryongen/cte2-pob/issues"
+issueTrackerURL="https://github.com/Ryongen/Craft-Of-Building/issues"
 
 [[mods]]
 modId="${mod_id}"

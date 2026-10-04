@@ -59,7 +59,7 @@ import org.lwjgl.glfw.GLFW;
 public class Cte2PobExporter {
 
     public static final String MODID = "craftofbuilding";
-    public static final String VERSION = "0.4.0";
+    public static final String VERSION = "0.5.0";
 
     public Cte2PobExporter() {
         // Nothing to do on a server, and nothing here may touch a client class on one.
@@ -179,9 +179,9 @@ public class Cte2PobExporter {
 
     /**
      * @param packVersion the Craft to Exile 2 version this character is playing, if the player
-     *                    told us. Nothing on the client knows it - the modpack version is not
-     *                    exposed to the game - so it is left as {@code "unknown"} and warned
-     *                    about rather than filled in with something plausible.
+     *                    told us. Otherwise it is read from the pack's Better Compatibility
+     *                    Checker config, and failing that left as {@code "unknown"} and
+     *                    warned about rather than guessed.
      */
     public static void run(String packVersion, boolean raw) {
         if (Minecraft.getInstance().player == null) {
