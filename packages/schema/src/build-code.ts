@@ -96,6 +96,12 @@ export async function encodeBuildCode(doc: BuildDoc): Promise<string> {
 }
 
 /**
+ * The most a code may unpack to. Real builds are tens of KB; the cap is there so a tiny code
+ * that inflates to gigabytes (a zip bomb) is refused instead of exhausting memory.
+ */
+export const MAX_DECODED_BYTES = 1024 * 1024;
+
+/**
  * The document a code holds. Throws with a message a person can act on: a code cut short by a
  * chat client's length limit is the common failure, and "invalid code" says nothing about it.
  */
@@ -108,8 +114,11 @@ export async function decodeBuildCode(code: string): Promise<BuildDoc> {
   const body = trimmed.slice(BUILD_CODE_PREFIX.length).replace(/\s+/g, "");
   let text: string;
   try {
-    text = new TextDecoder().decode(await pipe(fromBase64Url(body), new DecompressionStream("deflate-raw")));
-  } catch {
+    text = new TextDecoder().decode(
+      await pipe(fromBase64Url(body), new DecompressionStream("deflate-raw"), MAX_DECODED_BYTES),
+    );
+  } catch (error) {
+    if (error instanceof TooLarge) throw new Error("This build code unpacks to far more than any real build");
     throw new Error("This build code is damaged or incomplete — was it cut off when it was copied?");
   }
   return readBuild(JSON.parse(text)).doc;
@@ -126,16 +135,28 @@ export async function readBuildText(text: string): Promise<ReadBuild> {
 
 // ---------------------------------------------------------------------------
 
-async function pipe(bytes: Uint8Array, transform: CompressionStream | DecompressionStream): Promise<Uint8Array> {
+class TooLarge extends Error {}
+
+async function pipe(
+  bytes: Uint8Array,
+  transform: CompressionStream | DecompressionStream,
+  maxBytes = Infinity,
+): Promise<Uint8Array> {
   const writer = transform.writable.getWriter();
   // The reader reports a failure; these would only report it a second time, unhandled.
   writer.write(bytes).catch(() => undefined);
   writer.close().catch(() => undefined);
   const chunks: Uint8Array[] = [];
+  let total = 0;
   const reader = transform.readable.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      reader.cancel().catch(() => undefined);
+      throw new TooLarge();
+    }
     chunks.push(value);
   }
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));

@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   BUILD_CODE_PREFIX,
+  MAX_DECODED_BYTES,
   decodeBuildCode,
   encodeBuildCode,
   isBuildCode,
@@ -60,4 +61,15 @@ test("isBuildCode ignores surrounding whitespace and nothing else", () => {
 test("a JSON object that is not a build is refused", () => {
   assert.throws(() => parseBuild('{"name": "an item"}'), /character/);
   assert.throws(() => parseBuild("[]"), /character/);
+});
+
+test("a code that unpacks to more than any real build is refused", async () => {
+  // Zeros compress about a thousandfold, so this code is a few KB.
+  const bytes = new Uint8Array(MAX_DECODED_BYTES * 4);
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  const packed = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = "";
+  for (const byte of packed) binary += String.fromCharCode(byte);
+  const code = BUILD_CODE_PREFIX + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  await assert.rejects(decodeBuildCode(code), /far more than any real build/);
 });
