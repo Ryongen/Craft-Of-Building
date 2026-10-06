@@ -436,6 +436,58 @@ test("an element-gated grant needs a hit of that element somewhere in the build"
   assert.deepEqual(hemorrhage(fully).needs, ["a physical hit"]);
 });
 
+test("a captured effect goes when the source that derived it does", () => {
+  // The Lagionaire capture recorded ten stacks of Hemorrhage attributed to `quake`, the hit that
+  // crit. Unallocating Hemorrhager left them up for as long as Quake stayed on the bar.
+  const registries = (hasKeystone: boolean) => ({
+    mmorpg_exile_effect: {
+      hemorrhage: effectEntry("hemorrhage", {
+        max_stacks: 10,
+        stats: [{ type: "FLAT", min: 4, max: 4, stat: "critical_damage" }],
+      }),
+      // Nothing in the pack hands this out, so the capture is the only evidence there is.
+      blessed: effectEntry("blessed", { stats: [{ type: "FLAT", min: 1, max: 1, stat: "critical_damage" }] }),
+    },
+    mmorpg_spells: { strike: spellEntry("strike", "Physical", "hit100") },
+    mmorpg_stat: {
+      hemorrhage_to_source_on_crit: statEntry("hemorrhage_to_source_on_crit", {
+        effect: [{ effects: ["give_hemorrhage_to_source"], events: ["on_damage"], side: "Source" }],
+      }),
+    },
+    mmorpg_stat_effect: {
+      give_hemorrhage_to_source: {
+        id: "give_hemorrhage_to_source",
+        ser: "give_exile_effect",
+        effect: "hemorrhage",
+        give_to: "Source",
+        seconds: 30,
+      },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats(
+        "original_mode_player",
+        hasKeystone ? [exact("hemorrhage_to_source_on_crit", "FLAT", 25)] : [],
+      ),
+    },
+  });
+  const doc = {
+    skills: [{ spellId: "strike", main: true }],
+    exileEffects: [
+      { id: "hemorrhage", stacks: 10, spellId: "strike" },
+      { id: "blessed", stacks: 1 },
+    ],
+  };
+  const stacksOf = (state: ReturnType<typeof stateOf>, id: string) =>
+    state.options.find((o) => o.id === id)?.stacks ?? 0;
+
+  const kept = stateOf(registries(true), doc);
+  assert.equal(stacksOf(kept, "hemorrhage"), 10);
+
+  const dropped = stateOf(registries(false), doc);
+  assert.equal(stacksOf(dropped, "hemorrhage"), 0, "no keystone, no Hemorrhage, whatever the capture saw");
+  assert.equal(stacksOf(dropped, "blessed"), 1, "an effect with no derivable source keeps the capture's word");
+});
+
 test("a support gem that grants an effect offers it, though the sheet never holds its stat", () => {
   // The real shape of Fortify in this pack: the stat is on the *support gem*, so it is a
   // `SUPPORT_GEM` context belonging to the linked Skill and `sheet.get("fortify_on_melee_hit")`

@@ -516,9 +516,9 @@ function PoolsCard({
         <Figure
           size="lg"
           label="Effective HP"
-          value={smart(weakest.effectiveHealth)}
-          onClick={() => onSelect({ kind: "ehp", element: weakest.element })}
-          hint={`Against ${elementLabel(weakest.element)}, the element you are softest to. Raw incoming damage, before your mitigation touches it.`}
+          value={smart(defence.averageEffectiveHealth)}
+          onClick={() => onSelect({ kind: "figure", id: "ehp" })}
+          hint={`Averaged across every element, against raw incoming damage before your mitigation touches it. Against ${elementLabel(weakest.element)}, the element you are softest to, it is ${smart(weakest.effectiveHealth)}.`}
         />
         <Figure size="lg" label="Health" value={smart(pools.health)} hint="The Mine and Slash pool, not vanilla hearts" />
         {pools.magicShield > 0 && (

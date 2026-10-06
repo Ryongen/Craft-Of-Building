@@ -92,14 +92,15 @@ export function Headline({ onFocus }: { onFocus?: (focus: SheetFocus) => void })
       <Figure
         size="sm"
         label="EHP"
-        value={compact(weakest.effectiveHealth)}
+        value={compact(defence.averageEffectiveHealth)}
         delta={deltaFor("ehp")}
         {...(onFocus === undefined
           ? {}
           : { onClick: () => onFocus({ kind: "figure", id: "ehp" }) })}
         hint={
-          `Effective HP against your weakest element (${weakest.element}): the pool divided by ` +
-          `the share of a hit that gets through. It is the element that actually kills you.`
+          `Effective HP averaged across every element: the pool divided by the average share of ` +
+          `a hit that gets through. Your weakest is ${weakest.element} at ` +
+          `${compact(weakest.effectiveHealth)}, and it pulls this figure down hardest.`
         }
       />
       <Figure

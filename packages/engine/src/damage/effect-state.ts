@@ -872,11 +872,21 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
   // off is how you ask what the build is worth without it, and leaving the buff it was sustaining
   // up would answer a different question. The capture names the spell that applied each effect,
   // so this is a lookup rather than a guess.
+  //
+  // The same goes for a source you have since removed. An effect the pack only ever hands out
+  // through a stat or a spell is one this file can derive, so when nothing in the build derives
+  // it any more the capture is describing a character that no longer exists. Hemorrhager is the
+  // case: the capture recorded ten stacks of `hemorrhage` attributed to `quake` (the hit that
+  // crit), so unallocating the keystone left the stacks, their crit damage and their Blood
+  // Explosion proc all in place for as long as Quake stayed on the bar. An effect the pack gives
+  // no derivable source for — something a mob or a teammate put on you — keeps the capture's word.
   const disabled = new Set(
     (build.skills ?? []).filter((s) => !isSkillEnabled(s)).map((s) => s.spellId),
   );
+  const derivable = derivableEffects(snapshot);
   for (const effect of build.exileEffects ?? []) {
     if (effect.spellId !== undefined && disabled.has(effect.spellId)) continue;
+    if (derivable.has(effect.id) && !grants.has(effect.id)) continue;
     if (entry(snapshot, CATEGORY.exileEffect, effect.id)) {
       add(effect.id, { kind: "captured", holder: "caster" });
     }
@@ -1128,6 +1138,38 @@ function requiredEffectsOf(part: Record<string, unknown>): string[] {
  * Cached per snapshot: 432 spells is a walk worth doing once.
  */
 const GATED_CACHE = new WeakMap<object, Set<string>>();
+
+/**
+ * Every effect something in the pack can grant in a way {@link collectGrants} derives: a stat's
+ * `give_exile_effect`, a spell's own `exile_effect` act, or an aura gem that is also an effect.
+ *
+ * A captured effect outside this set has no source the engine could ever see, so the capture is
+ * the only evidence for it and is kept. Inside it, the build's own grants are the evidence.
+ *
+ * Cached per snapshot, like {@link gatedEffects}.
+ */
+const DERIVABLE_CACHE = new WeakMap<object, Set<string>>();
+
+function derivableEffects(snapshot: Snapshot): Set<string> {
+  const cached = DERIVABLE_CACHE.get(snapshot as unknown as object);
+  if (cached) return cached;
+
+  const found = new Set<string>();
+  for (const grants of grantingStats(snapshot).values()) {
+    for (const grant of grants) found.add(grant.effectId);
+  }
+  for (const spell of Object.values(snapshot.registries[CATEGORY.spell] ?? {})) {
+    const data = asObject(spell.data);
+    if (!data) continue;
+    for (const applied of effectsAppliedBy(data)) found.add(applied.id);
+  }
+  for (const aura of Object.keys(snapshot.registries[CATEGORY.aura] ?? {})) {
+    if (entry(snapshot, CATEGORY.exileEffect, aura)) found.add(aura);
+  }
+
+  DERIVABLE_CACHE.set(snapshot as unknown as object, found);
+  return found;
+}
 
 function gatedEffects(snapshot: Snapshot): Set<string> {
   const cached = GATED_CACHE.get(snapshot as unknown as object);

@@ -269,8 +269,8 @@ function modifyStatLayer(
 
   const recorder = ctx.event.recorder;
   const before = recorder?.contributions.length ?? 0;
-  if ((stringAt(data, "modification") ?? "ADD").toUpperCase() === "REDUCE") layer.reduce(num);
-  else layer.add(num);
+  if ((stringAt(data, "modification") ?? "ADD").toUpperCase() === "REDUCE") layer.reduce(num, weight);
+  else layer.add(num, weight);
   recorder?.scaledSince(before, raw, effectiveness);
 
   if (subject.multiUseType === "MULTIPLICATIVE_DAMAGE") {
@@ -362,26 +362,24 @@ function numberValue(
 }
 
 /**
- * Says when probability-weighting a layer contribution is an approximation rather than the
- * answer.
+ * Names a probability-weighted layer contribution, so an averaged figure is never silent.
  *
- * Scaling the number a stat adds is exact whenever the layer is linear in its total, which
- * covers `flat_damage` and every plain MULTIPLY layer. It is *not* exact when the layer's
- * clamp is degenerate: `double_damage` declares `min_multi == max_multi == 2`, so any non-zero
- * contribution produces exactly ×2 and the true expectation is
- * `(1 - p) * base + p * 2 * base`, which no single scaled number reproduces.
+ * Scaling the number a stat adds is the expectation whenever the layer is linear in its total,
+ * which covers `flat_damage` and every plain MULTIPLY layer. A pinned layer (`double_damage`,
+ * `min_multi == max_multi == 2`) is not linear, so the scaled number is ignored there and
+ * `LayerData.getMultiplier` averages the pin by the chance it fires instead.
  */
 function reportInexactAveraging(ctx: DamageCtx, layerId: string, statId: string, weight: number): void {
   const layer = ctx.event.index.get(layerId);
-  const degenerate = layer !== undefined && layer.minMulti === layer.maxMulti;
+  const pinned = layer !== undefined && layer.minMulti === layer.maxMulti;
   reportOnce(
     ctx,
     `chance-layer:${layerId}:${statId}`,
-    degenerate ? "warning" : "info",
-    degenerate ? "chance-averaging-inexact" : "chance-averaged",
+    "info",
+    "chance-averaged",
     statId,
-    degenerate
-      ? `\`${statId}\` writes to \`${layerId}\`, whose multiplier is pinned to ${layer.minMulti}x, at ${(weight * 100).toFixed(1)}% chance. Averaging a pinned layer is not exact: the real outcomes are "fires" and "does not", and this figure is neither.`
+    pinned
+      ? `\`${statId}\` fires \`${layerId}\` (×${layer.minMulti}) on ${(weight * 100).toFixed(1)}% of hits; the figure is the average over hits that do and do not.`
       : `\`${statId}\` fires on ${(weight * 100).toFixed(1)}% of hits and contributed at that fraction.`,
   );
 }

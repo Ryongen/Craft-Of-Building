@@ -67,6 +67,18 @@ test("double_damage is pinned to exactly 2x by its own clamp", () => {
   assert.equal(large.getMultiplier(), 2);
 });
 
+test("a pinned layer reached by chance averages its pin", () => {
+  // Two independent 10% rolls: the layer fires on 1 - 0.9 * 0.9 = 19% of hits.
+  const layer = dataFor("double_damage");
+  layer.add(1, 0.1);
+  layer.add(1, 0.1);
+  assert.ok(Math.abs(layer.getMultiplier() - 1.19) < 1e-9);
+
+  // One certain write makes it a certainty again.
+  layer.add(1);
+  assert.equal(layer.getMultiplier(), 2);
+});
+
 test("damage_suppression can never increase damage", () => {
   const layer = dataFor("damage_suppression");
   layer.add(400);

@@ -191,6 +191,17 @@ export type Defence = {
   /** The element with the lowest effective HP: what actually kills you. */
   weakest: ElementDefence;
   /**
+   * Effective HP averaged across every element — the headline figure, and what rankings compare.
+   *
+   * The **harmonic** mean, `n / Σ(1 / ehp)`: effective HP against a hit split evenly across
+   * the elements. Not the arithmetic mean, because effective HP is `pool / taken` and grows
+   * faster the less you take: +10 resist at 70% adds several times what it adds at 0%, so a
+   * plain average would rank "more of the resist you already have" above fixing the hole.
+   * Averaged over `taken` instead, a point of mitigation is worth the same on any element, and
+   * the weak element still pulls the figure down hardest.
+   */
+  averageEffectiveHealth: number;
+  /**
    * The element with the lowest maximum hit: what one-shots you first.
    *
    * Against a mob's swing this is the same element as `weakest`: dodge and block are both
@@ -423,6 +434,9 @@ export function defence(
   const mostFragile = byElement.reduce((worst, entry) =>
     entry.maximumHit < worst.maximumHit ? entry : worst,
   );
+  // An element you take nothing from adds 0 here (1 / Infinity), which is what it is worth.
+  const inverseSum = byElement.reduce((sum, entry) => sum + 1 / entry.effectiveHealth, 0);
+  const averageEffectiveHealth = inverseSum > 0 ? byElement.length / inverseSum : Number.POSITIVE_INFINITY;
 
   if (pools.manaAbsorb.percent > 0) {
     diagnostics.push({
@@ -496,6 +510,7 @@ export function defence(
     attackerLevel,
     byElement,
     weakest,
+    averageEffectiveHealth,
     mostFragile,
     ...(overTime === undefined ? {} : { overTime }),
     diagnostics,

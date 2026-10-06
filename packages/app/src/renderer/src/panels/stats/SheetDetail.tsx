@@ -853,9 +853,15 @@ function FigureDetail({
       return (
         <Detail
           title="Effective HP"
-          lead={`Your weakest element, since that's what kills you. Here it's ${elementLabel(derived.defence.weakest.element)}. Expand a row to compare.`}
+          lead={`Averaged across every element, over the share of a hit that gets through, so your weakest element (${elementLabel(derived.defence.weakest.element)}) pulls it down hardest. Expand a row to compare.`}
         >
           <div className="steps">
+            <Term
+              label="Average"
+              value={smart(derived.defence.averageEffectiveHealth)}
+              strong
+              hint="Effective HP against a hit split evenly across the elements below."
+            />
             {derived.defence.byElement.map((row) => (
               <Term
                 key={row.element}
@@ -914,9 +920,9 @@ function FigureDetail({
 
           <div className="steps mt-4">
             <Term
-              label="Effective HP, for comparison"
-              value={smart(derived.defence.weakest.effectiveHealth)}
-              hint={`Against ${elementLabel(derived.defence.weakest.element)}, averaged.`}
+              label={`Effective HP vs ${elementLabel(fragile.element)}, for comparison`}
+              value={smart(fragile.effectiveHealth)}
+              hint={`Against ${elementLabel(fragile.element)}, with dodge and block averaged in.`}
               onSelect={() => onFocus({ kind: "figure", id: "ehp" })}
             />
           </div>

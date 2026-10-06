@@ -212,7 +212,7 @@ export type Comparison = {
    * Effective HP per element, kept out of {@link headline} rather than mixed into it.
    *
    * Six more rows is most of a tooltip, and the one a reader wants is already the headline's
-   * `ehp` — the weakest element is what actually kills you. The per-element figures still
+   * `ehp` — the average over every element. The per-element figures still
    * matter on a surface with room for them, because buying fire resistance on a character
    * whose cold is worse moves no headline figure at all, so they are a separate list the
    * Compare tab prints as its own table and the tooltips leave out.
@@ -256,7 +256,7 @@ export const HEADLINE: {
   { key: "buffSeconds", label: "Buff duration", good: "up", kind: "number" },
   { key: "debuffSeconds", label: "Debuff duration", good: "up", kind: "number" },
   { key: "pool", label: "Life + magic shield", good: "up", kind: "number" },
-  { key: "ehp", label: "Effective HP (weakest)", good: "up", kind: "number" },
+  { key: "ehp", label: "Effective HP (average)", good: "up", kind: "number" },
 ];
 
 /**
@@ -478,7 +478,7 @@ function assembleVitals(parts: {
         ? 0
         : dps.debuff.durationSeconds,
     pool: def.pools.health + def.pools.magicShield,
-    ehp: def.weakest.effectiveHealth,
+    ehp: def.averageEffectiveHealth,
     weakestElement: def.weakest.element,
     ehpByElement: def.byElement.map((e) => ({
       element: e.element,

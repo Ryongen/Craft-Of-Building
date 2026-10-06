@@ -101,6 +101,11 @@ test("effective HP is the pool divided by what gets through", () => {
   closeTo(cold.taken, 1);
   closeTo(cold.effectiveHealth, 1000);
   assert.equal(result.weakest.effectiveHealth, Math.min(...result.byElement.map((e) => e.effectiveHealth)));
+
+  // Averaged over what gets through, not over the eHP figures: the fire row takes half, the
+  // other rows take it whole.
+  const n = result.byElement.length;
+  closeTo(result.averageEffectiveHealth, 1000 / ((n - 0.5) / n));
 });
 
 test("magic shield adds to the pool, and half of chaos walks past it", () => {

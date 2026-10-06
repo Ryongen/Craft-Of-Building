@@ -148,15 +148,25 @@ export class LayerData {
     this.record("conversion", percent, before, before + percent, element);
   }
 
-  add(value: number): void {
+  /**
+   * The chance that *no* write to this layer happened on a given hit. Each write is its own
+   * roll (`random_roll` per stat), so the misses multiply. Only a pinned layer reads it — see
+   * {@link getMultiplier}.
+   */
+  private missChance = 1;
+
+  /** `chance` is the probability the write happened at all — 1 unless it came off a roll. */
+  add(value: number, chance = 1): void {
     const before = this.number;
     this.number += value;
+    this.missChance *= 1 - chance;
     this.record("add", value, before, this.number);
   }
 
-  reduce(value: number): void {
+  reduce(value: number, chance = 1): void {
     const before = this.number;
     this.number -= value;
+    this.missChance *= 1 - chance;
     this.record("reduce", -value, before, this.number);
   }
 
@@ -209,10 +219,16 @@ export class LayerData {
    * `double_damage` declares `min_multi == max_multi == 2`, so the clamp forces exactly ×2 the
    * moment any stat touches it — a 1% chance of double damage and a 500% one produce the same
    * multiplier once they fire.
+   *
+   * That makes a chance-weighted write useless on a pinned layer: 10% of a 10% double-damage
+   * roll still clamps to ×2. So a pinned layer returns the expected multiplier instead,
+   * `1 + (pin - 1) * P(any write fired)` — 10% double damage is ×1.1, not ×2. A layer touched
+   * only by certain writes has a miss chance of 0 and gets the game's exact pin.
    */
   getMultiplier(): number {
-    const multi = 1 + this.number / 100;
-    return clampTo(multi, this.layer.minMulti, this.layer.maxMulti);
+    const multi = clampTo(1 + this.number / 100, this.layer.minMulti, this.layer.maxMulti);
+    if (this.layer.minMulti !== this.layer.maxMulti) return multi;
+    return 1 + (multi - 1) * (1 - this.missChance);
   }
 
   /**

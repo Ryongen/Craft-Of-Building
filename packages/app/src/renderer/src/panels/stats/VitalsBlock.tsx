@@ -38,7 +38,7 @@ import {
   statName,
   type ElementName,
 } from "@cte2/schema";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { useDerived, type DerivedBuild } from "../../state/derived.js";
 import {
@@ -474,10 +474,10 @@ function Survival({
       <Row
         label="Effective HP"
         statId="health"
-        value={smart(defence.weakest.effectiveHealth)}
+        value={smart(defence.averageEffectiveHealth)}
         strong
         caret={showElements ? "open" : "closed"}
-        hint={`Against ${defence.weakest.element}, which is what actually kills you: the pool divided by the share of a hit that gets through. Click the arrow for the other four.`}
+        hint={`Averaged across every element: the pool divided by the average share of a hit that gets through. Your weakest, ${defence.weakest.element}, pulls it down hardest. Click the arrow for each element.`}
         active={same(focus, { kind: "figure", id: "ehp" })}
         onSelect={pick({ kind: "figure", id: "ehp" })}
         onToggle={() => setShowElements((v) => !v)}
@@ -565,26 +565,8 @@ function Survival({
         />
       )}
 
-      {main !== undefined && (
-        <>
-          <StatRowOf statId={main.resource} focus={focus} pick={pick} value={smart(main.max)} />
-          <Row
-            indent
-            label="Regeneration"
-            value={`${num(main.perSecond, 2)}/s`}
-            hint={
-              `${num(main.inCombatPerSecond, 2)}/s in combat` +
-              (main.secondsToFull === undefined
-                ? ", and it never fills from empty"
-                : `, ${num(main.secondsToFull, 1)}s from empty to full`) +
-              (main.note === undefined ? "." : `. ${main.note}`)
-            }
-            active={same(focus, { kind: "stat", statId: `${main.resource}_regen` })}
-            onSelect={pick({ kind: "stat", statId: `${main.resource}_regen` })}
-          />
-        </>
-      )}
-
+      {/* Under health, ahead of the spending pool: the shield is the other half of what a hit
+          has to chew through, so it belongs with health rather than with mana. */}
       <StatRowOf
         statId="magic_shield"
         focus={focus}
@@ -600,6 +582,32 @@ function Survival({
           active={same(focus, { kind: "stat", statId: "magic_shield_regen" })}
           onSelect={pick({ kind: "stat", statId: "magic_shield_regen" })}
         />
+      )}
+
+      {/* The main pool first, then mana and energy even when the skill spends neither, so the
+          player can see every pool they have. Blood stays out unless it is the main one: it is
+          empty on anyone who is not a blood mage. */}
+      {[main, ...pools.filter((r) => r !== main && (r.resource === "mana" || r.resource === "energy"))].map(
+        (pool) =>
+          pool === undefined ? null : (
+            <Fragment key={pool.resource}>
+              <StatRowOf statId={pool.resource} focus={focus} pick={pick} value={smart(pool.max)} />
+              <Row
+                indent
+                label="Regeneration"
+                value={`${num(pool.perSecond, 2)}/s`}
+                hint={
+                  `${num(pool.inCombatPerSecond, 2)}/s in combat` +
+                  (pool.secondsToFull === undefined
+                    ? ", and it never fills from empty"
+                    : `, ${num(pool.secondsToFull, 1)}s from empty to full`) +
+                  (pool.note === undefined ? "." : `. ${pool.note}`)
+                }
+                active={same(focus, { kind: "stat", statId: `${pool.resource}_regen` })}
+                onSelect={pick({ kind: "stat", statId: `${pool.resource}_regen` })}
+              />
+            </Fragment>
+          ),
       )}
 
       {/*

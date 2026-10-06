@@ -286,10 +286,9 @@ test("a chance-gated stat contributes at its probability and says so", () => {
   );
 });
 
-test("averaging a pinned layer is flagged as inexact", () => {
-  // `double_damage` clamps to exactly 2x, so scaling the contribution by a probability cannot
-  // reproduce the expectation. The engine still produces a number; it must say the number is
-  // an approximation rather than let it pass as the answer.
+test("a chance at a pinned layer averages the pin, not the stat", () => {
+  // `double_damage` clamps to exactly 2x, so scaling the contribution by a probability would
+  // still clamp to 2x. 10% double damage is worth 1.1x on average.
   const snapshot = scenario(
     {
       double_chance: statEntry("double_chance", {
@@ -301,7 +300,8 @@ test("averaging a pinned layer is flagged as inexact", () => {
 
   const result = simulateHit(build(), snapshot);
   assert.ok(result);
-  assert.ok(result.diagnostics.some((d) => d.code === "chance-averaging-inexact"));
+  closeTo(result.hit.total, 110);
+  assert.ok(result.diagnostics.some((d) => d.code === "chance-averaged"));
 });
 
 test("a condition the document cannot answer is reported, not assumed", () => {

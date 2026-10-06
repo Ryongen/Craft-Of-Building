@@ -1679,7 +1679,7 @@ type SortMode = "none" | "dps" | "ehp";
 
 const SORT_METRIC: Record<Exclude<SortMode, "none">, { read: (v: Vitals) => number; unit: string }> = {
   dps: { read: (v) => v.totalDps, unit: "DPS" },
-  // The weakest element's EHP, so a resist gem lands where the build is actually thinnest.
+  // The averaged EHP, so a resist gem on any element counts rather than only the thinnest one.
   ehp: { read: (v) => v.ehp, unit: "EHP" },
 };
 
@@ -1886,7 +1886,7 @@ function Sockets({
   const sortToggle = (
     <>
       {sortButton("dps", "Sort by DPS", "total DPS")}
-      {sortButton("ehp", "Sort by EHP", "effective HP against your weakest element")}
+      {sortButton("ehp", "Sort by EHP", "effective HP averaged across every element")}
     </>
   );
 
