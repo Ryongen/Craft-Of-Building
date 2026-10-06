@@ -440,6 +440,18 @@ test("an element-gated grant needs a hit of that element somewhere in the build"
   const fully = stateOf(registries(5, 153.5), { skills: strike });
   assert.equal(hemorrhage(fully).stacks, 0, "past 100% nothing physical is left, flat added included");
   assert.deepEqual(hemorrhage(fully).needs, ["a physical hit"]);
+
+  // A capture that recorded the stacks is no way round the gate: Amfk, converted fully by
+  // picking Creator of Flames and Creator of Frost, still had ten stacks from its capture.
+  const exileEffects = [{ id: "hemorrhage", stacks: 10, spellId: "strike" }];
+  const capturedThenConverted = stateOf(registries(0, 153.5), { skills: strike, exileEffects });
+  assert.equal(hemorrhage(capturedThenConverted).stacks, 0, "the capture does not keep it up");
+  const atThatInstant = stateOf(registries(0, 153.5), {
+    skills: strike,
+    exileEffects,
+    config: { assumeEffects: "captured" },
+  });
+  assert.equal(hemorrhage(atThatInstant).stacks, 10, "but the captured reading still sees it");
 });
 
 test("a captured effect goes when the source that derived it does", () => {

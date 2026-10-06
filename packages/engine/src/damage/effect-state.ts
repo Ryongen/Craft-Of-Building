@@ -883,13 +883,20 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
   // crit), so unallocating the keystone left the stacks, their crit damage and their Blood
   // Explosion proc all in place for as long as Quake stayed on the bar. An effect the pack gives
   // no derivable source for — something a mob or a teammate put on you — keeps the capture's word.
+  //
+  // In the planner's reading that holds even while a source is still there, because the derived
+  // grant carries its gates and the captured one does not. Hemorrhager again: convert all your
+  // physical away and `hemorrhage_to_source_on_crit` no longer fires (`requiresHit`), but a
+  // captured grant beside it kept the ten stacks up regardless. Only the `"captured"` reading,
+  // which asks what was live at that instant, keeps the capture as a source of its own.
   const disabled = new Set(
     (build.skills ?? []).filter((s) => !isSkillEnabled(s)).map((s) => s.spellId),
   );
   const derivable = derivableEffects(snapshot);
+  const closedWorld = build.config?.assumeEffects === "captured";
   for (const effect of build.exileEffects ?? []) {
     if (effect.spellId !== undefined && disabled.has(effect.spellId)) continue;
-    if (derivable.has(effect.id) && !grants.has(effect.id)) continue;
+    if (derivable.has(effect.id) && !(closedWorld && grants.has(effect.id))) continue;
     if (entry(snapshot, CATEGORY.exileEffect, effect.id)) {
       add(effect.id, { kind: "captured", holder: "caster" });
     }
