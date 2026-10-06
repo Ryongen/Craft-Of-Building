@@ -218,18 +218,24 @@ test("a charge follows the cap, not the count a capture photographed", () => {
   assert.equal(pinned.options[0]!.stacks, 4);
 });
 
-test("a non-charge buff keeps the count its capture recorded", () => {
-  // The other half of the rule, and why it is not "captures never win". A stacking buff caught
-  // at two of five was genuinely at two; only a charge is a resource you sit at the cap of.
+test("a stacking buff sits at its cap in the planner, and at the captured count otherwise", () => {
+  // Hemorrhager. A capture taken mid-fight caught four of ten stacks, and the build showed four
+  // from then on. The planner reading puts it at the cap like a charge; the "captured" reading,
+  // which asks about that one instant, keeps the count.
   const registries = {
     mmorpg_exile_effect: { rage: effectEntry("rage", { max_stacks: 5 }) },
     mmorpg_spells: { roar: granting("roar", "rage") },
   };
-  const state = stateOf(registries, {
+  const doc = {
     skills: [{ spellId: "roar", main: true }],
     exileEffects: [{ id: "rage", stacks: 2 }],
-  });
-  assert.equal(state.options[0]!.stacks, 2);
+  };
+  const planned = stateOf(registries, doc).options[0]!;
+  assert.equal(planned.stacks, 5);
+  assert.equal(planned.capturedStacks, 2, "the capture is still recorded");
+
+  const captured = stateOf(registries, { ...doc, config: { assumeEffects: "captured" } });
+  assert.equal(captured.options[0]!.stacks, 2);
 });
 
 test("a pinned stack count is honoured, and clamped to the cap", () => {
@@ -880,9 +886,10 @@ test("an explicit entry can assume an effect nothing in the build would apply", 
   assert.equal(asked.stats.get("armor")?.value, 5);
 });
 
-test("the capture's stacks are the default, and ticking it back on restores them", () => {
+test("ticking a captured buff back on restores what it was at", () => {
   // `true` and an absent entry mean the same thing — up, at whatever it would naturally be at —
-  // so unticking and re-ticking a captured two-stack buff does not silently promote it to its cap.
+  // so unticking and re-ticking a captured buff lands where it started. In the "captured"
+  // reading that is the captured two stacks.
   const registries = {
     mmorpg_exile_effect: { rage: effectEntry("rage", { max_stacks: 5 }) },
     mmorpg_spells: { roar: granting("roar", "rage") },
@@ -891,14 +898,15 @@ test("the capture's stacks are the default, and ticking it back on restores them
     skills: [{ spellId: "roar", main: true }],
     exileEffects: [{ id: "rage", stacks: 2 }],
   };
+  const assumeEffects = "captured" as const;
 
-  assert.equal(sheetOf(registries, doc).effects.active.get("rage"), 2);
+  assert.equal(sheetOf(registries, { ...doc, config: { assumeEffects } }).effects.active.get("rage"), 2);
   assert.equal(
-    sheetOf(registries, { ...doc, config: { effects: { rage: true } } }).effects.active.get("rage"),
+    sheetOf(registries, { ...doc, config: { assumeEffects, effects: { rage: true } } }).effects.active.get("rage"),
     2,
   );
   assert.equal(
-    sheetOf(registries, { ...doc, config: { effects: { rage: 5 } } }).effects.active.get("rage"),
+    sheetOf(registries, { ...doc, config: { assumeEffects, effects: { rage: 5 } } }).effects.active.get("rage"),
     5,
   );
 });

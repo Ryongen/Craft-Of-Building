@@ -703,7 +703,10 @@ function SkillCard({
   // showing anything else would put a number on screen the damage figure was not computed at.
   const learnedRank = learned.get(skill.spellId);
   const resolvedRank = resolvedRanks.get(skill.spellId);
-  const shownLevel = skill.level ?? resolvedRank ?? learnedRank ?? 1;
+  // The engine's order (`withLearnedRank`): a pinned level, then the sheet, then the level a
+  // capture wrote, then the class allocation.
+  const pinned = skill.level !== undefined && skill.levelPinned === true;
+  const shownLevel = (pinned ? skill.level : undefined) ?? resolvedRank ?? skill.level ?? learnedRank ?? 1;
 
   /**
    * What gear and perks added on top of the rank the character was taught.
@@ -717,16 +720,13 @@ function SkillCard({
     resolvedRank !== undefined && learnedRank !== undefined ? resolvedRank - learnedRank : 0;
 
   /**
-   * A level typed into the document wins, and then nothing on the character moves it.
+   * A level typed into the Level field is pinned, and then nothing on the character moves it.
    *
-   * That is deliberate — a capture writes the game's *final* rank into `skills[].level`, bonus
-   * ranks already in it, so adding them again would double-count every imported build. It is
-   * also invisible, and invisible is what made this look broken: with a level set, putting on a
-   * `+2 to Buff Spells` amulet changes nothing here and there is nothing on screen to say why.
-   * So the card says so, and offers the way back.
+   * Only a typed one: a capture's level gives way to the sheet, so a `+3 to spells` item put on
+   * after importing moves the rank on its own. A pin is invisible in the same way, so the card
+   * says so and offers the way back.
    */
-  const pinnedOverBonus =
-    skill.level !== undefined && resolvedRank !== undefined && resolvedRank !== skill.level;
+  const pinnedOverBonus = pinned && resolvedRank !== undefined && resolvedRank !== skill.level;
   const description = spellDesc(world.snapshot, skill.spellId);
 
   /*
@@ -969,7 +969,7 @@ function SkillCard({
             min={1}
             max={rankCeiling}
             width={58}
-            onChange={(next) => patch({ level: next })}
+            onChange={(next) => patch({ level: next, levelPinned: true })}
           />
           <span
             className="faint"
@@ -981,7 +981,7 @@ function SkillCard({
           >
             of {maxRank}
             {bonusRanks > 0 ? ` (+${bonusRanks})` : ""}
-            {skill.level === undefined
+            {!pinned
               ? learnedRank === undefined && resolvedRank === undefined
                 ? " · unset"
                 : learnedRank === undefined
@@ -993,7 +993,7 @@ function SkillCard({
           </span>
         </div>
 
-        {skill.level === undefined && grantedBonus > 0 && (
+        {!pinned && grantedBonus > 0 && (
           <span
             className="badge"
             title={
@@ -1012,11 +1012,11 @@ function SkillCard({
             className="nudge word"
             title={
               `This skill's rank is pinned to ${skill.level} in the build, so the ` +
-              "+spell level stats on your gear don't change it (a captured level already includes " +
-              `them). From the sheet alone it would be rank ${resolvedRank}. ` +
+              "+spell level stats on your gear don't change it. " +
+              `From the sheet alone it would be rank ${resolvedRank}. ` +
               "Clear the pin to let gear drive it."
             }
-            onClick={() => patch({ level: undefined })}
+            onClick={() => patch({ level: undefined, levelPinned: undefined })}
           >
             pinned at {skill.level}, sheet says {resolvedRank}
           </button>

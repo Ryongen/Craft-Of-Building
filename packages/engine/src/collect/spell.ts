@@ -259,7 +259,7 @@ export function withLearnedRank(
   skill: SkillSetup,
   ranks?: SpellRanks,
 ): SkillSetup {
-  if (skill.level !== undefined) return skill;
+  if (skill.level !== undefined && skill.levelPinned === true) return skill;
 
   // `Spell.getLevelOf` delegates across `lvl_based_on_spell` *before* it reads any rank, so a
   // spell that borrows its level has no rank of its own to look up — `soul_wound` is never
@@ -269,6 +269,9 @@ export function withLearnedRank(
   // On `soul_wound` that is a `dmg_effectiveness` of 0.70 against the 0.94 it actually runs at,
   // and the flat added damage that multiplies is the largest term in the hit.
   const source = levelSourceSpell(snapshot, skill.spellId);
+  const sheetRank = ranks?.get(source);
+  if (sheetRank !== undefined && sheetRank > 0) return { ...skill, level: sheetRank };
+  if (skill.level !== undefined) return skill;
   const rank = rankOf(snapshot, build, source, ranks);
   return rank === undefined || rank <= 0 ? skill : { ...skill, level: rank };
 }
@@ -287,12 +290,14 @@ function levelSourceSpell(snapshot: Snapshot, spellId: string): string {
 }
 
 /**
- * A spell's rank: what the bar says first, then what the sheet resolved, then the allocation.
+ * A spell's rank: a pinned level first, then what the sheet resolved, then the level on the bar,
+ * then the allocation.
  *
- * The bar wins because a capture writes the game's *final* answer there — `InsertedSpell.rank`,
- * with `MaxSpellLevel` and `plus_lvl_buff_spells` already added. `ranks` is the engine's own
- * version of that same number and is the next best thing; it is absent only for a caller with no
- * sheet in hand, and then `learn_<id>` off the document is the floor, short by the bonus.
+ * The sheet beats an unpinned level on the bar. A capture writes the game's final answer there
+ * (`InsertedSpell.rank`, bonus ranks included), which is the same number the sheet computes
+ * until the build is edited — and once it is, the sheet is the one that is still true. Letting
+ * the capture win is what left a skill at 20 after putting on a `+3 to spells` item. `ranks` is
+ * absent only for a caller with no sheet in hand, and then the bar is the best answer left.
  *
  * `learnedSpells` is deliberately the last resort rather than the first: it reads
  * `character.schools`, so it sees a spell a *class* taught and misses one a unique or a runeword
@@ -305,9 +310,19 @@ function rankOf(
   spellId: string,
   ranks: SpellRanks | undefined,
 ): number | undefined {
-  const declared = (build.skills ?? []).find((s) => s.spellId === spellId)?.level;
-  if (declared !== undefined) return declared;
-  return ranks?.get(spellId) ?? learnedSpells(snapshot, build).get(spellId);
+  const declared = (build.skills ?? []).find((s) => s.spellId === spellId);
+  if (declared?.level !== undefined && declared.levelPinned === true) return declared.level;
+  return ranks?.get(spellId) ?? declared?.level ?? learnedSpells(snapshot, build).get(spellId);
+}
+
+/** {@link rankOf}, for callers outside this file that need a spell's rank the same way. */
+export function resolvedRankOf(
+  snapshot: Snapshot,
+  build: BuildDoc,
+  spellId: string,
+  ranks?: SpellRanks,
+): number | undefined {
+  return rankOf(snapshot, build, spellId, ranks);
 }
 
 /**

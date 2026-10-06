@@ -424,8 +424,17 @@ export type SupportLink = {
 export type SkillSetup = {
   /** `mmorpg_spells` id. */
   spellId: string;
-  /** The Skill's rank. Omit for the default. */
+  /**
+   * The Skill's rank. Omit for the default.
+   *
+   * Unless {@link levelPinned} is set, this is a fallback: the rank the sheet resolves (class
+   * allocation plus the `plus_lvl_<tag>_spells` bonus ranks) wins whenever there is one. A
+   * capture writes the game's rank here, and pinning that would leave a `+3 to spells` item
+   * added later doing nothing.
+   */
   level?: number;
+  /** `level` is a rank the user chose, and wins over the sheet. */
+  levelPinned?: boolean;
   /** `mmorpg_support_gem` ids linked to this skill, each with its own roll. */
   supports?: (string | SupportLink)[];
   /**

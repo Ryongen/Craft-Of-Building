@@ -69,11 +69,10 @@ import {
   entry,
   isAuraEnabled,
   isSkillEnabled,
-  learnedSpells,
 } from "@cte2/schema";
 
 import { balance } from "../balance.js";
-import { spellRanks, type SpellRanks } from "../collect/spell.js";
+import { resolvedRankOf, spellRanks, type SpellRanks } from "../collect/spell.js";
 import type { Sheet } from "./ctx.js";
 
 /**
@@ -367,9 +366,14 @@ export function resolveEffectState(input: EffectStateInput): EffectState {
     // `charge`-tagged effects. Reading the capture's count for them is what made the Guardian
     // ascendancy do nothing — its two `+1 max endurance charge` nodes raise the cap to five and
     // the figure stayed at the three the capture had photographed under a different ascendancy.
+    //
+    // In the planner's own reading, `"available"`, the same goes for every stacking buff.
+    // Hemorrhage is the case: Hemorrhager builds to ten stacks on crits, a capture taken
+    // mid-fight caught four, and the build showed four from then on. The captured count is only
+    // kept in the `"captured"` reading, whose whole question is that one instant.
     const isCharge = tagsOf(data).includes("charge");
     const natural =
-      isCharge || capture?.stacks === undefined
+      isCharge || assume === "available" || capture?.stacks === undefined
         ? maxStacks
         : Math.max(1, Math.min(capture.stacks, maxStacks));
 
@@ -678,11 +682,10 @@ export function rollPercentFor(
   if (maxWithBonuses <= 0) return 0;
 
   // `getCurrentLevel` is `Spell.getLevelOf`, which reads the player's learned rank and floors at
-  // `default_lvl`. A document states the rank on the skill; a document that does not gets it
-  // from the class allocation, where a spell perk's `learn_<spell>` stat *is* its rank.
+  // `default_lvl`. Resolved the way every other rank is: a pinned level, then the sheet, then the
+  // level on the bar, then the class allocation.
   const defaultLvl = numberAt(spell, "default_lvl") ?? 0;
-  const declared = (build.skills ?? []).find((s) => s.spellId === spellId)?.level;
-  const resolved = declared ?? ranks?.get(spellId) ?? learnedSpells(snapshot, build).get(spellId);
+  const resolved = resolvedRankOf(snapshot, build, spellId, ranks);
   const rank = Math.max(resolved ?? 0, defaultLvl);
 
   return Math.max(0, Math.min(100, Math.trunc((100 / maxWithBonuses) * rank)));

@@ -22,7 +22,7 @@ import type { BuildDoc } from "@cte2/schema";
 
 import { balance } from "../balance.js";
 import { calculate } from "../calculate.js";
-import { spellRanks } from "./spell.js";
+import { spellRanks, withLearnedRank } from "./spell.js";
 import { baseStats, engineSnapshot, exact, statEntry } from "../test-support.js";
 
 /** A spell entry with the tag list at the depth the pack nests it: `config.tags.tags`. */
@@ -48,7 +48,12 @@ const DOC: BuildDoc = { schemaVersion: 1, character: { level: 100 } };
  * this. In game they come from perks, uniques and runewords.
  */
 function ranksOf(stats: Record<string, number>): ReadonlyMap<string, number> {
-  const snapshot = engineSnapshot({
+  const snapshot = snapshotWith(stats);
+  return spellRanks(snapshot, calculate(DOC, snapshot).stats, balance(snapshot));
+}
+
+function snapshotWith(stats: Record<string, number>) {
+  return engineSnapshot({
     mmorpg_stat: Object.fromEntries(STAT_IDS.map((id) => [id, statEntry(id)])),
     mmorpg_spells: {
       frostbolt: spell("frostbolt", ["cold", "damage", "projectile"]),
@@ -62,7 +67,6 @@ function ranksOf(stats: Record<string, number>): ReadonlyMap<string, number> {
       ),
     },
   });
-  return spellRanks(snapshot, calculate(DOC, snapshot).stats, balance(snapshot));
 }
 
 test("a spell's rank is its learn_ stat", () => {
@@ -105,4 +109,21 @@ test("a negative total cannot take a rank below what was learned", () => {
 
 test("a learn_ stat that resolved to zero is not a spell the character knows", () => {
   assert.equal(ranksOf({ learn_unslotted: 0, plus_lvl_all_spells: 3 }).has("unslotted"), false);
+});
+
+test("the sheet's rank beats a level a capture wrote, and a pinned level beats the sheet", () => {
+  // A capture writes `skills[].level` at the rank the game had. Putting on a `+3 to spells` item
+  // afterwards has to move it, or the build sits at the captured 20 until the level is cleared.
+  const stats = { learn_frostbolt: 20, plus_lvl_cold_spells: 3 };
+  const snapshot = snapshotWith(stats);
+  const ranks = ranksOf(stats);
+  const captured = { spellId: "frostbolt", level: 20 };
+  assert.equal(withLearnedRank(snapshot, { ...DOC, skills: [captured] }, captured, ranks).level, 23);
+
+  const pinned = { spellId: "frostbolt", level: 15, levelPinned: true };
+  assert.equal(withLearnedRank(snapshot, { ...DOC, skills: [pinned] }, pinned, ranks).level, 15);
+
+  // With no sheet rank for the spell the captured level is still the best answer there is.
+  const granted = { spellId: "warcry", level: 7 };
+  assert.equal(withLearnedRank(snapshot, { ...DOC, skills: [granted] }, granted, ranks).level, 7);
 });
