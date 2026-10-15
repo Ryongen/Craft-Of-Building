@@ -72,6 +72,8 @@ If your pack is a different version from the one the site was built with, you ca
 a `snapshot.json` exported by the desktop app on the **Data** tab and it will use that instead.
 It stays in your browser; nothing is uploaded.
 
+The website now counts how many people use it each day.
+
 ## Thanks
 
 To LocalIdentity and everyone who keeps Path of Building going. This whole thing started as

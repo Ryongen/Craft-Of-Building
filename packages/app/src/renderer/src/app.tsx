@@ -34,6 +34,7 @@ import { NumberField, TextField } from "./ui/fields.js";
 import { RecentBuilds } from "./ui/RecentBuilds.js";
 import { ImportBuildDialog } from "./ui/ImportBuildDialog.js";
 import { parseBuildLink, resolveBuildLink } from "./platform/links.js";
+import { countUsage } from "./platform/usage.js";
 import { useTechnical } from "./ui/detail-mode.js";
 import { resolveHint, type Hint } from "./ui/copy/hint.js";
 import raiden from "./assets/raiden.png";
@@ -188,6 +189,12 @@ export function App(): ReactNode {
     },
     [setTechnical],
   );
+  // Which tabs get used at all, once per page load each. Every load starts on the tree, so that
+  // one is already `open`.
+  useEffect(() => {
+    if (tab !== "tree") countUsage(`tab-${tab}`);
+  }, [tab]);
+
   const toggleTechnical = useCallback(() => {
     if (technical && isTechnicalTab(tab)) setTab("tree");
     setTechnical(!technical);
@@ -278,6 +285,7 @@ export function App(): ReactNode {
 
   // The short form for sharing: a link fragment or a chat message, where 25 KB of JSON is not.
   const copyCode = useCallback(() => {
+    countUsage("share");
     void encodeBuildCode(doc)
       .then((code) => navigator.clipboard.writeText(code))
       .then(
@@ -299,6 +307,7 @@ export function App(): ReactNode {
       const name = read.doc.meta?.name ?? "this build";
       if (replacing && !(await window.cte2.ask(`Open ${name}? It replaces the build you have open.`))) return;
       loadBuild(withWeaponSpeed(read.doc, read.observed), null, read.observed);
+      countUsage("import");
     },
     [loadBuild],
   );

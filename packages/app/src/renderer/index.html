@@ -17,10 +17,13 @@
       The web build serves its textures from the same origin as the page, so `'self'` already
       covers them; `cte2-asset:` is left in because an unmatched scheme-source is simply ignored
       by a browser, and one CSP for both builds is one fewer thing to keep in step.
+
+      The Archives Worker is the one remote address, for the live site's anonymous usage counts
+      (`platform/usage.ts`). The desktop app never calls it.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: cte2-asset:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; img-src 'self' data: cte2-asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://cob-codex-api.ryongenn.workers.dev"
     />
   </head>
   <body>
