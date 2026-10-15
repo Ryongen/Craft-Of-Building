@@ -44,6 +44,8 @@ census.json
 .env
 .env.*
 !.env.example
+# Not personal: the catalogue address every desktop build ships with.
+!/packages/app/.env.production
 
 # Markdown notes & documents (only root README.md is tracked)
 *.md

@@ -18,9 +18,9 @@ import { readBuild, readBuildText, type ReadBuild } from "@cte2/schema";
 import { LINK_SCHEME } from "@shared/ipc";
 
 /**
- * Where catalogue builds are fetched from. Set per build of the app (`VITE_CATALOGUE_API`), and
- * empty until the catalogue exists — a `?build=` link then explains itself instead of fetching
- * from a guess.
+ * Where catalogue builds are fetched from. Set per build of the app (`VITE_CATALOGUE_API`):
+ * desktop builds get it from `packages/app/.env.production`, the web build leaves it empty — a
+ * `?build=` link then explains itself instead of fetching from a guess.
  */
 export const CATALOGUE_API: string = import.meta.env.VITE_CATALOGUE_API ?? "";
 

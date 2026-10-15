@@ -18,8 +18,9 @@
       covers them; `cte2-asset:` is left in because an unmatched scheme-source is simply ignored
       by a browser, and one CSP for both builds is one fewer thing to keep in step.
 
-      The Archives Worker is the one remote address, for the live site's anonymous usage counts
-      (`platform/usage.ts`). The desktop app never calls it.
+      The Archives Worker is the one remote address. The desktop app fetches a build from it
+      only when a `cob://build/` link is opened (`platform/links.ts`); the live site also sends
+      its anonymous usage counts there (`platform/usage.ts`).
     -->
     <meta
       http-equiv="Content-Security-Policy"
