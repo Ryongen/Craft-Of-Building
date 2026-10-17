@@ -36,11 +36,11 @@ test("base stats scale to the character's level when they say to", () => {
     { health: statEntry("health", { scaling: "NORMAL" }), critical_hit: statEntry("critical_hit") },
   );
 
-  closeTo(calculate(build({ character: { level: 1 } }), snapshot).stats.get("health")?.value, 80);
+  closeTo(calculate(build({ character: { level: 1 } }), snapshot, { vanillaHealth: false }).stats.get("health")?.value, 80);
   // 80 * (1 + 0.2 * 19)
-  closeTo(calculate(build({ character: { level: 20 } }), snapshot).stats.get("health")?.value, 384);
+  closeTo(calculate(build({ character: { level: 20 } }), snapshot, { vanillaHealth: false }).stats.get("health")?.value, 384);
   closeTo(
-    calculate(build({ character: { level: 20 } }), snapshot).stats.get("critical_hit")?.value,
+    calculate(build({ character: { level: 20 } }), snapshot, { vanillaHealth: false }).stats.get("critical_hit")?.value,
     4,
   );
 });
@@ -134,9 +134,9 @@ test("stats in the same priority tier cannot see each other's contributions", ()
     );
 
   // Same tier: energy is 0 in the snapshot both entries read, so health gains nothing.
-  assert.equal(calculate(build(), chain(50)).stats.get("health")?.value, 0);
+  assert.equal(calculate(build(), chain(50), { vanillaHealth: false }).stats.get("health")?.value, 0);
   // Later tier: the snapshot is retaken, so health sees the 100 energy just added.
-  assert.equal(calculate(build(), chain(75)).stats.get("health")?.value, 100);
+  assert.equal(calculate(build(), chain(75), { vanillaHealth: false }).stats.get("health")?.value, 100);
 });
 
 test("more_x_per_y floors the number of steps", () => {
@@ -288,7 +288,7 @@ test("a contribution that resolves to nothing is not recorded", () => {
     projectile_damage: statEntry("projectile_damage"),
   });
 
-  assert.deepEqual(calculate(build(), snapshot).derived, []);
+  assert.deepEqual(calculate(build(), snapshot, { vanillaHealth: false }).derived, []);
 });
 
 test("the cached stat index does not leak one build's unknown stats into the next", () => {

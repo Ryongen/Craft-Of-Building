@@ -85,7 +85,7 @@ function character(stats: Record<string, number>, doc: Partial<BuildDoc> = {}) {
     ...doc,
   } as BuildDoc;
   // The free starting resists would be noise in every assertion here.
-  return defence(build, snapshot, { hitSize: 1000, newbieResists: false });
+  return defence(build, snapshot, { hitSize: 1000, newbieResists: false, vanillaHealth: false });
 }
 
 test("effective HP is the pool divided by what gets through", () => {
@@ -277,8 +277,8 @@ test("a flat reduction is worth less against a bigger hit, so the hit size is st
   });
   const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
 
-  const small = defence(build, snapshot, { hitSize: 200, newbieResists: false });
-  const large = defence(build, snapshot, { hitSize: 2000, newbieResists: false });
+  const small = defence(build, snapshot, { hitSize: 200, newbieResists: false, vanillaHealth: false });
+  const large = defence(build, snapshot, { hitSize: 2000, newbieResists: false, vanillaHealth: false });
 
   closeTo(small.byElement[0]!.taken, 0.5);
   closeTo(large.byElement[0]!.taken, 0.95);
@@ -342,7 +342,7 @@ test("the attacker's accuracy is taken off your dodge, and its penetration off y
       character: { level: 1 },
       config: { enemy: { level: 1, offence } },
     } as BuildDoc;
-    return defence(build, snapshot, { hitSize: 1000, newbieResists: false });
+    return defence(build, snapshot, { hitSize: 1000, newbieResists: false, vanillaHealth: false });
   };
 
   const bare = withAttacker({});
@@ -494,13 +494,13 @@ test("a defensive proc gets a real rate once the document says how often you are
       config: { enemy: { level: 1, offence } },
     }) as BuildDoc;
 
-  const unstated = defence(doc({}), snapshot, { hitSize: 1000, newbieResists: false });
+  const unstated = defence(doc({}), snapshot, { hitSize: 1000, newbieResists: false, vanillaHealth: false });
   assert.equal(unstated.overTime, undefined, "no attacker, no rate, no answer");
 
   const stated = defence(
     doc({ vanillaAttackDamage: 3, attacksPerSecond: 2 }),
     snapshot,
-    { hitSize: 1000, newbieResists: false },
+    { hitSize: 1000, newbieResists: false, vanillaHealth: false },
   );
   const proc = stated.overTime!.procs.find((p) => p.spellId === "quake");
   assert.ok(proc !== undefined, "the sweep reached the block and the rate resolved it");
@@ -524,7 +524,7 @@ test("a proc gated on the block or the dodge stays unrated, and says why", () =>
       config: { enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond: 2 } } },
     } as BuildDoc,
     snapshot,
-    { hitSize: 1000, newbieResists: false },
+    { hitSize: 1000, newbieResists: false, vanillaHealth: false },
   );
 
   const proc = stated.overTime!.procs.find((p) => p.spellId === "quake");
@@ -552,7 +552,7 @@ test("a receive chance on your own sheet means the enemy's hit bleeds you", () =
     config: { enemy: { level: 1, offence: { vanillaAttackDamage: 3, attacksPerSecond: 1 } } },
   } as BuildDoc;
 
-  const bled = defence(doc, snapshot, { hitSize: 1000, newbieResists: false }).overTime!.ailments;
+  const bled = defence(doc, snapshot, { hitSize: 1000, newbieResists: false, vanillaHealth: false }).overTime!.ailments;
   const bleed = bled.find((a) => a.ailment === "bleed");
   assert.ok(bleed !== undefined, "the hit is physical and you take bleed at 100%");
   closeTo(bleed.chance, 1);
@@ -565,7 +565,7 @@ test("a receive chance on your own sheet means the enemy's hit bleeds you", () =
     },
   });
   assert.deepEqual(
-    defence(doc, clean, { hitSize: 1000, newbieResists: false }).overTime!.ailments,
+    defence(doc, clean, { hitSize: 1000, newbieResists: false, vanillaHealth: false }).overTime!.ailments,
     [],
   );
 });

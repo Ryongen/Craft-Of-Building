@@ -78,8 +78,8 @@ test("level one is the listed value, not double it", () => {
 test("the multiplier applies on top of level scaling, not instead of it", () => {
   // `toExactStat(level)` runs first and the multiplier follows, so a scale_to_lvl stat is
   // multiplied after scaling. Whatever one level is worth, three levels is three times it.
-  const one = calculate(build(60, { p_health_scaled: 1 }), snapshot()).stats.get("health")?.value;
-  const three = calculate(build(60, { p_health_scaled: 3 }), snapshot()).stats.get("health")?.value;
+  const one = calculate(build(60, { p_health_scaled: 1 }), snapshot(), { vanillaHealth: false }).stats.get("health")?.value;
+  const three = calculate(build(60, { p_health_scaled: 3 }), snapshot(), { vanillaHealth: false }).stats.get("health")?.value;
   assert.ok(one !== undefined && three !== undefined);
   assert.ok(one > 10, `expected level scaling to raise 10, got ${one}`);
   closeTo(three, one * 3);

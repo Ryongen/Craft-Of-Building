@@ -110,8 +110,11 @@ export type AilmentResult = {
  * Injected rather than imported: the event machinery lives in `simulate.ts`, which already calls
  * this file, and a second edge between them would be a cycle. A caller with no pipeline to hand
  * omits it and gets the old arithmetic, which is the floor.
+ *
+ * `chance` is how likely the hit was to apply it, so a runner that collects what the event
+ * fires — its procs — can weigh them by how often the event happens at all.
  */
-export type AilmentEventRunner = (ailment: Ailment, base: number) => AilmentEvent;
+export type AilmentEventRunner = (ailment: Ailment, base: number, chance: number) => AilmentEvent;
 
 /** What {@link AilmentEventRunner} arrives at: the number, and the stack it took to get there. */
 export type AilmentEvent = {
@@ -261,7 +264,7 @@ function resolve(
 
   // `event.data.getNumber()` after `Activate()`. Without a runner this is the old floor, which
   // is the pre-layer number and therefore never larger.
-  const ran: AilmentEvent = runEvent === undefined ? { damage: hitBase } : runEvent(ailment, hitBase);
+  const ran: AilmentEvent = runEvent === undefined ? { damage: hitBase } : runEvent(ailment, hitBase, chance);
   const eventDamage = ran.damage;
   const trace = ran.trace === undefined ? {} : { trace: ran.trace };
 

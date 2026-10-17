@@ -218,6 +218,7 @@ export type ResourceOptions = {
   baseStatsId?: string;
   compat?: Compat;
   newbieResists?: boolean;
+  vanillaHealth?: boolean;
   /** A sheet already computed for this build, to avoid a second stat pass. */
   sheet?: EngineResult;
   /**
@@ -610,6 +611,7 @@ function sharedState(
     ...(options.balanceId === undefined ? {} : { balanceId: options.balanceId }),
     ...(options.baseStatsId === undefined ? {} : { baseStatsId: options.baseStatsId }),
     ...(options.newbieResists === undefined ? {} : { newbieResists: options.newbieResists }),
+    ...(options.vanillaHealth === undefined ? {} : { vanillaHealth: options.vanillaHealth }),
   };
   const run = options.sheet ?? resolveEffects(build, snapshot, engineOptions);
   return {

@@ -126,6 +126,8 @@ export {
   pointsAvailable,
   pointsPerLevel,
   PLAYER_POINT_TYPES,
+  HEALTH_PER_HEART_CONTAINER,
+  paragliderHearts,
   serverConfigList,
   serverConfigNumber,
   slotFamily,

@@ -59,6 +59,7 @@ import { NumberField, RollSlider } from "../../ui/fields.js";
 import { AddPicker } from "../../ui/AddPicker.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 import { FoodDiversity } from "./FoodDiversity.js";
+import { HeartContainers } from "./HeartContainers.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
 import { MobAffixPicker, type AffixSort } from "./MobAffixPicker.js";
 import { MapSection } from "./MapSection.js";
@@ -81,6 +82,8 @@ export function ConfigPanel(): ReactNode {
       {/* Beside the food buffs rather than on a tab of its own: both are "what has this
           character eaten", and one of them was two clicks away from the other. */}
       <FoodDiversity />
+      {/* The other source of vanilla max health, after food diversity. */}
+      <HeartContainers />
       <ExileEffectsSection />
     </div>
   );

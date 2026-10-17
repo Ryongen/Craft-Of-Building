@@ -158,13 +158,13 @@ test("a Players affix lands on your own sheet, at the tier's roll", () => {
   const snapshot = snapshotWith({ health: 1000, fire_resist: 50 });
   // Rare band midpoint 43: `-20 + (-40 - -20) × 0.43` = -28.6.
   const inMap = resolveEffects(doc({ map: { tier: 30, affixes: ["fire_minus_res", "fire_res"] } }), snapshot, {
-    newbieResists: false,
+    newbieResists: false, vanillaHealth: false,
   });
   closeTo(inMap.stats.get("fire_resist")?.value ?? 0, 50 - 28.6);
 
   // `fire_res` is a Mobs affix and must not reach the character at all.
   const mobOnly = resolveEffects(doc({ map: { tier: 30, affixes: ["fire_res"] } }), snapshot, {
-    newbieResists: false,
+    newbieResists: false, vanillaHealth: false,
   });
   closeTo(mobOnly.stats.get("fire_resist")?.value ?? 0, 50);
 });
@@ -175,7 +175,7 @@ test("a mob's element damage makes its elemental hits bigger, and leaves physica
   const snapshot = snapshotWith();
   const result = defence(doc({ enemy: { level: 1, offence: { elementDamage: { elemental: 50 } } } }), snapshot, {
     hitSize: 1000,
-    newbieResists: false,
+    newbieResists: false, vanillaHealth: false,
   });
   closeTo(row(result, "Physical").taken, 1);
   closeTo(row(result, "Fire").taken, 1.5);
@@ -189,7 +189,7 @@ test("a map tier sizes the over-time hit and leaves effective HP alone", () => {
   const snapshot = snapshotWith();
   const result = defence(doc({ enemy: { level: 1 }, map: { tier: 30 } }), snapshot, {
     hitSize: 1000,
-    newbieResists: false,
+    newbieResists: false, vanillaHealth: false,
   });
   closeTo(row(result, "Physical").taken, 1);
   closeTo(row(result, "Physical").takenFromSwing, 1.9);
@@ -215,7 +215,7 @@ test("total damage and element damage add, rather than multiply", () => {
   const savage = defence(
     doc({ enemy: { level: 1, offence: { elementDamage: { elemental: 50 } }, affixes: ["savage"] } }),
     snapshot,
-    { hitSize: 1000, newbieResists: false },
+    { hitSize: 1000, newbieResists: false, vanillaHealth: false },
   );
   closeTo(row(savage, "Fire").taken, 1.5, "savage stays out of effective HP");
   closeTo(row(savage, "Fire").takenFromSwing, 1.75);

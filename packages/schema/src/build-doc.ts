@@ -1150,6 +1150,15 @@ export type BuildDoc = {
      * `threshold` is at or below this count applies.
      */
     foodDiversity?: number;
+    /**
+     * How many Paraglider Heart Containers the character has consumed.
+     *
+     * A planning input like {@link foodDiversity}. Each one is a heart, so 2
+     * `minecraft:generic.max_health`, and Mine and Slash adds vanilla max health straight into
+     * its own health pool. A captured `max_health` already includes them and always wins, so
+     * this only does anything on a build without one.
+     */
+    heartContainers?: number;
   };
   tree?: {
     talents?: TreeCoord[];

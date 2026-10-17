@@ -97,7 +97,7 @@ test("an unsatisfied omen grants nothing at all, and says why", () => {
 });
 
 test("a satisfied omen pays out its whole bucket", () => {
-  const result = calculate(build([HELMET, BOOTS]), snapshot());
+  const result = calculate(build([HELMET, BOOTS]), snapshot(), { vanillaHealth: false });
   // Two required pieces * 10 = a derived 20%, so `health` rolls 20% of the way from 5 to 25
   // (+9%) and `armor` from 2 to 10 (+3.6%), against a base of 100 each.
   closeTo(result.stats.get("health")?.value, 109);
@@ -107,7 +107,7 @@ test("a satisfied omen pays out its whole bucket", () => {
 
 test("one piece short of the requirement is worth exactly nothing", () => {
   // The buckets are thresholds, not a sliding scale: `fill >= en.getKey()` or no payout.
-  const result = calculate(build([HELMET]), snapshot());
+  const result = calculate(build([HELMET]), snapshot(), { vanillaHealth: false });
   closeTo(result.stats.get("health")?.value, 100);
   closeTo(result.stats.get("armor")?.value, 100);
 });
@@ -151,7 +151,7 @@ test("a derived stat percent above 100 is not clamped", () => {
     { base: "plate_boots", rarity: "runeword", itemLevel: 1 },
     { base: "plate_helmet", rarity: "runeword", itemLevel: 1 },
   ];
-  const result = calculate(build(gear, heavy), snapshot());
+  const result = calculate(build(gear, heavy), snapshot(), { vanillaHealth: false });
   // 7 requirement pieces * 10 = 70, no slot requirements, `rare`'s stat_multi of 1.
   // health 5..25 at 70% is +19%, against a base of 100.
   closeTo(result.stats.get("health")?.value, 119);

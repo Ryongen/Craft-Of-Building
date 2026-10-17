@@ -711,8 +711,8 @@ function runEvent(
   */
   if (!ctx.disableSourceStats) {
     ailments.push(
-      ...applyAilments(ctx, shared.sourceSheet, shared.targetSheet, (ailment, base) =>
-        ailmentEventDamage(shared, ailment, base, diagnostics),
+      ...applyAilments(ctx, shared.sourceSheet, shared.targetSheet, (ailment, base, chance) =>
+        ailmentEventDamage(shared, ailment, base, chance, diagnostics, ownProcs),
       ),
     );
   }
@@ -1612,14 +1612,24 @@ export function simulateBasicAttack(
  * different number from the hit's — `dot`/`int` against `hit`/the weapon's style — and only a
  * row-by-row reading says which stats crossed over and which did not. It is still off by default,
  * so the ordinary path allocates nothing.
+ *
+ * **Its procs are real.** `disableActivation` skips only `activate()`; `Activate()` still runs
+ * `calculateEffects()` first (6.4.13 jar, `EffectEvent.Activate`), so every `on_damage` effect
+ * fires on this event — `proc_poison_ball_on_poison`'s `is_ailment_poison` gate is only ever
+ * true here. They go into the hit's `procs` weighted by `applyChance`, since the event exists
+ * only on the hits that applied the ailment. Its own roll is independent of the hit's, which
+ * `procsPerHit` already folds as such.
  */
 function ailmentEventDamage(
   shared: Shared,
   ailment: Ailment,
   base: number,
+  applyChance: number,
   diagnostics: Diagnostic[],
+  procs: ProcHit[] | undefined,
 ): AilmentEvent {
   if (base <= 0) return { damage: 0 };
+  const ownProcs: ProcHit[] | undefined = procs === undefined ? undefined : [];
 
   const recorder = shared.breakdown ? new Recorder() : undefined;
   const event = new DamageEventState(shared.layers, undefined, recorder);
@@ -1651,6 +1661,7 @@ function ailmentEventDamage(
     spellTags: spellTags(shared.spell),
     config: shared.build.config ?? {},
     effects: shared.effects,
+    ...(ownProcs === undefined ? {} : { procs: ownProcs }),
     diagnostics,
     report: (severity, code, path, message) => diagnostics.push({ severity, code, path, message }),
     reportedConditions: new Set(),
@@ -1675,6 +1686,8 @@ function ailmentEventDamage(
     steps,
     moreMultis,
   );
+
+  for (const proc of ownProcs ?? []) procs!.push({ ...proc, chance: proc.chance * applyChance });
 
   const damage = Math.max(0, event.damage);
   if (recorder === undefined) return { damage };

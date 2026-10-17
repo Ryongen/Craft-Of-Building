@@ -59,6 +59,31 @@ export function serverConfigNumber(snapshot: Snapshot, key: string): number | un
   return typeof value === "number" ? value : undefined;
 }
 
+/**
+ * Paraglider's heart settings, out of `defaultconfigs/paraglider-server.toml`.
+ *
+ * Each Heart Container is one heart, so 2 `minecraft:generic.max_health`; `startingHearts` is
+ * what a player has with none. Without the file the fallbacks are vanilla's 10 hearts and no
+ * cap of Paraglider's own — Mine and Slash still clamps vanilla health to 500 downstream.
+ */
+export function paragliderHearts(snapshot: Snapshot): {
+  startingHearts: number;
+  maxHeartContainers: number | undefined;
+  fromPack: boolean;
+} {
+  const values = snapshot.externalConfig?.paraglider?.values;
+  const starting = values?.["vessels.startingHearts"];
+  const max = values?.["vessels.maxHeartContainers"];
+  return {
+    startingHearts: typeof starting === "number" ? starting : 10,
+    maxHeartContainers: typeof max === "number" ? max : undefined,
+    fromPack: values !== undefined,
+  };
+}
+
+/** One Heart Container is one heart, and a heart is 2 max health. */
+export const HEALTH_PER_HEART_CONTAINER = 2;
+
 /** As `serverConfigNumber`, for a string-array option such as `general.gear_compatibility`. */
 export function serverConfigList(snapshot: Snapshot, key: string): string[] | undefined {
   const value = snapshot.externalConfig?.serverConfig?.values[key];

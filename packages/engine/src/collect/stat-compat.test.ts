@@ -4,7 +4,13 @@ import { test } from "node:test";
 import type { BuildDoc } from "@cte2/schema";
 
 import { calculate } from "../calculate.js";
-import { baseStats, engineSnapshot, exact, statEntry } from "../test-support.js";
+import { baseStats, closeTo, engineSnapshot, exact, statEntry } from "../test-support.js";
+
+/**
+ * `health_compat` on vanilla's own 20 max health: trunc(20 * 0.5) = 10% magic shield. Every
+ * document has that 20 unless a capture says otherwise, so it rides along on every figure here.
+ */
+const VANILLA_SHIELD = 1.1;
 
 /** Two of the pack's real entries, plus one enchant entry and one circular one. */
 function snapshot() {
@@ -184,9 +190,9 @@ test("armour at the bare-handed attack damage is not a stale capture", () => {
   assert.ok(!result.diagnostics.some((d) => d.code === "weapon-attack-damage-unrecorded"));
 });
 
-test("with no attributes recorded nothing applies, and the engine says so", () => {
+test("with no attributes recorded only vanilla max health applies, and the engine says so", () => {
   const result = calculate(build(), snapshot());
-  assert.equal(result.stats.get("magic_shield")?.value, 1000);
+  closeTo(result.stats.get("magic_shield")?.value, 1000 * VANILLA_SHIELD);
   assert.ok(result.diagnostics.some((d) => d.code === "vanilla-attributes-unknown"));
 });
 
@@ -202,6 +208,8 @@ test("each converted stat names the attribute and the entry that converted it", 
   assert.deepEqual(
     ctx?.stats.map((m) => [m.statId, m.from]),
     [
+      // Not captured, so vanilla's 20 stands in for it.
+      ["magic_shield", { kind: "attribute", id: "minecraft:generic.max_health", via: "health_compat" }],
       ["weapon_damage", { kind: "attribute", id: "kubejs:weapon_damage", via: "kube_weapon_damage" }],
       ["total_damage", { kind: "attribute", id: "minecraft:generic.attack_damage", via: "attack_damage_compat" }],
     ],
@@ -229,27 +237,27 @@ test("enchantment compat sums across pieces, clamped per item and then in total"
     ]),
     snapshot(),
   ).stats;
-  assert.equal(three.get("magic_shield")?.value, 1024);
+  closeTo(three.get("magic_shield")?.value, 1024 * VANILLA_SHIELD);
 
   // One piece at level 40 would be 80, but the per-item clamp holds it to 12.
   const one = calculate(
     withEnchantedGear([{ "minecraft:fire_protection": 40 }]),
     snapshot(),
   ).stats;
-  assert.equal(one.get("magic_shield")?.value, 1012);
+  closeTo(one.get("magic_shield")?.value, 1012 * VANILLA_SHIELD);
 
   // Five pieces at 12 each is 60, clamped to the entry's maximum_cap of 36.
   const five = calculate(
     withEnchantedGear(Array.from({ length: 5 }, () => ({ "minecraft:fire_protection": 6 }))),
     snapshot(),
   ).stats;
-  assert.equal(five.get("magic_shield")?.value, 1036);
+  closeTo(five.get("magic_shield")?.value, 1036 * VANILLA_SHIELD);
 });
 
 test("an enchantment below level 1 contributes nothing", () => {
   // `if (enchlvl < 1) { continue; }`
   const stats = calculate(withEnchantedGear([{ "minecraft:fire_protection": 0 }]), snapshot()).stats;
-  assert.equal(stats.get("magic_shield")?.value, 1000);
+  closeTo(stats.get("magic_shield")?.value, 1000 * VANILLA_SHIELD);
 });
 
 test("food diversity derives the attributes when none were captured", () => {

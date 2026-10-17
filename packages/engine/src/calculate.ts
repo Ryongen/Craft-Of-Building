@@ -38,7 +38,7 @@ import { collectNewbieResists } from "./collect/newbie-resists.js";
 import { collectOmen } from "./collect/omen.js";
 import { collectPerks } from "./collect/perks.js";
 import { collectSpellSchools } from "./collect/spell-schools.js";
-import { collectStatCompat } from "./collect/stat-compat.js";
+import { collectStatCompat, resolveVanillaAttributes } from "./collect/stat-compat.js";
 import { collectStatPoints } from "./collect/stat-points.js";
 import { collectSpellContexts, withLearnedRank, type SpellRanks } from "./collect/spell.js";
 import { NO_EFFECTS, activeOn, resolveEffectState, type EffectState } from "./damage/effect-state.js";
@@ -371,6 +371,8 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
   // a jewel that has no socket is not collected at all. They go back into the list in place.
   const gearContexts = collectGear(env, build.gear ?? [], options.dualWieldEffectiveness ?? 0);
   const perkContexts = collectPerks(env, build);
+  // Read by the stat-compat entries and by the vanilla-health step (3b) alike.
+  const vanillaAttributes = resolveVanillaAttributes(env, build);
 
   // 1. Collect. Order within the list does not matter — everything is summed into the
   //    container — but it is kept in the game's order so a provenance dump reads the same.
@@ -415,7 +417,7 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
     ...collectFoodBuffs(env, build.foodBuffs ?? []),
     ...collectExileEffects(env, build, effects),
     // Vanilla attributes other mods set, converted by `mmorpg_stat_compat`.
-    ...collectStatCompat(env, build),
+    ...collectStatCompat(env, build, vanillaAttributes),
     // The map's `Players` affixes — `CommonStatUtils.addMapAffixStats`, which the game runs
     // for players and mobs alike.
     ...collectMapAffixes(env, build),
@@ -444,9 +446,10 @@ export function calculate(build: BuildDoc, snapshot: Snapshot, options: EngineOp
   //  — StatCalculation.java:89, InCalc.java:22-31. Your vanilla hearts are *added to* the MnS
   // health pool, and `addAlreadyScaledFlat` is `this.Flat += val`, so it lands in the flat pool
   // and every percent and MORE on health multiplies it afterwards. A bare level 1 reads 100,
-  // not 80: 80 from `original_mode_player` plus vanilla's own 20.
+  // not 80: 80 from `original_mode_player` plus vanilla's own 20. Without a capture that 20
+  // is assumed, with food diversity and Heart Containers on top (`resolveVanillaAttributes`).
   if (options.vanillaHealth !== false) {
-    const maxHealth = build.character.attributes?.["minecraft:generic.max_health"];
+    const maxHealth = vanillaAttributes["minecraft:generic.max_health"];
     if (typeof maxHealth === "number" && Number.isFinite(maxHealth)) {
       const capped = clamp(maxHealth, 0, VANILLA_HEALTH_CAP);
       if (capped !== 0) {

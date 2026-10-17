@@ -1084,6 +1084,7 @@ function procScenario({
   ele,
   converted = 0,
   crit = 0,
+  bleed = 0,
 }: {
   chance?: number;
   ifs?: string[];
@@ -1096,6 +1097,8 @@ function procScenario({
   converted?: number;
   /** `critical_hit` on the sheet. */
   crit?: number;
+  /** `bleed_chance` on the sheet — the physical ailment, so `strike` can apply it. */
+  bleed?: number;
 } = {}) {
   const main = spellEntry("strike", "Physical", "hit100", {
     config: { tags: { tags: ["melee"] }, use_support_gems_from: "", cooldown_ticks: 0, cast_time_ticks: 20 },
@@ -1131,12 +1134,14 @@ function procScenario({
       spell_has_tag_ranged: condition("spell_has_tag_ranged", "spell_has_tag", { tag: { id: "ranged" } }),
       ele_match_stat: condition("ele_match_stat", "ele_match_stat"),
       is_crit_true: condition("is_crit_true", "is_bool_true", { bool_id: "crit" }),
+      is_ailment_bleed: condition("is_ailment_bleed", "is_ailment", { ailment: "bleed" }),
     },
     mmorpg_base_stats: {
       original_mode_player: baseStats("original_mode_player", [
         exact("proc_bolt", "FLAT", chance),
         ...(converted > 0 ? [exact("phys_to_fire", "FLAT", converted)] : []),
         ...(crit > 0 ? [exact("critical_hit", "FLAT", crit)] : []),
+        ...(bleed > 0 ? [exact("bleed_chance", "FLAT", bleed)] : []),
       ]),
     },
   });
@@ -1384,6 +1389,27 @@ test("an on-crit proc rolls once per element, each element with its own crit", (
   closeTo(chanceWith(0), 0.5, "one element: the crit chance");
   // 1 - (1 - 0.5)^2, not 0.5: pinning both elements to the root's crit undercounts it.
   closeTo(chanceWith(50), 0.75, "two elements: either one critting fires it");
+});
+
+test("an on-ailment proc fires from the ailment's own event, as often as the ailment lands", () => {
+  // `AilmentChance.activate` runs a whole `DamageEvent` with `disableActivation` set, and
+  // `Activate()` still runs `calculateEffects()` before checking it (6.4.13 jar), so its
+  // `on_damage` procs fire. `is_ailment_<id>` is only true on that event — the hit carries no
+  // ailment — so the proc's rate is the hit rate times the chance the ailment landed.
+  // `proc_poison_ball_on_poison` is the pack's case of it.
+  const onBleed = { chance: 100, ifs: ["random_roll", "is_ailment_bleed"] };
+  const procWith = (bleed: number) => {
+    const result = simulateDps(build(), procScenario({ ...onBleed, bleed }));
+    assert.ok(result);
+    return result.procs.find((p) => p.spellId === "bolt");
+  };
+  const half = procWith(50);
+  assert.ok(half);
+  assert.equal(half.limit, undefined);
+  closeTo(half.chance, 0.5);
+  closeTo(half.perSecond, 0.5);
+  // No bleed, no event: the proc is named and does nothing.
+  closeTo(procWith(0)?.chance ?? 0, 0);
 });
 
 test("proc_cooldown_ticks caps a proc however often the trigger fires", () => {

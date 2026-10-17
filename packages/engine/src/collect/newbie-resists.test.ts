@@ -133,10 +133,40 @@ test("vanilla hearts are added into the health pool, before the multipliers", ()
   assert.equal(calculate(doc(220), snap).stats.get("health")?.value, 300);
   // `Mth.clamp(..., 0, 500)` — anything past 500 contributes 500.
   assert.equal(calculate(doc(900), snap).stats.get("health")?.value, 580);
-  // Nothing recorded, nothing added.
-  assert.equal(calculate(doc(), snap).stats.get("health")?.value, 80);
+  // Nothing recorded still means vanilla's 20: every player has it.
+  assert.equal(calculate(doc(), snap).stats.get("health")?.value, 100);
   // And the config gate, like newbieResists.
   assert.equal(calculate(doc(220), snap, { vanillaHealth: false }).stats.get("health")?.value, 80);
+});
+
+test("stated Heart Containers reach the health pool when nothing was captured", () => {
+  const snap = engineSnapshot({
+    mmorpg_stat: { health: statEntry("health") },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [exact("health", "FLAT", 80)]),
+    },
+  });
+  const doc = (heartContainers: number, attributes?: Record<string, number>): BuildDoc => ({
+    schemaVersion: 1,
+    character: { level: 1, heartContainers, ...(attributes ? { attributes } : {}) },
+  });
+  const health = (d: BuildDoc, s = snap) => calculate(d, s).stats.get("health")?.value;
+
+  // 80 base + vanilla's 20 + 2 per container: the same 300 a 220 capture reads.
+  assert.equal(health(doc(100)), 300);
+  // A captured max health already counts them.
+  assert.equal(health(doc(100, { "minecraft:generic.max_health": 220 })), 300);
+  // A capture that never read max health takes the stated count.
+  assert.equal(health(doc(5, { "kubejs:dodge": 0 })), 110);
+
+  // The pack's own cap and starting hearts.
+  snap.externalConfig.paraglider = {
+    origin: "paraglider-server.toml",
+    values: { "vessels.startingHearts": 12, "vessels.maxHeartContainers": 50 },
+  };
+  const capped = calculate(doc(80), snap);
+  assert.equal(capped.stats.get("health")?.value, 80 + 24 + 100);
+  assert.ok(capped.diagnostics.some((d) => d.code === "heart-containers-over-cap"));
 });
 
 test("block chance mitigation has no 90 ceiling, unlike a resist", () => {

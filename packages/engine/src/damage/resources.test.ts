@@ -134,7 +134,7 @@ function snapshotOf(stats: Record<string, number>) {
 
 function character(stats: Record<string, number>) {
   const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
-  return resources(build, snapshotOf(stats), { newbieResists: false });
+  return resources(build, snapshotOf(stats), { newbieResists: false, vanillaHealth: false });
 }
 
 const of = (r: ReturnType<typeof character>, id: string) =>
@@ -239,10 +239,10 @@ test("in_combat_regen_multi halves everything but energy, and this pack sets it 
   const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
   const snapshot = snapshotOf(stats);
 
-  const pack = resources(build, snapshot, { newbieResists: false });
+  const pack = resources(build, snapshot, { newbieResists: false, vanillaHealth: false });
   closeTo(of(pack, "mana").inCombatPerSecond, 100);
 
-  const vanilla = resources(build, snapshot, { newbieResists: false, inCombatRegenMulti: 0.5 });
+  const vanilla = resources(build, snapshot, { newbieResists: false, vanillaHealth: false, inCombatRegenMulti: 0.5 });
   closeTo(of(vanilla, "mana").inCombatPerSecond, 50);
   closeTo(of(vanilla, "energy").inCombatPerSecond, 100, "energy is exempt by name");
   closeTo(of(vanilla, "mana").perSecond, 100, "and resting is untouched");
@@ -250,12 +250,12 @@ test("in_combat_regen_multi halves everything but energy, and this pack sets it 
   // A player on a server that kept the mod default says so in the document, because no snapshot
   // can: the value lives in a server toml the extractor never reads.
   const stated = { ...build, config: { inCombatRegenMulti: 0.5 } } as BuildDoc;
-  const fromDoc = resources(stated, snapshot, { newbieResists: false });
+  const fromDoc = resources(stated, snapshot, { newbieResists: false, vanillaHealth: false });
   closeTo(of(fromDoc, "mana").inCombatPerSecond, 50);
   assert.equal(fromDoc.inCombatRegenMulti, 0.5);
 
   // An explicit option still wins, for a caller that already knows.
-  const overridden = resources(stated, snapshot, { newbieResists: false, inCombatRegenMulti: 1 });
+  const overridden = resources(stated, snapshot, { newbieResists: false, vanillaHealth: false, inCombatRegenMulti: 1 });
   closeTo(of(overridden, "mana").inCombatPerSecond, 100);
 });
 
@@ -270,7 +270,7 @@ test("leech is banked and metered out at the pool's cap, not restored", () => {
     { statId: "lifesteal", effectId: "leech_health", resource: "health", restoreType: "leech", amount },
   ];
 
-  const under = leech({ build, snapshot, perSecond: record(20), options: { newbieResists: false } });
+  const under = leech({ build, snapshot, perSecond: record(20), options: { newbieResists: false, vanillaHealth: false } });
   const health = under.byResource.find((e) => e.resource === "health")!;
   assert.equal(health.capPercent, 5);
   closeTo(health.capPerSecond, 50, "5% of a 1000 pool");
@@ -278,7 +278,7 @@ test("leech is banked and metered out at the pool's cap, not restored", () => {
   assert.equal(health.capped, false);
   closeTo(health.bankCeiling, 250, "five seconds of payout");
 
-  const over = leech({ build, snapshot, perSecond: record(5000), options: { newbieResists: false } });
+  const over = leech({ build, snapshot, perSecond: record(5000), options: { newbieResists: false, vanillaHealth: false } });
   const capped = over.byResource.find((e) => e.resource === "health")!;
   closeTo(capped.perSecond, 50, "above it, the surplus is thrown away");
   assert.equal(capped.capped, true);
@@ -295,7 +295,7 @@ test("a zero leech cap makes leech worth nothing at all, and says so", () => {
     perSecond: [
       { statId: "lifesteal", effectId: "leech_health", resource: "health", restoreType: "leech", amount: 500 },
     ],
-    options: { newbieResists: false },
+    options: { newbieResists: false, vanillaHealth: false },
   });
 
   closeTo(result.byResource.find((e) => e.resource === "health")!.perSecond, 0);
@@ -315,7 +315,7 @@ test("inc_leech applies on the way into the bank, which is a 6.4.13 change", () 
     perSecond: [
       { statId: "lifesteal", effectId: "leech_health", resource: "health", restoreType: "leech", amount: 100 },
     ],
-    options: { newbieResists: false },
+    options: { newbieResists: false, vanillaHealth: false },
   });
 
   const health = result.byResource.find((e) => e.resource === "health")!;
@@ -327,14 +327,14 @@ test("inc_leech applies on the way into the bank, which is a 6.4.13 change", () 
 test("the budget says which pool runs dry and how long a full one lasts", () => {
   const snapshot = snapshotOf({ mana: 1000, mana_regen: 100, mana_leech_cap: 5 });
   const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
-  const regen = resources(build, snapshot, { newbieResists: false });
+  const regen = resources(build, snapshot, { newbieResists: false, vanillaHealth: false });
   const leeched = leech({
     build,
     snapshot,
     perSecond: [
       { statId: "manasteal", effectId: "leech_mana", resource: "mana", restoreType: "leech", amount: 25 },
     ],
-    options: { newbieResists: false },
+    options: { newbieResists: false, vanillaHealth: false },
   });
 
   // 100 regen + 25 leech against 200 spent: 75 a second out of a 1000 pool.
@@ -401,8 +401,8 @@ test("a pool that cannot hold one cast is not sustainable, however fast it regen
   // for a single cast out of the pool it was being billed against.
   const snapshot = snapshotOf({ energy: 0, energy_regen: 1269 });
   const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
-  const regen = resources(build, snapshot, { newbieResists: false });
-  const leeched = leech({ build, snapshot, perSecond: [], options: { newbieResists: false } });
+  const regen = resources(build, snapshot, { newbieResists: false, vanillaHealth: false });
+  const leeched = leech({ build, snapshot, perSecond: [], options: { newbieResists: false, vanillaHealth: false } });
 
   const rows = budget({
     regen,
@@ -420,7 +420,7 @@ test("a pool that cannot hold one cast is not sustainable, however fast it regen
   // A pool big enough for one cast is judged on its rate again, as before.
   const holds = budget({
     regen: resources(build, snapshotOf({ energy: 1000, energy_regen: 1269 }), {
-      newbieResists: false,
+      newbieResists: false, vanillaHealth: false,
     }),
     leech: leeched,
     perCast: new Map([["energy", 258]]),
@@ -451,14 +451,14 @@ test("a `heal` restore lands whole, and the leech cap has nothing to say about i
     { statId: "dmg_taken_to_mana", effectId: "dmg_taken_to_mana", resource: "mana", restoreType, amount: 500 },
   ];
 
-  const asLeech = leech({ build, snapshot, perSecond: of("leech"), options: { newbieResists: false } });
+  const asLeech = leech({ build, snapshot, perSecond: of("leech"), options: { newbieResists: false, vanillaHealth: false } });
   closeTo(
     asLeech.byResource.find((e) => e.resource === "mana")!.perSecond,
     50,
     "5% of a 1000 pool is all a leech of 500 pays out",
   );
 
-  const asHeal = leech({ build, snapshot, perSecond: of("heal"), options: { newbieResists: false } });
+  const asHeal = leech({ build, snapshot, perSecond: of("heal"), options: { newbieResists: false, vanillaHealth: false } });
   assert.equal(
     asHeal.byResource.find((e) => e.resource === "mana"),
     undefined,

@@ -148,6 +148,8 @@ export type BuildState = {
   setStatPoints(statId: string, points: number): void;
   /** Solonion's food-diversity count. `undefined` clears it. */
   setFoodDiversity(count: number | undefined): void;
+  /** Paraglider Heart Containers consumed. `undefined` clears it. */
+  setHeartContainers(count: number | undefined): void;
   /**
    * The weapon's own swings per second, before `attack_speed` multiplies it.
    *
@@ -573,6 +575,14 @@ export const useBuild = create<BuildState>((set) => ({
       const character = { ...doc.character };
       if (count === undefined || !Number.isFinite(count) || count <= 0) delete character.foodDiversity;
       else character.foodDiversity = Math.trunc(count);
+      return { ...doc, character };
+    }),
+
+  setHeartContainers: (count) =>
+    edit(set, (doc) => {
+      const character = { ...doc.character };
+      if (count === undefined || !Number.isFinite(count) || count <= 0) delete character.heartContainers;
+      else character.heartContainers = Math.trunc(count);
       return { ...doc, character };
     }),
 

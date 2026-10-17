@@ -292,6 +292,8 @@ export type DefenceOptions = {
   compat?: Compat;
   /** `CompatConfig.newbieResists()` — see `collect/newbie-resists.ts`. Defaults to on. */
   newbieResists?: boolean;
+  /** `addBonusHealthFromVanillaHearts()` — see {@link EngineOptions.vanillaHealth}. Defaults to on. */
+  vanillaHealth?: boolean;
   /**
    * The size of the incoming hit, before any mitigation.
    *
@@ -333,6 +335,7 @@ export function defence(
     ...(options.balanceId === undefined ? {} : { balanceId: options.balanceId }),
     ...(options.baseStatsId === undefined ? {} : { baseStatsId: options.baseStatsId }),
     ...(options.newbieResists === undefined ? {} : { newbieResists: options.newbieResists }),
+    ...(options.vanillaHealth === undefined ? {} : { vanillaHealth: options.vanillaHealth }),
   };
   const run = options.sheet ?? resolveEffects(build, snapshot, engineOptions);
   const sheet = run.stats;

@@ -237,7 +237,7 @@ test("a food buff rolls at its percent plus its level, not at its percent", () =
   // would give 10% and 25%, which is a number the game never produces.
   const result = calculate(
     build({ foodBuffs: [{ id: "life", slot: "meal", level: 100, rollPercent: 93 }] }),
-    foodSnapshot(),
+    foodSnapshot(), { vanillaHealth: false },
   );
   closeTo(result.stats.get("health")?.value, 1000 * 1.1465);
   closeTo(result.stats.get("health_regen")?.value, 100 * 1.436);
@@ -246,13 +246,13 @@ test("a food buff rolls at its percent plus its level, not at its percent", () =
 test("an unticked food buff contributes nothing", () => {
   const result = calculate(
     build({ foodBuffs: [{ id: "life", level: 100, rollPercent: 93, enabled: false }] }),
-    foodSnapshot(),
+    foodSnapshot(), { vanillaHealth: false },
   );
   closeTo(result.stats.get("health")?.value, 1000);
 });
 
 test("a food buff with no recorded roll floors at zero and says so", () => {
-  const result = calculate(build({ foodBuffs: [{ id: "life", level: 1 }] }), foodSnapshot());
+  const result = calculate(build({ foodBuffs: [{ id: "life", level: 1 }] }), foodSnapshot(), { vanillaHealth: false });
   // perc 0 + lvl 1 = 1%: 5 + 5 * 0.01 = 5.05% health.
   closeTo(result.stats.get("health")?.value, 1000 * 1.0505);
   assert.ok(result.diagnostics.some((d) => d.code === "food-roll-unknown"));

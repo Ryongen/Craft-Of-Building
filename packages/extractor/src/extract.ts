@@ -189,6 +189,14 @@ export type Snapshot = {
      * number in by hand from a file sitting in their install.
      */
     serverConfig: ServerConfig | null;
+    /**
+     * Paraglider's `defaultconfigs/paraglider-server.toml`, in the same flattened form.
+     *
+     * Heart Containers raise `minecraft:generic.max_health`, which Mine and Slash adds into its
+     * own health pool, so `vessels.startingHearts` and `vessels.maxHeartContainers` decide
+     * what a planner can claim. Optional because snapshots older than this field lack it.
+     */
+    paraglider?: ServerConfig | null;
   };
   diagnostics: Diagnostics;
 };
@@ -344,6 +352,7 @@ export function extract(install: Install): Snapshot {
     externalConfig: {
       foodDiversity: readFoodDiversity(install.gameDir),
       serverConfig: readServerConfig(install.gameDir),
+      paraglider: readServerConfig(install.gameDir, "paraglider-server.toml"),
     },
     diagnostics,
   };
@@ -764,8 +773,8 @@ function* walkJson(dir: string): Generator<string> {
  * TOML dependency for a flat file. Anything it cannot read is skipped rather than guessed at,
  * and every value is kept, so a later reader needs a schema change and not an extractor one.
  */
-function readServerConfig(gameDir: string): ServerConfig | null {
-  const path = join(gameDir, "defaultconfigs", "mine_and_slash-server.toml");
+function readServerConfig(gameDir: string, file = "mine_and_slash-server.toml"): ServerConfig | null {
+  const path = join(gameDir, "defaultconfigs", file);
   let text: string;
   try {
     text = readFileSync(path, "utf8");

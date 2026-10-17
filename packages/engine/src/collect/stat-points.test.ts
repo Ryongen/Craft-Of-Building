@@ -57,7 +57,7 @@ test("a point is worth the same at every level", () => {
 
 test("the points feed the core stat bundle, in the pass that already exists", () => {
   // 40 strength grants 2 health each and 0.25% armour each: +80 health, +10% armour on 100.
-  const result = calculate(build(1, { strength: 40 }), snapshot());
+  const result = calculate(build(1, { strength: 40 }), snapshot(), { vanillaHealth: false });
   closeTo(result.stats.get("health")?.value, 80);
   closeTo(result.stats.get("armor")?.value, 110);
 });

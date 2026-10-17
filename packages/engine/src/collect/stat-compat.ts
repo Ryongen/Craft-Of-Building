@@ -49,7 +49,7 @@
  */
 
 import type { BuildDoc } from "@cte2/schema";
-import { CATEGORY, entry, wornItems } from "@cte2/schema";
+import { CATEGORY, HEALTH_PER_HEART_CONTAINER, entry, paragliderHearts, wornItems } from "@cte2/schema";
 
 import { context, type Env, type StatContext } from "../context.js";
 import type { ExactMod } from "../modifier.js";
@@ -236,10 +236,70 @@ function reportStaleWeaponAttribute(
   );
 }
 
-export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
-  const entries = readEntries(env);
-  if (entries.length === 0) return [];
+const MAX_HEALTH = "minecraft:generic.max_health";
 
+/**
+ * Vanilla max health, for a document whose capture did not record one.
+ *
+ * Every player has it — vanilla's 20, moved by Paraglider's `startingHearts` and raised by
+ * each Heart Container — so a build made in the app reads the same 100 health at level 1 that
+ * the game does. Food diversity may already have put a total here; this adds to it.
+ *
+ * A captured `max_health` is the game's own total and already includes every container, so
+ * it wins outright.
+ */
+function withVanillaMaxHealth(
+  env: Env,
+  build: BuildDoc,
+  attributes: Record<string, number> | undefined,
+): Record<string, number> {
+  const stated = Math.max(0, Math.trunc(build.character.heartContainers ?? 0));
+
+  const captured = build.character.attributes?.[MAX_HEALTH];
+  if (attributes !== undefined && captured !== undefined && captured !== 0) {
+    if (stated > 0) {
+      env.report(
+        "info",
+        "heart-containers-captured",
+        "character.heartContainers",
+        `The capture recorded \`${MAX_HEALTH}\` as ${captured}, which already includes every ` +
+          `Heart Container, so \`heartContainers: ${stated}\` adds nothing.`,
+      );
+    }
+    return attributes;
+  }
+
+  const { startingHearts, maxHeartContainers } = paragliderHearts(env.snapshot);
+  let count = stated;
+  if (maxHeartContainers !== undefined && count > maxHeartContainers) {
+    env.report(
+      "warning",
+      "heart-containers-over-cap",
+      "character.heartContainers",
+      `\`heartContainers: ${count}\` is more than this pack's \`maxHeartContainers\` of ` +
+        `${maxHeartContainers}, so only ${maxHeartContainers} count.`,
+    );
+    count = maxHeartContainers;
+  }
+
+  // Food diversity may already have put a max health here; it starts from vanilla's 20 too.
+  const base = attributes?.[MAX_HEALTH] || (VANILLA_ATTRIBUTE_DEFAULTS[MAX_HEALTH] ?? 20);
+  const value = base + (startingHearts - 10 + count) * HEALTH_PER_HEART_CONTAINER;
+  return { ...attributes, [MAX_HEALTH]: value };
+}
+
+/**
+ * The vanilla attribute totals the rest of the calculation reads: the capture, with food
+ * diversity filling its gaps and Heart Containers on top. Never empty: without a capture it
+ * still carries the max health every player has.
+ *
+ * `calculate` resolves this once and hands it both to {@link collectStatCompat} and to the
+ * vanilla-health step, so the health pool and `health_compat` read the same max health.
+ */
+export function resolveVanillaAttributes(
+  env: Env,
+  build: BuildDoc,
+): Record<string, number> {
   /*
    * Food diversity, against whatever the capture managed to read.
    *
@@ -294,6 +354,17 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
       );
     }
   }
+  return withVanillaMaxHealth(env, build, attributes);
+}
+
+export function collectStatCompat(
+  env: Env,
+  build: BuildDoc,
+  attributes: Record<string, number> = resolveVanillaAttributes(env, build),
+): StatContext[] {
+  const entries = readEntries(env);
+  if (entries.length === 0) return [];
+
   const mods: ExactMod[] = [];
   const enchantMods: ExactMod[] = [];
   let sawAttributeEntry = false;
@@ -348,17 +419,21 @@ export function collectStatCompat(env: Env, build: BuildDoc): StatContext[] {
     });
   }
 
-  if (attributes !== undefined) reportStaleWeaponAttribute(env, build, attributes);
+  // Both are about what a capture did or did not record. A document without one always has a
+  // max health now, so `attributes` being present no longer says a capture happened.
+  const fromCapture = build.character.attributes !== undefined;
+  if (fromCapture) reportStaleWeaponAttribute(env, build, attributes);
 
-  if (sawAttributeEntry && attributes === undefined) {
+  const diversity = build.character.foodDiversity;
+  if (sawAttributeEntry && !fromCapture && !(diversity !== undefined && diversity > 0)) {
     env.report(
       "warning",
       "vanilla-attributes-unknown",
       "character.attributes",
       `${entries.length} \`${CATEGORY.statCompat}\` entries turn vanilla attributes into stats ` +
-        `and no \`character.attributes\` was recorded, so none of them apply. In this pack that ` +
-        `is Solonion's food-diversity benefits, Mine and Meals and the KubeJS attributes, and ` +
-        `health, magic shield, dodge and armour all read low without them.`,
+        `and no \`character.attributes\` was recorded, so only vanilla's own max health applies. ` +
+        `In this pack the rest is Solonion's food-diversity benefits, Mine and Meals and the ` +
+        `KubeJS attributes, and health, magic shield, dodge and armour all read low without them.`,
     );
   }
   const out: StatContext[] = [];
