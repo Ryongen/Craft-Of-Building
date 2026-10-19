@@ -21,7 +21,7 @@ export function ComboCard({ dps }: { dps: DpsResult }): ReactNode {
   return (
     <div className="card">
       {combo !== undefined && <Chain dps={dps} combo={combo} />}
-      {dps.rotations !== undefined && <Rotations rotations={dps.rotations} />}
+      {dps.rotations !== undefined && <Rotations spellId={dps.spellId} rotations={dps.rotations} />}
     </div>
   );
 }
@@ -155,14 +155,29 @@ function Chain({ dps, combo }: { dps: DpsResult; combo: ComboChain }): ReactNode
  * Every charge state the bar can reach, priced, so the choice the figures rest on is visible.
  *
  * `phase_dive` holding all three charges is three extra presses away; holding two is one. The
- * engine keeps whichever lands more damage per second, and this is the table it chose from.
+ * engine keeps whichever lands more damage per second unless the build pins one: a pass played
+ * for its heal or its mana — Parallel Convergence holding alpha and beta deals nothing — is a
+ * choice the DPS cannot make, so each row can be pinned, and the pin is saved on the skill.
  */
-function Rotations({ rotations }: { rotations: ComboRotation[] }): ReactNode {
+function Rotations({ spellId, rotations }: { spellId: string; rotations: ComboRotation[] }): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const setComboHolds = useBuild((s) => s.setComboHolds);
+  const index = (doc.skills ?? []).findIndex((skill) => skill.spellId === spellId);
+  const pinned = rotations.some((r) => r.pinned);
+  const heals = rotations.some((r) => r.restoresPerSecond.some((x) => x.amount > 0));
   return (
     <>
       <div className="faint text-sm mt-4">
         Rotations compared. The numbers above are for the highlighted one. Each counts only this
-        skill's damage, not the presses before it.
+        skill&apos;s damage, not the presses before it.{" "}
+        {pinned
+          ? "You picked it; "
+          : "The highest DPS is used unless you pick one, for a pass you play for its heal or mana. "}
+        {pinned && index >= 0 && (
+          <button className="link" onClick={() => setComboHolds(index, undefined)}>
+            go back to the highest DPS
+          </button>
+        )}
       </div>
       <table className="grid mt-4">
         <thead>
@@ -171,6 +186,8 @@ function Rotations({ rotations }: { rotations: ComboRotation[] }): ReactNode {
             <th>Presses</th>
             <th className="num">Per pass</th>
             <th className="num">DPS</th>
+            {heals && <th className="num">Restores</th>}
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -180,7 +197,7 @@ function Rotations({ rotations }: { rotations: ComboRotation[] }): ReactNode {
                 {rotation.holds.length === 0 ? "nothing" : rotation.holds.join(" + ")}
                 {rotation.chosen && (
                   <span className="badge text-xs" style={{ marginLeft: 4 }}>
-                    used
+                    {rotation.pinned ? "picked" : "used"}
                   </span>
                 )}
               </td>
@@ -197,6 +214,27 @@ function Rotations({ rotations }: { rotations: ComboRotation[] }): ReactNode {
                   "?"
                 ) : (
                   smart(rotation.dps)
+                )}
+              </td>
+              {heals && (
+                <td className="num" title="What this skill's own restore effects give back per second on this pass">
+                  {rotation.restoresPerSecond.filter((x) => x.amount > 0).length === 0
+                    ? "—"
+                    : rotation.restoresPerSecond
+                        .filter((x) => x.amount > 0)
+                        .map((x) => `${smart(x.amount)} ${x.resource.replace(/_/g, " ")}/s`)
+                        .join(", ")}
+                </td>
+              )}
+              <td>
+                {!rotation.broken && !rotation.chosen && index >= 0 && (
+                  <button
+                    className="link text-sm"
+                    title="Play this pass instead, and use it for every figure"
+                    onClick={() => setComboHolds(index, rotation.holds)}
+                  >
+                    use
+                  </button>
                 )}
               </td>
             </tr>

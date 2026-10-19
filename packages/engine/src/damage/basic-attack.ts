@@ -59,6 +59,7 @@ import type { Sheet } from "./ctx.js";
 import type { EffectState } from "./effect-state.js";
 import { effectSupply, type EffectSupply } from "./effect-supply.js";
 import { procCastOf, resolveProcs, type Proc } from "./procs.js";
+import { leech, type Leech } from "./resources.js";
 import { simulateBasicAttack, type DamageOptions, type DamageResult } from "./simulate.js";
 
 /** Vanilla's own attribute id for how fast a weapon swings. */
@@ -116,6 +117,14 @@ export type BasicAttack = {
   ailmentDps: number;
   /** The DoTs that sum to {@link ailmentDps}, one row each. */
   ailmentStacks: AilmentStacks[];
+  /**
+   * What the swings bank, per pool, at the swing rate.
+   *
+   * The `*_on_basic_hit` stats are gated on `is_basic_atk`, so a swing is the only thing that
+   * ever fires them; weapon leech and `<r>_on_hit_hit` land here too. Every one of them is a
+   * `restore_resource` the hit sweep already recorded.
+   */
+  leech: Leech;
   diagnostics: Diagnostic[];
 };
 
@@ -192,6 +201,15 @@ export function basicAttack(
   const ailmentStacks = stackAilments([{ ailments: hit.average.ailments, hitsPerSecond: swings ?? 0 }]);
   const critDps = hit.crit.total * (swings ?? 0);
 
+  const leeched = leech({
+    build,
+    snapshot,
+    perSecond: hit.average.restores.map((r) => ({ ...r, amount: r.amount * (swings ?? 0) })),
+    perCast: hit.average.restores,
+    options: { ...pickOptions, sheet: characterRun },
+  });
+  diagnostics.push(...leeched.diagnostics);
+
   const procs =
     hit.procs === undefined
       ? []
@@ -237,6 +255,7 @@ export function basicAttack(
     // Every swing adds its own bleed, burn or poison to the stack, so this is the full-stacks rate.
     ailmentDps: ailmentStacks.reduce((sum, s) => sum + s.dps, 0),
     ailmentStacks,
+    leech: leeched,
     diagnostics,
   };
 }

@@ -33,7 +33,7 @@ import {
   statEntry,
   valueCalcEntry,
 } from "../test-support.js";
-import { simulateDps } from "./dps.js";
+import { simulateDps, simulateFullDps } from "./dps.js";
 
 /** `add_max_totems` — the pack's own serializer, an `add_to_number` onto `max_totems`. */
 const EFFECTS = {
@@ -160,4 +160,39 @@ test("a button slower than the limit's own pace is not paced further", () => {
   const result = simulateDps(BUILD, snapshot, {})!;
   assert.equal(result.sources[0]?.limit, undefined);
   assert.equal(result.sources[0]?.sustained, 1);
+});
+
+test("two totem skills in one rotation share the group's limit", () => {
+  // Each alone is slower than its own limit's pace (one every 4s against 8/3s), so neither is
+  // culled on its own button. Together they place two totems a pass into one ceiling of three.
+  const snapshot = totemSnapshot(true);
+  const spells = snapshot.registries["mmorpg_spells"]!;
+  const first = spells["totem_spell"]!.data as Record<string, unknown>;
+  (first["config"] as Record<string, unknown>)["cooldown_ticks"] = 80;
+  spells["totem_b"] = { ...spells["totem_spell"]!, id: "totem_b", data: { ...structuredClone(first), identifier: "totem_b" } };
+
+  const build = {
+    ...BUILD,
+    skills: [
+      { spellId: "totem_spell", main: true, includeInFullDps: true },
+      { spellId: "totem_b", includeInFullDps: true },
+    ],
+  } as BuildDoc;
+  const full = simulateFullDps(build, snapshot, {})!;
+  const pass = full.rotationSeconds;
+  const placementsPerSecond = full.skills.reduce(
+    (sum, e) => sum + (e.result.rate.castsPerCycle * (e.pressesPerRotation ?? 1)) / pass,
+    0,
+  );
+  const expected = Math.min(1, 3 / (placementsPerSecond * 8));
+  assert.ok(expected < 1);
+  for (const entry of full.skills) {
+    assert.equal(entry.limitShare?.group, "totem");
+    closeTo(entry.limitShare?.aliveShare, expected);
+  }
+  const unshared = full.skills.reduce(
+    (sum, e) => sum + e.result.damagePerCast * e.result.rate.castsPerCycle * (e.pressesPerRotation ?? 1),
+    0,
+  );
+  closeTo(full.damagePerRotation, unshared * expected);
 });

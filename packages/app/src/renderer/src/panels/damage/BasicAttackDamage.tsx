@@ -77,6 +77,19 @@ export function BasicAttackDamage({ header }: { header: ReactNode }): ReactNode 
             hint="What your swings cast. Already in Total DPS beside the swing itself."
           />
           {basic.ailmentDps > 0 && <Figure label="Ailments" value={smart(basic.ailmentDps)} />}
+          {basic.leech.byResource.map((row) => (
+            <Figure
+              key={row.resource}
+              label={`${row.resource.replace(/_/g, " ")} back`}
+              value={`${smart(row.perSecond)}/s`}
+              hint={
+                `Leech, on-hit and on-basic-hit from your swings: ${smart(row.generatedPerSecond)}/s generated` +
+                (row.capped
+                  ? `, paid out at the ${num(row.capPercent, 1)}% leech cap, so the rest is wasted.`
+                  : ".")
+              }
+            />
+          ))}
           <Figure
             label="Swings"
             value={basic.swingsPerSecond === undefined ? "—" : `${num(basic.swingsPerSecond, 2)}/s`}

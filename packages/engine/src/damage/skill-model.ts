@@ -435,6 +435,48 @@ export type EffectApplication = {
   castShare: number;
 };
 
+/**
+ * One `restore_health` / `restore_mana` / … act that reaches the caster.
+ *
+ * `RestoreManaAction.tryActivate` (6.4.13 jar; the other four are the same with another type):
+ *
+ *     int num = calc.getCalculatedValue(ctx.caster, ctx.calculatedSpellData.getSpell());
+ *     for (LivingEntity en : targets)
+ *         EventBuilder.ofRestore(ctx.caster, en, ResourceType.mana, RestoreType.heal, num)
+ *             .setSpell(ctx.calculatedSpellData.getSpell()).build().Activate();
+ *
+ * Counted with the same walk and the same firing arithmetic as a damage source, which is what
+ * gets Astral Totem right: the mana is on the totem block's 20-tick pulse, so it fires once a
+ * second for the block's life and the summon limit paces it exactly as it paces a damage totem.
+ *
+ * Only acts whose selector can land on you are kept: `self`, or an area searching `allies`. An
+ * area is assumed to include you — a totem you stand beside — and `allies_not_self` never does.
+ */
+export type SpellRestore = {
+  /** Same shape as {@link DamageSource.id}: `block#3`. */
+  id: string;
+  /** `restore_mana` → `mana`. */
+  resource: string;
+  valueCalcId: string;
+  carrier: Carrier;
+  origin: Origin;
+  /** When the part fires. An `on_hit` restore fires once per hit its carrier lands. */
+  trigger: Trigger;
+  firesPerCarrier: number;
+  carriersPerCast: number;
+  /** `carriersPerCast × firesPerCarrier × castShare`, as on a damage source. */
+  instancesPerCast: number;
+};
+
+/** The act type to the pool it fills, for the five restore acts the pack uses. */
+const RESTORE_ACTS: Record<string, string> = {
+  restore_health: "health",
+  restore_mana: "mana",
+  restore_energy: "energy",
+  restore_blood: "blood",
+  restore_magic_shield: "magic_shield",
+};
+
 export type SkillModel = {
   spellId: string;
   sources: DamageSource[];
@@ -475,6 +517,8 @@ export type SkillModel = {
   unmodelledSummons: string[];
   /** Stacks this cast puts on enemies, act by act. See {@link EffectApplication}. */
   applications: EffectApplication[];
+  /** What this cast puts back into your own pools, act by act. See {@link SpellRestore}. */
+  restores: SpellRestore[];
 };
 
 // ---------------------------------------------------------------------------
@@ -549,6 +593,7 @@ export function skillModel(
   const summons = new Set<string>();
   const blocked = new Map<string, BlockedGate>();
   const applications: EffectApplication[] = [];
+  const restores: SpellRestore[] = [];
 
   /**
    * One frame of the walk: the carrier whose component group is being read, the spawn chain
@@ -622,6 +667,23 @@ export function skillModel(
               firesPerCarrier,
               carriersPerCast: frame.carriersPerCast,
               castShare,
+            });
+          }
+          return;
+        }
+        const restored = RESTORE_ACTS[act.type];
+        if (restored !== undefined) {
+          if (reachesCaster(part)) {
+            restores.push({
+              id: `${groupName}#${index}`,
+              resource: restored,
+              valueCalcId: str(act.map["value_calculation"]) ?? "",
+              carrier: frame.carrier,
+              origin: { chain: frame.chain, atTarget: resolvesAtTarget },
+              trigger,
+              firesPerCarrier,
+              carriersPerCast: frame.carriersPerCast * reach,
+              instancesPerCast: frame.carriersPerCast * reach * firesPerCarrier * castShare,
             });
           }
           return;
@@ -740,7 +802,22 @@ export function skillModel(
     unmodelledActs: [...unmodelled].sort(),
     unmodelledSummons: [...summons].sort(),
     applications,
+    restores,
   };
+}
+
+/**
+ * Whether a restore act's selector can pick the caster: `self`, or an area of `allies`.
+ *
+ * `return_summons` heals through `per_entity_hit` under a `casters_summons` area, and Martyrdom
+ * heals `allies_not_self` — both are real restores that never reach you.
+ */
+function reachesCaster(part: Part): boolean {
+  return part.targets.some(
+    (target) =>
+      target.type === "self" ||
+      (target.type === "aoe" && str(target.map["en_predicate"]) === "allies"),
+  );
 }
 
 /**
@@ -823,11 +900,6 @@ const IGNORED_ACTS = new Set([
   "add_charge",
   "block_summon_limit_group",
   "command_summons",
-  "restore_health",
-  "restore_mana",
-  "restore_energy",
-  "restore_blood",
-  "restore_magic_shield",
   "potion",
   "exile_effect",
   "do_action_for_each_effect_on_target",

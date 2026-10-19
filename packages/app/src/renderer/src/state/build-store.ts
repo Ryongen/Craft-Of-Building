@@ -318,6 +318,8 @@ export type BuildState = {
   setFullDpsAsBuff(index: number, asBuff: boolean): void;
   /** Count this skill in Full DPS only through what procs it, never as a press. */
   setFullDpsAsProc(index: number, asProc: boolean): void;
+  /** Pin the charges a combo skill fires holding. `undefined` goes back to the best DPS. */
+  setComboHolds(index: number, holds: string[] | undefined): void;
   /** Fill the enemy block from a built-in target, and record which one it came from. */
   applyTargetPreset(id: TargetPresetId, snapshot: Snapshot, level: number): void;
   /** Fills `enemy.offence`'s hit from a built-in attacker profile. */
@@ -842,6 +844,16 @@ export const useBuild = create<BuildState>((set) => ({
         // Kept when false: a curse defaults to being pressed for its debuff, so "every pass" has
         // to be written down or it reads as the default again.
         return { ...skill, fullDpsAsBuff: asBuff };
+      });
+      return prune(doc, "skills", skills);
+    }),
+
+  setComboHolds: (index, holds) =>
+    edit(set, (doc) => {
+      const skills = (doc.skills ?? []).map((skill, i) => {
+        if (i !== index) return skill;
+        const { comboHolds: _drop, ...rest } = skill;
+        return holds === undefined ? rest : { ...rest, comboHolds: [...holds].sort() };
       });
       return prune(doc, "skills", skills);
     }),

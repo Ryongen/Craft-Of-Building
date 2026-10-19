@@ -81,7 +81,9 @@ export type SheetFocus =
   /** Effective HP against one element, which is a defence-pass row rather than a stat. */
   | { kind: "ehp"; element: ElementName }
   /** The same element's maximum hit — the unavoided half of the same pair. */
-  | { kind: "max-hit"; element: ElementName };
+  | { kind: "max-hit"; element: ElementName }
+  /** What hits and skills put back into one pool: leech, on-hit, and skills' own restores. */
+  | { kind: "income"; resource: string };
 
 export function SheetDetail({
   focus,
@@ -107,6 +109,9 @@ export function SheetDetail({
         }
       />
     );
+  }
+  if (focus.kind === "income") {
+    return <IncomeDetail resource={focus.resource} derived={derived} onFocus={onFocus} />;
   }
   if (focus.kind === "ehp" || focus.kind === "max-hit") {
     return (
@@ -1039,10 +1044,21 @@ export type RotationCostEntry = {
  * toggle costs nothing. Costs go to the pool that pays them (`manaSpentAs`), which is how a
  * Blood Magic build's mana and energy costs end up on one blood row. The sidebar row and the
  * detail below both read this, so they cannot disagree.
+ *
+ * Income is regeneration plus `derived.income`: leech, on-hit and the skills' own restore acts,
+ * worked out once in the engine so this, the Vitals rows and the Defence tab cannot disagree.
  */
 export function rotationCost(derived: DerivedBuild): {
   entries: RotationCostEntry[];
-  pools: { pool: string; perPass: number; perSecond: number; regen: number }[];
+  pools: {
+    pool: string;
+    perPass: number;
+    perSecond: number;
+    regen: number;
+    leech: number;
+    restored: number;
+    income: number;
+  }[];
   seconds: number;
 } {
   const full = derived.fullDps;
@@ -1062,13 +1078,106 @@ export function rotationCost(derived: DerivedBuild): {
   }
   const totals = new Map<string, number>();
   for (const e of entries) totals.set(e.pool, (totals.get(e.pool) ?? 0) + e.perPass);
-  const pools = [...totals].map(([pool, perPass]) => ({
-    pool,
-    perPass,
-    perSecond: seconds > 0 ? perPass / seconds : 0,
-    regen: derived.resources.byResource.find((r) => r.resource === pool)?.inCombatPerSecond ?? 0,
-  }));
+
+  const pools = [...totals].map(([pool, perPass]) => {
+    const regen = derived.resources.byResource.find((r) => r.resource === pool)?.inCombatPerSecond ?? 0;
+    const income = derived.income.byResource.find((r) => r.resource === pool);
+    const leech = income?.leech ?? 0;
+    const back = income?.restored ?? 0;
+    return {
+      pool,
+      perPass,
+      perSecond: seconds > 0 ? perPass / seconds : 0,
+      regen,
+      leech,
+      restored: back,
+      income: regen + leech + back,
+    };
+  });
   return { entries, pools, seconds };
+}
+
+/**
+ * One pool's income from hits and skills, source by source.
+ *
+ * Leech and restores are listed apart because the game treats them apart: leech is banked and
+ * paid out at `<r>_leech_cap`% of the pool a second, a skill's restore act is a heal that lands
+ * at once. Each leech row opens the stat that produced it.
+ */
+function IncomeDetail({
+  resource,
+  derived,
+  onFocus,
+}: {
+  resource: string;
+  derived: DerivedBuild;
+  onFocus: (focus: SheetFocus) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const income = derived.income.byResource.find((r) => r.resource === resource);
+  const pool = statName(snapshot, resource);
+  const basis =
+    derived.income.basis === "rotation"
+      ? "the Full DPS rotation"
+      : derived.income.basis === "main"
+        ? "the main skill"
+        : "no skill";
+  const from = (spellId: string, via: string): string =>
+    via === "swing" ? "Basic attacks" : `${spellName(snapshot, spellId)}${via === "proc" ? " (proc)" : ""}`;
+  if (income === undefined) {
+    return <Detail title={`${pool} from hits and skills`} lead="Nothing you press puts anything back into this pool." />;
+  }
+  const leech = income.sources.filter((s) => s.kind === "leech");
+  const restores = income.sources.filter((s) => s.kind === "restore");
+  return (
+    <Detail
+      title={`${pool} from hits and skills`}
+      lead={`What ${basis}${derived.income.swings ? " and your basic attacks" : ""} put back into ${pool} while you fight, on top of regeneration.`}
+    >
+      {leech.length > 0 && (
+        <div className="steps">
+          <StepRow
+            label={`Leech generated (${leech.length} source${leech.length === 1 ? "" : "s"})`}
+            value={`${smart(income.leechGenerated)}/s`}
+            title="Leech, on-hit and on-basic-hit from every source, before the cap. Expand for each one."
+          >
+            {leech.map((s, i) => (
+              <StepRow
+                key={`l-${i}`}
+                depth={1}
+                label={`${from(s.spellId, s.via)}${s.statId === undefined ? "" : ` · ${statName(snapshot, s.statId)}`}`}
+                value={`${smart(s.perSecond)}/s`}
+                {...(s.statId === undefined ? {} : { onClick: () => onFocus({ kind: "stat", statId: s.statId! }) })}
+              />
+            ))}
+          </StepRow>
+          <Term
+            label="Leech cap"
+            value={`${smart(income.leechCap)}/s`}
+            hint={`${resource}_leech_cap% of your ${pool}: the most the leech bank pays out a second.`}
+            onSelect={() => onFocus({ kind: "stat", statId: `${resource}_leech_cap` })}
+          />
+          <Term label="Leech paid out" value={`${smart(income.leech)}/s`} strong />
+        </div>
+      )}
+      {restores.length > 0 && (
+        <div className="steps mt-4">
+          <StepRow
+            label={`Restored by skills (${restores.length} source${restores.length === 1 ? "" : "s"})`}
+            value={`${smart(income.restored)}/s`}
+            title="Your skills' own restore effects: direct heals, not leech, so the cap does not apply. Area restores assume you stand in them. Expand for each one."
+          >
+            {restores.map((s, i) => (
+              <StepRow key={`r-${i}`} depth={1} label={from(s.spellId, s.via)} value={`${smart(s.perSecond)}/s`} />
+            ))}
+          </StepRow>
+        </div>
+      )}
+      <div className="steps mt-4">
+        <Term label="Total" value={`${smart(income.total)}/s`} strong />
+      </div>
+    </Detail>
+  );
 }
 
 function RotationCostDetail({
@@ -1116,7 +1225,7 @@ function RotationCostDetail({
         ))}
       </div>
       {pools.map((p) => {
-        const net = p.regen - p.perSecond;
+        const net = p.income - p.perSecond;
         return (
           <div key={p.pool} className="steps mt-4">
             <Term label={`${statName(snapshot, p.pool)} per pass`} value={smart(p.perPass)} />
@@ -1132,13 +1241,27 @@ function RotationCostDetail({
               hint={STATS_COPY.inCombat}
               onSelect={() => onFocus({ kind: "stat", statId: `${p.pool}_regen` })}
             />
+            {p.leech > 0 && (
+              <Term
+                label="Leech and on-hit"
+                value={`${smart(p.leech)}/s`}
+                hint={`What your hits bank, the rotation's and your swings', paid out no faster than ${p.pool}_leech_cap allows.`}
+              />
+            )}
+            {p.restored > 0 && (
+              <Term
+                label="Restored by skills"
+                value={`${smart(p.restored)}/s`}
+                hint="The ticked skills' own restore acts, like Astral Totem's mana pulse, assuming you stand in them."
+              />
+            )}
             <Term
               label="Net"
               value={`${net >= 0 ? "+" : ""}${smart(net)}/s`}
               hint={
                 net >= 0
-                  ? "Regeneration covers the rotation, so you can keep it up."
-                  : "More than your regeneration, so you can't keep this rotation up. Leech isn't counted here; the Damage tab's Sustain card has it per skill."
+                  ? "Your income covers the rotation, so you can keep it up."
+                  : "More than you get back, so you can't keep this rotation up."
               }
             />
           </div>

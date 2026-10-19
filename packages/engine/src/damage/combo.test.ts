@@ -522,6 +522,46 @@ test("a shorter pass wins when it lands more damage per second", () => {
   assert.ok(result.diagnostics.some((d) => d.code === "combo-partial-rotation"));
 });
 
+test("a pinned pass is played even when another deals more", () => {
+  // `rich` wins on the full pass; a player farming its alpha + beta branch for something the DPS
+  // cannot see pins that one, and every figure follows the pin.
+  const snapshot = engineSnapshot(TIERED);
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [
+      { spellId: "rich", main: true, comboHolds: ["alpha", "beta"] },
+      { spellId: "turbo" },
+      { spellId: "fusion" },
+    ],
+  } as BuildDoc;
+  const result = simulateDps(build, snapshot, {})!;
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta"]);
+  closeTo(result.comboDps, 100 / 2.1);
+  const chosen = result.rotations?.find((r) => r.chosen);
+  assert.equal(chosen?.pinned, true);
+  assert.deepEqual(chosen?.holds, ["alpha", "beta"]);
+  const full = result.rotations?.find((r) => r.holds.length === 3);
+  assert.equal(full?.chosen, false);
+  assert.ok((full?.dps ?? 0) > (chosen?.dps ?? 0));
+});
+
+test("a pin the bar cannot reach falls back to the best pass", () => {
+  const snapshot = engineSnapshot(TIERED);
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [
+      { spellId: "rich", main: true, comboHolds: ["delta"] },
+      { spellId: "turbo" },
+      { spellId: "fusion" },
+    ],
+  } as BuildDoc;
+  const result = simulateDps(build, snapshot, {})!;
+  assert.deepEqual(result.combo?.holds, ["alpha", "beta", "gamma"]);
+  assert.ok(result.rotations?.every((r) => !r.pinned));
+});
+
 test("a partial pass stands in for a full one the bar cannot complete", () => {
   // No fusion: gamma is out of reach. The full pass is still listed, and broken, but the
   // alpha + beta pass is a real rotation and is what the figures describe.

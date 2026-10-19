@@ -344,6 +344,12 @@ export type LeechEntry = {
   seedPerSecond: number;
   /** After those, which is what actually enters the bank. */
   generatedPerSecond: number;
+  /**
+   * What one cast puts in the bank, before a summon limit thins the rate — 0 when the caller
+   * passed no per-cast records. A rotation of several skills sums these and caps the total once,
+   * because the bank and its cap belong to the pool rather than to any one skill.
+   */
+  generatedPerCast: number;
   /** `<r>_leech_cap` — a percent of the pool, base 5. */
   capPercent: number;
   /** `capPercent / 100 × max` — the most that can leave the bank in one second. */
@@ -379,6 +385,8 @@ export type LeechInput = {
    * rate by the caller — `dps.ts` multiplies each cast's records by casts per second.
    */
   perSecond: readonly RestoreRecord[];
+  /** The same records for one cast, unscaled by any rate. */
+  perCast?: readonly RestoreRecord[];
   options?: ResourceOptions;
 };
 
@@ -416,6 +424,10 @@ export function leech(input: LeechInput): Leech {
     // `inc_leech` and `<r>_leech_regen` both sit on `on_restore_resource`, gated on the type.
     const tick = restoreEvent(shared, resource, "leech", seedPerSecond);
     const generatedPerSecond = tick.number;
+    const seedPerCast = (input.perCast ?? [])
+      .filter((r) => r.restoreType === "leech" && r.resource === resource)
+      .reduce((sum, r) => sum + r.amount, 0);
+    const generatedPerCast = seedPerCast > 0 ? restoreEvent(shared, resource, "leech", seedPerCast).number : 0;
 
     const max = sheet.get(resource)?.value ?? 0;
     const capPercent = sheet.get(`${resource}_leech_cap`)?.value ?? 0;
@@ -427,6 +439,7 @@ export function leech(input: LeechInput): Leech {
       max,
       seedPerSecond,
       generatedPerSecond,
+      generatedPerCast,
       capPercent,
       capPerSecond,
       perSecond,
@@ -503,6 +516,75 @@ function unratedLeech(shared: Shared): UnratedLeech[] {
 }
 
 // ---------------------------------------------------------------------------
+// Spell restores
+// ---------------------------------------------------------------------------
+
+/** One `restore_*` act's firings, as `dps.ts` counted them off the skill model. */
+export type SpellRestoreFiring = {
+  sourceId: string;
+  resource: string;
+  valueCalcId: string;
+  /** `getCalculatedValue` — what one firing seeds the restore event with. */
+  seed: number;
+  /** Firings one cast produces, before any summon limit. */
+  firingsPerCast: number;
+  /** The same at the rate the button is really pressed, summon limit included. */
+  firingsPerSecond: number;
+  /** The summon limit group its carrier is culled by, when it rides a limited one. */
+  limitGroup?: string;
+};
+
+export type SpellRestoreSource = SpellRestoreFiring & {
+  /** One firing once the restore event has run its `on_restore_resource` layers. */
+  perFiring: number;
+};
+
+export type SpellRestoreEntry = {
+  resource: ResourceId;
+  /** Everything one cast puts back, before a summon limit thins it. */
+  perCast: number;
+  perSecond: number;
+  sources: SpellRestoreSource[];
+};
+
+export type SpellRestores = { byResource: SpellRestoreEntry[] };
+
+export type SpellRestoreInput = {
+  build: BuildDoc;
+  snapshot: Snapshot;
+  spell: RestoreSpell;
+  firings: readonly SpellRestoreFiring[];
+  options?: ResourceOptions;
+};
+
+/**
+ * What a skill's own `restore_*` acts put back into your pools.
+ *
+ * Each firing is one `RestoreType.heal` event with the spell set, so unlike leech there is no
+ * bank and no cap: the finished number lands at once. That is why Astral Totem is worth exactly
+ * `totem_mana` a second while you stand in it, scaled by whatever heal and `totem_resto` stats
+ * you carry.
+ */
+export function spellRestores(input: SpellRestoreInput): SpellRestores {
+  const shared = sharedState(input.build, input.snapshot, input.options ?? {}, []);
+  const byResource: SpellRestoreEntry[] = [];
+  for (const firing of input.firings) {
+    const resource = firing.resource as ResourceId;
+    if (!RESOURCES.includes(resource) || firing.seed <= 0 || !(firing.firingsPerCast > 0)) continue;
+    const perFiring = restoreEvent(shared, resource, "heal", firing.seed, true, input.spell).number;
+    let entry = byResource.find((e) => e.resource === resource);
+    if (!entry) {
+      entry = { resource, perCast: 0, perSecond: 0, sources: [] };
+      byResource.push(entry);
+    }
+    entry.perCast += perFiring * firing.firingsPerCast;
+    entry.perSecond += perFiring * firing.firingsPerSecond;
+    entry.sources.push({ ...firing, perFiring });
+  }
+  return { byResource };
+}
+
+// ---------------------------------------------------------------------------
 // The budget
 // ---------------------------------------------------------------------------
 
@@ -512,6 +594,8 @@ export type ResourceBudget = {
   /** The in-combat column: a rotation is in combat by definition. */
   regenPerSecond: number;
   leechPerSecond: number;
+  /** The skill's own `restore_*` acts landing on you. See {@link spellRestores}. */
+  restorePerSecond: number;
   /** One cast's declared cost out of this pool. */
   costPerCast: number;
   costPerSecond: number;
@@ -536,6 +620,7 @@ export type ResourceBudget = {
 export type BudgetInput = {
   regen: Resources;
   leech: Leech;
+  restores?: SpellRestores;
   /** What one cast costs, per pool. `dps.ts` resolves Blood Magic before it gets here. */
   perCast: ReadonlyMap<ResourceId, number>;
   castsPerSecond: number;
@@ -544,7 +629,7 @@ export type BudgetInput = {
 /**
  * Whether the pools keep up, pool by pool.
  *
- * Only pools that are actually spent or actually filled by leech get a row — a build that costs
+ * Only pools that are actually spent or actually filled by leech or a restore get a row — a build that costs
  * no energy does not need a verdict on its energy. The regeneration column is the in-combat one:
  * `in_combat` is a ten-second cooldown re-stamped by every hit, so a rotation never sees the
  * other figure.
@@ -556,10 +641,11 @@ export function budget(input: BudgetInput): ResourceBudget[] {
     const costPerSecond = costPerCast * input.castsPerSecond;
     const regen = input.regen.byResource.find((r) => r.resource === resource);
     const leeched = input.leech.byResource.find((r) => r.resource === resource)?.perSecond ?? 0;
-    if (costPerSecond === 0 && leeched === 0) continue;
+    const restored = input.restores?.byResource.find((r) => r.resource === resource)?.perSecond ?? 0;
+    if (costPerSecond === 0 && leeched === 0 && restored === 0) continue;
 
     const regenPerSecond = regen?.inCombatPerSecond ?? 0;
-    const netPerSecond = regenPerSecond + leeched - costPerSecond;
+    const netPerSecond = regenPerSecond + leeched + restored - costPerSecond;
     const max = regen?.max ?? 0;
     // Two separate questions, and a build has to pass both: does the income cover the spend, and
     // can the pool ever hold one cast's worth at all. The second is not implied by the first —
@@ -570,6 +656,7 @@ export function budget(input: BudgetInput): ResourceBudget[] {
       max,
       regenPerSecond,
       leechPerSecond: leeched,
+      restorePerSecond: restored,
       costPerCast,
       costPerSecond,
       netPerSecond,
@@ -714,12 +801,23 @@ function mentionsCombat(snapshot: Snapshot, conditionId: string, depth: number):
  * whatever the caller brought: zero for a plain tick, the redirected health for blood, the hits'
  * own total for leech.
  */
+/**
+ * The spell a restore event carries, when one does.
+ *
+ * `EventBuilder.setSpell` is what a spell's own `restore_*` act calls, and it changes two things:
+ * `is_spell` and `spell_has_tag` gates now answer — `increase_healing`, `heal_effect_on_self`,
+ * `totem_resto` — and `EffectEvent` reads the source side off `getSpellUnitStats(spell)` rather
+ * than the bare unit, so the skill's linked support gems are in it. The target is still you.
+ */
+export type RestoreSpell = { data: Record<string, unknown>; id: string; tags: ReadonlySet<string>; sheet: Sheet };
+
 function restoreEvent(
   shared: Shared,
   resource: ResourceId,
   restoreType: string,
   seed: number,
   inCombat?: boolean,
+  spell?: RestoreSpell,
 ): { number: number; steps: LayerStep[] } {
   const recorder = new Recorder();
   const event = new DamageEventState(shared.layers, undefined, recorder);
@@ -736,13 +834,13 @@ function restoreEvent(
     // A regen tick is self-cast: `EventBuilder.ofRestore(player, player, …)`. Both sides are the
     // same sheet, which is what lets a `Target`-side block like
     // `magic_shield_restore_effect_on_self` reach your own magic shield.
-    source: shared.sheet,
+    source: spell?.sheet ?? shared.sheet,
     target: shared.sheet,
     sourceLevel: shared.build.character.level,
     targetLevel: shared.build.character.level,
-    spell: undefined,
-    spellId: "",
-    spellTags: new Set(),
+    spell: spell?.data,
+    spellId: spell?.id ?? "",
+    spellTags: new Set(spell?.tags ?? []),
     config: shared.build.config ?? {},
     ...(inCombat === undefined ? {} : { inCombat }),
     effects: shared.effects,
@@ -761,7 +859,7 @@ function restoreEvent(
   sweep(
     ctx,
     [
-      { side: "Source", sheet: shared.sheet },
+      { side: "Source", sheet: spell?.sheet ?? shared.sheet },
       { side: "Target", sheet: shared.sheet },
     ],
     steps,

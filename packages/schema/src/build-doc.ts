@@ -487,6 +487,15 @@ export type SkillSetup = {
    */
   fullDpsAsProc?: boolean;
   /**
+   * For a combo skill, the charges it fires holding, instead of whichever pass deals the most.
+   *
+   * The planner prices every charge state the bar can reach and keeps the highest DPS, which is
+   * wrong for a pass you play for something else: Parallel Convergence holding `alpha` and
+   * `beta` deals nothing and heals, Frost Nova under `overheat` gives mana back. Ignored when the
+   * bar cannot reach it. `[]` pins the pass holding nothing.
+   */
+  comboHolds?: string[];
+  /**
    * Whether this skill counts at all. Defaults to true; read it through `isSkillEnabled`.
    *
    * A disabled skill keeps everything it has — its level, its support gems, its place in the

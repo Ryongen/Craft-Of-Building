@@ -227,6 +227,7 @@ export {
   leech,
   resourceSpent,
   resources,
+  spellRestores,
 } from "./damage/resources.js";
 export type {
   BudgetInput,
@@ -239,6 +240,9 @@ export type {
   ResourceId,
   ResourceOptions,
   Resources,
+  SpellRestoreEntry,
+  SpellRestores,
+  SpellRestoreSource,
   UnratedLeech,
 } from "./damage/resources.js";
 
@@ -262,6 +266,8 @@ export type { MobHit } from "./damage/incoming.js";
 
 export { defence } from "./damage/defence.js";
 export { selfSustain } from "./damage/self-sustain.js";
+export { skillIncome } from "./damage/income.js";
+export type { PoolIncome, SkillIncome, SkillIncomeInput } from "./damage/income.js";
 export type { Pool, SelfSustain, SelfSustainInput } from "./damage/self-sustain.js";
 export { auraSources } from "./damage/auras.js";
 export type { AuraInput, AuraResult } from "./damage/auras.js";

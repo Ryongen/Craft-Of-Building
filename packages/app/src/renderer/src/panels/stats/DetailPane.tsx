@@ -34,6 +34,7 @@ export function sameFocus(a: SheetFocus | null, b: SheetFocus): boolean {
   if (a === null || a.kind !== b.kind) return false;
   if (a.kind === "figure" && b.kind === "figure") return a.id === b.id;
   if ((a.kind === "ehp" || a.kind === "max-hit") && "element" in b) return a.element === b.element;
+  if (a.kind === "income" && b.kind === "income") return a.resource === b.resource;
   if ((a.kind === "stat" || a.kind === "skill-stat") && "statId" in b) return a.statId === b.statId;
   return false;
 }

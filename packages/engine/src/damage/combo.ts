@@ -177,6 +177,13 @@ export type ComboRotation = {
   broken: boolean;
   /** The one the rest of the result describes. */
   chosen: boolean;
+  /** True when the document pinned this pass (`SkillSetup.comboHolds`) rather than the DPS. */
+  pinned: boolean;
+  /**
+   * What the finisher's own restore acts give back per second on this pass — the reason to pin
+   * a pass that deals less. Empty when it restores nothing.
+   */
+  restoresPerSecond: { resource: string; amount: number }[];
 };
 
 /** One press of the pass, before anything has tried to time it. */

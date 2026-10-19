@@ -41,14 +41,14 @@ import { isSkillEnabled } from "@cte2/schema";
 import type { Balance } from "../balance.js";
 import { balance } from "../balance.js";
 import { calculate, resolveEffects, type EngineResult } from "../calculate.js";
-import { spellRanks, withLearnedRank } from "../collect/spell.js";
+import { maxSpellLevel, spellLevel, spellRanks, withLearnedRank } from "../collect/spell.js";
 import type { Compat } from "../compat.js";
 import { ORIGINAL_MODE } from "../compat.js";
 import type { StatIndex } from "../stat-def.js";
 import { statIndex } from "../stat-def.js";
 import { stackAilments, type AilmentFeed, type AilmentResult, type AilmentStacks } from "./ailments.js";
 import { auraCutoffShare, auraSources } from "./auras.js";
-import type { Sheet } from "./ctx.js";
+import { sheetValue, type Sheet } from "./ctx.js";
 import { effectDurationTicks } from "./effect-duration.js";
 import { layerIndex, type LayerIndex } from "./layers.js";
 import {
@@ -100,10 +100,14 @@ import {
   leech,
   resourceSpent,
   resources,
+  spellRestores,
   type Leech,
   type ResourceBudget,
   type ResourceId,
+  type SpellRestoreFiring,
+  type SpellRestores,
 } from "./resources.js";
+import { calculatedValue, valueCalc } from "./value-calc.js";
 import { casterBuffUpkeep, targetDebuffUpkeep, type EffectState } from "./effect-state.js";
 import { gatedShare, selfHitSupply } from "./self-hit-supply.js";
 import {
@@ -328,6 +332,11 @@ export type ResourceCost = {
    * say which, and `unrated` names the leech the engine can see but cannot rate.
    */
   leech: Leech;
+  /**
+   * What the skill's own `restore_*` acts put back into your pools — Astral Totem's mana, Refresh,
+   * Rejuvenation Totem. A heal rather than a leech, so no bank and no cap.
+   */
+  restores: SpellRestores;
   /**
    * Income against spend, pool by pool. The row with a negative `netPerSecond` is the one that
    * stops you casting, and it says how long a full pool lasts.
@@ -672,6 +681,17 @@ export type FullDpsSkill = {
   pressesPerRotation?: number;
   /** Upkeep only: the effect whose duration set the period. */
   upkeepEffectId?: string;
+  /**
+   * What the rotation's shared summon limit leaves of this skill's limited carriers.
+   *
+   * `enforceSummonLimit` culls the oldest of the *group*, not of the skill, so Chain Lightning
+   * Totem and Astral Totem pressed in the same pass share one `max_totems`. Every placement lives
+   * until `maxAlive` more of the group have gone down: `min(life, maxAlive / group placements a
+   * second)`. `aliveShare` is that over the declared life — the share of its firings each one
+   * gets to make — and `damageShare` is what it does to this skill's whole cast, the limited
+   * sources scaled and the rest left alone. Absent when nothing is culled.
+   */
+  limitShare?: { group: string; maxAlive: number; aliveShare: number; damageShare: number };
 };
 
 /**
@@ -823,9 +843,17 @@ export function simulateDps(
     options.comboTarget === undefined && options.characterRun === undefined
       ? bestRotation(build, snapshot, options, chosen, opening.stats)
       : undefined;
+  // A pass the document pinned still applies when the search was skipped — Full DPS hands its
+  // own sheet in — so the rotation fires the skill the way the player said they play it.
+  const pin = (): readonly string[] | undefined => {
+    const holds = chosen.comboHolds;
+    if (holds === undefined) return undefined;
+    const { resources } = planCombo(snapshot, build, chosen.spellId, opening.stats);
+    return holds.every((e) => resources.includes(e)) ? holds : undefined;
+  };
   const plan =
     picked?.plan ??
-    planCombo(snapshot, build, chosen.spellId, opening.stats, options.comboTarget);
+    planCombo(snapshot, build, chosen.spellId, opening.stats, options.comboTarget ?? pin());
   const characterRun: EngineResult =
     plan.resources.length === 0 || options.characterRun !== undefined
       ? opening
@@ -1288,14 +1316,26 @@ export function simulateDps(
       message:
         `\`${skill.spellId}\` is priced firing with ` +
         `${plan.holds.length === 0 ? "no charges" : plan.holds.join(" + ")} rather than all of ` +
-        `${plan.resources.join(", ")}: on this bar that pass deals more per second` +
+        `${plan.resources.join(", ")}: ` +
+        (picked.rotations.some((r) => r.pinned)
+          ? `the build pins that pass.`
+          : `on this bar that pass deals more per second` +
         (full?.dps === undefined
           ? `; the full one ${full?.broken === true ? "cannot be completed" : "cannot be timed"}.`
-          : ` than the full one (${full.dps.toFixed(1)}).`),
+          : ` than the full one (${full.dps.toFixed(1)}).`)),
     });
   }
 
   const character = characterRun.stats;
+  // A combo finisher is cast once per pass of its chain, not once per button cycle, so what it
+  // spends and what it gives back run at the chain's pace. Spirit Offensive's 0.3s button sits
+  // behind a 0.8s chain, and pricing its heal at the button rate claimed nearly three times it.
+  const sustainCastsPerSecond =
+    combo?.secondsPerCast !== undefined && combo.secondsPerCast > 0
+      ? rate.castsPerCycle / Math.max(combo.secondsPerCast, rate.cycleSeconds)
+      : rate.cycleSeconds > 0
+        ? rate.castsPerCycle / rate.cycleSeconds
+        : 0;
   const castsPerSecond = rate.cycleSeconds > 0 ? rate.castsPerCycle / rate.cycleSeconds : 0;
   // The whole tick, not the flat stat: `<r>_per_sec` scales with the pool and the
   // `on_restore_resource` percents multiply both. And with the Blood Magic game changer on, the
@@ -1309,29 +1349,85 @@ export function simulateDps(
     regen.byResource.find((r) => r.resource === id)?.inCombatPerSecond ?? 0;
   const manaRegen = perSecondOf(manaSpentAs);
   const energyRegen = perSecondOf(energySpentAs);
-  const manaPerSecond = calc.manaCost * castsPerSecond;
-  const energyPerSecond = calc.energyCost * castsPerSecond;
+  const manaPerSecond = calc.manaCost * sustainCastsPerSecond;
+  const energyPerSecond = calc.energyCost * sustainCastsPerSecond;
 
   // Leech comes off the sweep the damage already ran, so every gate a hit answered — which
   // element it was, whether the target dodged, whether it was a basic attack — is folded in
   // without asking any of it twice. `hitsPerCast` scales each source's records the same way it
   // scales that source's damage, and `average` has already weighted the crit branch.
+  // `sustained` too, as the damage is: a limited totem pressed faster than it lives is culled
+  // before it lands most of its hits, and the hits it never lands leech nothing.
   const perSecondRestores: RestoreRecord[] = [];
+  const perCastRestores: RestoreRecord[] = [];
   for (const entry of sources) {
     for (const record of entry.hit.average.restores) {
-      perSecondRestores.push({
-        ...record,
-        amount: record.amount * entry.coverage.hitsPerCast * castsPerSecond,
-      });
+      const perCast = record.amount * entry.coverage.hitsPerCast;
+      perCastRestores.push({ ...record, amount: perCast });
+      perSecondRestores.push({ ...record, amount: perCast * sustainCastsPerSecond * entry.sustained });
     }
   }
   const leeched = leech({
     build,
     snapshot,
     perSecond: perSecondRestores,
+    perCast: perCastRestores,
     options: { ...pickOptions, sheet: characterRun },
   });
   diagnostics.push(...leeched.diagnostics);
+
+  // The skill's own `restore_*` acts, off the same walk as its damage: Astral Totem's mana rides
+  // the block's 20-tick pulse, so it fires once a second for the block's life, and the summon
+  // limit paces it exactly as it paces a damage totem. `getCalculatedValue(ctx.caster, spell)`
+  // reads the caster, which is the character sheet — the same one a damage act's calc reads.
+  const levelEnv = { snapshot, index, balance: bal, level: build.character.level, diagnostics: [], report: () => {} };
+  const restoreLevel = spellLevel(levelEnv, skill.spellId, spell, skill.level);
+  const restoreMaxLevel = maxSpellLevel(levelEnv, spell);
+  const firings: SpellRestoreFiring[] = [];
+  for (const restore of model.restores) {
+    const vc = valueCalc(snapshot, restore.valueCalcId);
+    if (!vc) continue;
+    const seed = calculatedValue(
+      vc,
+      (statId) => sheetValue(character, statId),
+      null,
+      restoreLevel,
+      restoreMaxLevel,
+      build.character.level,
+      bal,
+      compat,
+    );
+    const limit = sustainLimit(restore, rate.cycleSeconds);
+    const sustained = limit === undefined ? 1 : rate.cycleSeconds / limit.periodSeconds;
+    const limitGroup = limitedCarrierOf(restore)?.group;
+    // An `on_hit` heal fires once per hit the carrier lands, which is the coverage of the damage
+    // act riding the same hit — Spirit Offensive heals on the way out and on the way back, but
+    // only for the passes that actually touch something.
+    const group = restore.id.slice(0, restore.id.lastIndexOf("#"));
+    const landed =
+      restore.trigger.kind === "on_hit"
+        ? sources
+            .filter((s) => s.source.trigger.kind === "on_hit" && s.source.id.slice(0, s.source.id.lastIndexOf("#")) === group)
+            .reduce<number | undefined>((most, s) => Math.max(most ?? 0, s.coverage.hitsPerCast), undefined)
+        : undefined;
+    const firingsPerCast = landed ?? restore.instancesPerCast;
+    firings.push({
+      sourceId: restore.id,
+      resource: restore.resource,
+      valueCalcId: restore.valueCalcId,
+      seed,
+      firingsPerCast,
+      firingsPerSecond: firingsPerCast * sustainCastsPerSecond * sustained,
+      ...(limitGroup === undefined ? {} : { limitGroup }),
+    });
+  }
+  const restored = spellRestores({
+    build,
+    snapshot,
+    spell: { data: spell, id: skill.spellId, tags: new Set(declared.tags), sheet: spellRun.stats },
+    firings,
+    options: { ...pickOptions, sheet: characterRun },
+  });
   // `resources` answers which pool pays and what fills it, and a blood mage most needs to be told
   // that before reading a sustain verdict. Its diagnostics were computed and dropped on the floor.
   diagnostics.push(...regen.diagnostics);
@@ -1345,7 +1441,7 @@ export function simulateDps(
   };
   bill(manaSpentAs, calc.manaCost);
   bill(energySpentAs, calc.energyCost);
-  const books = budget({ regen, leech: leeched, perCast, castsPerSecond });
+  const books = budget({ regen, leech: leeched, restores: restored, perCast, castsPerSecond: sustainCastsPerSecond });
   const starved = books.filter((row) => !row.sustainable);
   for (const row of starved) {
     // A ceiling below one cast is a different failure from a rate that does not keep up, and
@@ -1699,6 +1795,7 @@ export function simulateDps(
       manaRegen,
       energyRegen,
       leech: leeched,
+      restores: restored,
       budget: books,
       manaSpentAs,
       energySpentAs,
@@ -1850,7 +1947,14 @@ function bestRotation(
     // A finisher on its own is one press a pass, whatever its `times_to_cast`.
     const seconds = alone ? run.rate.cycleSeconds : run?.combo?.secondsPerCast;
     const dps = plan.broken.length > 0 ? undefined : alone ? run.dps : run?.comboDps;
-    return { plan, seconds, dps };
+    const restoresPerSecond =
+      run === undefined || seconds === undefined || seconds <= 0 || plan.broken.length > 0
+        ? []
+        : run.cost.restores.byResource.map((r) => ({
+            resource: r.resource,
+            amount: (r.perCast * run.rate.castsPerCycle) / seconds,
+          }));
+    return { plan, seconds, dps, restoresPerSecond };
   });
 
   let best = 0;
@@ -1867,6 +1971,15 @@ function bestRotation(
     if (dps > current * (1 + 1e-9) || (tie && fewer)) best = i;
   });
 
+  // A pin overrides the damage: the pass is played for its heal, its mana, or whatever else the
+  // DPS cannot see. Matched on the charges the pass really holds, which is what the table shows.
+  const want = skill.comboHolds === undefined ? undefined : [...skill.comboHolds].sort().join("+");
+  const pinned =
+    want === undefined
+      ? -1
+      : priced.findIndex((c) => c.plan.broken.length === 0 && [...c.plan.holds].sort().join("+") === want);
+  if (pinned >= 0) best = pinned;
+
   return {
     plan: priced[best]!.plan,
     rotations: priced.map((candidate, i) => ({
@@ -1876,6 +1989,8 @@ function bestRotation(
       dps: candidate.dps,
       broken: candidate.plan.broken.length > 0,
       chosen: i === best,
+      pinned: i === pinned,
+      restoresPerSecond: candidate.restoresPerSecond,
     })),
   };
 }
@@ -1999,19 +2114,34 @@ function widestProjectile(model: SkillModel): ProjectileCarrier | undefined {
  * next cast destroys; the meteors it has already dropped outlive it.
  */
 function sustainLimit(
-  source: DamageSource,
+  source: Pick<DamageSource, "carrier" | "origin">,
   cycleSeconds: number,
 ): { group: string; maxAlive: number; periodSeconds: number } | undefined {
   if (cycleSeconds <= 0) return undefined;
+  const limited = limitedCarrierOf(source);
+  if (limited === undefined) return undefined;
+  const periodSeconds = limited.lifeSeconds / Math.max(1, limited.maxAlive);
+  if (periodSeconds <= cycleSeconds) return undefined;
+  return { group: limited.group, maxAlive: limited.maxAlive, periodSeconds };
+}
 
-  // Nearest first: an inner group would be culled before the outer one gets the chance.
+/**
+ * The summon-limited carrier a source depends on, nearest first: an inner group would be culled
+ * before the outer one gets the chance. See {@link sustainLimit} for why the whole chain is
+ * searched rather than the source's own carrier.
+ */
+export function limitedCarrierOf(
+  source: Pick<DamageSource, "carrier" | "origin">,
+): { group: string; maxAlive: number; lifeSeconds: number; count: number } | undefined {
   const carriers = [source.carrier, ...[...source.origin.chain].reverse().map((s) => s.carrier)];
   for (const carrier of carriers) {
     if (carrier.kind !== "summon_block" || carrier.limit === undefined) continue;
-    const lifeSeconds = carrier.lifeTicks / TICKS_PER_SECOND;
-    const periodSeconds = lifeSeconds / Math.max(1, carrier.limit.maxAlive);
-    if (periodSeconds <= cycleSeconds) return undefined;
-    return { group: carrier.limit.group, maxAlive: carrier.limit.maxAlive, periodSeconds };
+    return {
+      group: carrier.limit.group,
+      maxAlive: Math.max(1, carrier.limit.maxAlive),
+      lifeSeconds: carrier.lifeTicks / TICKS_PER_SECOND,
+      count: Math.max(1, carrier.count),
+    };
   }
   return undefined;
 }
@@ -2392,9 +2522,76 @@ export function simulateFullDps(
   // carrier was counted over *its own* skill's cycle so that the division would cancel; a pass
   // through four buttons has a different length, and leaving the term in would have scaled Holy
   // Fire by the ratio between the two.
-  const castDamage = (e: Entry): number => e.result.damagePerCast - e.result.auraDamagePerCast;
+  //
+  // The summon limit is one ceiling per group across the whole pass, not one per skill: every
+  // press of anything in `totem` culls the oldest totem, whichever button placed it. So each
+  // group's placements a second are summed first, and a placement lives `maxAlive` of them.
+  const placements = new Map<string, number>();
+  for (const e of entries) {
+    if (ownClock(e) || rotationSeconds <= 0) continue;
+    const seen = new Map<string, number>();
+    for (const s of e.result.sources) {
+      const limited = limitedCarrierOf(s.source);
+      if (limited !== undefined) seen.set(limited.group, Math.max(seen.get(limited.group) ?? 0, limited.count));
+    }
+    for (const r of e.result.model.restores) {
+      const limited = limitedCarrierOf(r);
+      if (limited !== undefined) seen.set(limited.group, Math.max(seen.get(limited.group) ?? 0, limited.count));
+    }
+    for (const [group, count] of seen) {
+      const rate = (count * e.result.rate.castsPerCycle * pressesOf(e)) / rotationSeconds;
+      placements.set(group, (placements.get(group) ?? 0) + rate);
+    }
+  }
+  const aliveShareOf = (source: Pick<DamageSource, "carrier" | "origin">): number => {
+    const limited = limitedCarrierOf(source);
+    if (limited === undefined) return 1;
+    const rate = placements.get(limited.group) ?? 0;
+    if (rate <= 0 || limited.lifeSeconds <= 0) return 1;
+    return Math.min(1, limited.maxAlive / (rate * limited.lifeSeconds));
+  };
+  for (const e of entries) {
+    if (ownClock(e)) continue;
+    const culled = [...e.result.sources.map((s) => s.source), ...e.result.model.restores]
+      .map((source) => ({ limited: limitedCarrierOf(source), share: aliveShareOf(source) }))
+      .find((x) => x.limited !== undefined && x.share < 1);
+    if (culled === undefined) continue;
+    const full = e.result.damagePerCast;
+    const kept = e.result.sources.reduce((sum, s) => sum + s.damagePerCast * aliveShareOf(s.source), 0);
+    e.limitShare = {
+      group: culled.limited!.group,
+      maxAlive: culled.limited!.maxAlive,
+      aliveShare: culled.share,
+      damageShare: full > 0 ? kept / full : culled.share,
+    };
+  }
+  const shared = entries.filter((e) => e.limitShare !== undefined);
+  for (const group of new Set(shared.map((e) => e.limitShare!.group))) {
+    const members = shared.filter((e) => e.limitShare!.group === group);
+    diagnostics.push({
+      severity: "info",
+      code: "full-dps-shared-summon-limit",
+      path: "skills",
+      message:
+        (members.length === 1
+          ? `\`${members[0]!.skill.spellId}\` is pressed faster than its \`${group}\` summon limit ` +
+            `of ${members[0]!.limitShare!.maxAlive} lets it last, and every placement culls the oldest, so `
+          : `${members.map((e) => `\`${e.skill.spellId}\``).join(", ")} share the \`${group}\` ` +
+            `summon limit of ${members[0]!.limitShare!.maxAlive}: every placement culls the oldest of ` +
+            `the group, whichever skill made it, so `) +
+        members
+          .map((e) => `\`${e.skill.spellId}\` lives ${(100 * e.limitShare!.aliveShare).toFixed(0)}% of its duration`)
+          .join(", ") +
+        ` in this rotation. \`max_${group}s\` raises the ceiling.`,
+    });
+  }
+
+  const castDamage = (e: Entry): number =>
+    e.result.sources.reduce((sum, s) => sum + s.damagePerCast * aliveShareOf(s.source), 0) -
+    e.result.auraDamagePerCast;
   const castCritDamage = (e: Entry): number =>
-    e.result.critDamagePerCast - e.result.auraCritDamagePerCast;
+    e.result.sources.reduce((sum, s) => sum + s.critDamagePerCast * aliveShareOf(s.source), 0) -
+    e.result.auraCritDamagePerCast;
 
   const damagePerRotation = entries.reduce(
     (sum, e) => sum + castDamage(e) * e.result.rate.castsPerCycle * pressesOf(e),
@@ -2454,8 +2651,10 @@ export function simulateFullDps(
   // way it re-paces `damagePerCast`. An aura's ailments are on the aura's clock instead: Holy
   // Fire ignites at two pulses a second for as long as it is up, and pacing that by presses —
   // zero, for a toggle — dropped the whole burning half of a Holy Fire build.
+  // A culled totem stops applying ailments when it stops hitting, so they take the same share.
   const castAilmentDamage = (e: Entry): number =>
-    e.result.ailmentDamagePerCast - e.result.auraAilmentDamagePerCast;
+    (e.result.ailmentDamagePerCast - e.result.auraAilmentDamagePerCast) *
+    (e.limitShare?.damageShare ?? 1);
   const auraAilmentDps = (e: Entry): number =>
     e.role === "aura"
       ? e.result.ailmentDps - e.result.ailmentProcDps

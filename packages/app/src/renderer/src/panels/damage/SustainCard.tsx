@@ -38,7 +38,8 @@ export function sustainVerdict(dps: DpsResult): { text: string; bad: boolean; bl
  * event once a second with `<r>_regen`, `<r>_per_sec` and every `on_restore_resource` percent
  * feeding it; leech is banked and paid out at `<r>_leech_cap`% of the pool per second — base 5,
  * so a build that leeches hard is usually throwing most of it away and the number worth improving
- * is the pool, not the leech. The spend is this cast at this rate.
+ * is the pool, not the leech. The spend is this cast at this rate. A skill's own `restore_*` acts
+ * (Astral Totem, Refresh) are a fourth income, and only get a column when the skill has one.
  *
  * `in_combat` is a ten-second cooldown re-stamped by every hit you land or take, so the column
  * used here is the in-combat one. Anything gated on `is_in_combat_is_false` — `out_of_combat_regen`
@@ -51,6 +52,7 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
   const { cost } = dps;
   const rows = cost.budget;
   if (rows.length === 0 && cost.leech.unrated.length === 0) return null;
+  const restores = rows.some((row) => row.restorePerSecond > 0);
 
   return (
     <div className="card">
@@ -62,6 +64,7 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
               <th className="num">Max</th>
               <th className="num">Regen</th>
               <th className="num">Leech</th>
+              {restores && <th className="num">Restored</th>}
               <th className="num">Spent</th>
               <th className="num">Net</th>
               <th className="num">Empty in</th>
@@ -78,6 +81,11 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
                 <td className="num">
                   {row.leechPerSecond === 0 ? "—" : `${smart(row.leechPerSecond)}/s`}
                 </td>
+                {restores && (
+                  <td className="num" title="What this skill's own restore acts put back while you stand in them">
+                    {row.restorePerSecond === 0 ? "—" : `${smart(row.restorePerSecond)}/s`}
+                  </td>
+                )}
                 <td className="num">
                   {row.costPerSecond === 0 ? "—" : `${smart(row.costPerSecond)}/s`}
                 </td>

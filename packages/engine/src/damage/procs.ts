@@ -185,7 +185,17 @@ export type Proc = {
   limit?: ProcLimit;
   /** The gate that stopped it, when `limit` is `wrong-skill`. */
   needsTag?: string;
+  /**
+   * What one proc puts back into your pools: the procced spell's own `restore_*` acts (Glacial
+   * Mend off Hoarfrost Armor, Energy Recover off Zen). Absent when it restores nothing.
+   */
+  restoresPerProc?: ResourceAmount[];
+  /** What one proc's hits bank as leech and on-hit, before the cap. */
+  leechPerProc?: ResourceAmount[];
 };
+
+/** An amount of one pool. */
+export type ResourceAmount = { resource: string; amount: number };
 
 /** One cast of a procced spell: its blended damage and how it crits. */
 export type ProcCast = {
@@ -194,6 +204,8 @@ export type ProcCast = {
   critDamage: number;
   /** What the cast summons, when it does. Its lifetime damage is already inside `damage`. */
   pets?: { perProc: number; lifeSeconds: number };
+  restores?: ResourceAmount[];
+  leech?: ResourceAmount[];
 };
 
 /**
@@ -219,11 +231,16 @@ export function procCastOf(
           petsPerCast: number;
           lifeSeconds: number;
         }[];
+        cost?: {
+          restores: { byResource: readonly { resource: string; perCast: number }[] };
+          leech: { byResource: readonly { resource: string; generatedPerCast: number }[] };
+        };
       }
     | undefined,
 ): ProcCast {
   if (result === undefined) return { damage: 0, critChance: 0, critDamage: 0 };
-  const cast = directCastOf(result);
+  const sustain = sustainOf(result.cost);
+  const cast = { ...directCastOf(result), ...sustain };
   // A summon's cast deals nothing itself; what it is worth is the pets, and a proc-summoned pet is
   // on no clock of the summoning skill's — so one proc is worth their whole life. Whether the
   // summoning cast "crit" changes nothing about them, so the same amount goes on both branches
@@ -232,6 +249,7 @@ export function procCastOf(
   if (summoned.length === 0) return cast;
   const petDamage = summoned.reduce((sum, s) => sum + s.damagePerSummon!, 0);
   return {
+    ...sustain,
     damage: cast.damage + petDamage,
     critChance: cast.damage > 0 ? cast.critChance : 0,
     critDamage: cast.critDamage + petDamage,
@@ -239,6 +257,24 @@ export function procCastOf(
       perProc: summoned.reduce((sum, s) => sum + s.petsPerCast, 0),
       lifeSeconds: Math.max(...summoned.map((s) => s.lifeSeconds)),
     },
+  };
+}
+
+/** A cast's own restores and leech, per cast, in the shape a proc carries them. */
+function sustainOf(cost: {
+  restores: { byResource: readonly { resource: string; perCast: number }[] };
+  leech: { byResource: readonly { resource: string; generatedPerCast: number }[] };
+} | undefined): Pick<ProcCast, "restores" | "leech"> {
+  if (cost === undefined) return {};
+  const restores = cost.restores.byResource
+    .filter((r) => r.perCast > 0)
+    .map((r) => ({ resource: r.resource, amount: r.perCast }));
+  const leech = cost.leech.byResource
+    .filter((r) => r.generatedPerCast > 0)
+    .map((r) => ({ resource: r.resource, amount: r.generatedPerCast }));
+  return {
+    ...(restores.length === 0 ? {} : { restores }),
+    ...(leech.length === 0 ? {} : { leech }),
   };
 }
 
@@ -403,6 +439,8 @@ export function resolveProcs(input: ProcInput): Proc[] {
         : { critChance: cast.critChance, critDamagePerProc: cast.critDamage }),
       dps: damagePerProc * perSecond,
       ...(cast?.pets === undefined ? {} : { pets: { ...cast.pets, alive: 0 } }),
+      ...(cast?.restores === undefined ? {} : { restoresPerProc: cast.restores }),
+      ...(cast?.leech === undefined ? {} : { leechPerProc: cast.leech }),
       ...(limit === undefined
         ? damagePerProc <= 0 && perSecond > 0
           ? { limit: "no-damage" as const }
@@ -581,6 +619,8 @@ export function rotationProcs(
     limits: (ProcLimit | undefined)[];
     needsTag?: string;
     consumes?: Proc["consumes"];
+    restoresPerProc?: ResourceAmount[];
+    leechPerProc?: ResourceAmount[];
   };
 
   const merged = new Map<string, Acc>();
@@ -619,6 +659,8 @@ export function rotationProcs(
       acc.limits.push(proc.limit);
       if (acc.consumes === undefined && proc.consumes !== undefined) acc.consumes = proc.consumes;
       if (acc.needsTag === undefined && proc.needsTag !== undefined) acc.needsTag = proc.needsTag;
+      if (acc.restoresPerProc === undefined && proc.restoresPerProc !== undefined) acc.restoresPerProc = proc.restoresPerProc;
+      if (acc.leechPerProc === undefined && proc.leechPerProc !== undefined) acc.leechPerProc = proc.leechPerProc;
     }
   }
 
@@ -635,6 +677,8 @@ export function rotationProcs(
     const triggered = triggersPerSecond * chance;
     const perSecond = Math.min(triggered, capPerSecond, supplyCap);
     const limit = acc.limits.some((l) => l === undefined) ? undefined : worstLimit(acc.limits);
+    // `no-damage` explains a zero DPS, it does not stop the proc: a heal still fires.
+    const fires = limit === undefined || limit === "no-damage";
 
     out.push({
       statId: acc.statId,
@@ -643,7 +687,7 @@ export function rotationProcs(
       chance,
       cooldownTicks: acc.cooldownTicks,
       triggersPerSecond,
-      perSecond: limit === undefined ? perSecond : 0,
+      perSecond: fires ? perSecond : 0,
       ...(limit === undefined && perSecond > 0
         ? {
             boundBy:
@@ -656,6 +700,8 @@ export function rotationProcs(
         : {}),
       ...(acc.consumes === undefined ? {} : { consumes: acc.consumes }),
       ...(acc.pets === undefined ? {} : { pets: acc.pets }),
+      ...(acc.restoresPerProc === undefined ? {} : { restoresPerProc: acc.restoresPerProc }),
+      ...(acc.leechPerProc === undefined ? {} : { leechPerProc: acc.leechPerProc }),
       damagePerProc: acc.damagePerProc,
       ...(acc.crit === undefined
         ? {}

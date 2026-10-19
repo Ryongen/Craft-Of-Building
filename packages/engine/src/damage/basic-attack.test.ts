@@ -45,7 +45,20 @@ const SWING_ONLY = statEntry("swing_only_damage", {
   effect: [effectBlock("flat_damage", ["add_swing_damage"], ["is_is_basic_atk_true"])],
 });
 
+/** `mana_on_basic_hit` as the pack ships it: a leech-type restore, gated on the swing. */
+const MANA_ON_BASIC_HIT = statEntry("mana_on_basic_hit", {
+  effect: [effectBlock("after_damage_bonuses", ["restore_mana_per_stat_data"], ["is_is_basic_atk_true"])],
+});
+
 const EFFECTS = {
+  restore_mana_per_stat_data: {
+    id: "restore_mana_per_stat_data",
+    ser: "restore_resource",
+    type: "mana",
+    restore_type: "leech",
+    num_provider: { type: "STAT_DATA", calc: "" },
+    side: "Source",
+  },
   add_swing_damage: {
     id: "add_swing_damage",
     ser: "add_to_number",
@@ -56,7 +69,11 @@ const EFFECTS = {
 
 function snapshotWith(stats: Record<string, number>, slotMulti?: number) {
   return engineSnapshot({
-    mmorpg_stat: { swing_only_damage: SWING_ONLY, weapon_damage: statEntry("weapon_damage") },
+    mmorpg_stat: {
+      swing_only_damage: SWING_ONLY,
+      weapon_damage: statEntry("weapon_damage"),
+      mana_on_basic_hit: MANA_ON_BASIC_HIT,
+    },
     mmorpg_stat_condition: CONDITIONS,
     mmorpg_stat_effect: EFFECTS,
     mmorpg_base_stats: {
@@ -222,4 +239,12 @@ test("an unarmed swing gets no weapon multiplier, matching the UNARMED_ATTACK gu
     false,
   );
   closeTo(result.hit.hit.total, 100);
+});
+
+test("resource on basic hit is banked at the swing rate", () => {
+  const result = basicAttack(build(2), snapshotWith({ weapon_damage: 100, mana_on_basic_hit: 5 }), {})!;
+  const mana = result.leech.byResource.find((r) => r.resource === "mana")!;
+  assert.equal(mana.sources[0]?.statId, "mana_on_basic_hit");
+  closeTo(mana.generatedPerCast, 5);
+  closeTo(mana.generatedPerSecond, 10);
 });

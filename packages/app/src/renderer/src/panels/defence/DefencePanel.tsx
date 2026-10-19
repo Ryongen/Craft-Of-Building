@@ -19,6 +19,7 @@ import type {
   OverTime,
   Resources,
   SelfSustain,
+  SkillIncome,
 } from "@cte2/engine";
 import { useMemo, type ReactNode } from "react";
 
@@ -102,7 +103,7 @@ export function DefencePanel(): ReactNode {
             summary="one tick a second"
             defaultOpen={false}
           >
-            <RegenTable resources={resources} />
+            <RegenTable resources={resources} income={derived.income} />
           </Panel>
 
           {/*
@@ -375,8 +376,10 @@ function SelfDamageSustain({
  * health regeneration, which is what makes the Blood Magic game changer a sustain question rather
  * than a cosmetic one.
  */
-function RegenTable({ resources }: { resources: Resources }): ReactNode {
+function RegenTable({ resources, income }: { resources: Resources; income: SkillIncome }): ReactNode {
   const [technical] = useTechnical();
+  const incomeOf = (resource: string) => income.byResource.find((r) => r.resource === resource);
+  const fed = income.byResource.some((r) => r.total > 0);
   const fights = resources.byResource.some(
     (entry) => Math.abs(entry.inCombatPerSecond - entry.perSecond) > 1e-6,
   );
@@ -406,6 +409,9 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
             <th className="num">% of max</th>
             <th className="num">Resting</th>
             <th className="num">In combat</th>
+            {fed && <th className="num">Leech</th>}
+            {fed && <th className="num">Restored</th>}
+            {fed && <th className="num">Total</th>}
             <th className="num">Full in</th>
           </tr>
         </thead>
@@ -431,6 +437,26 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
               >
                 {smart(entry.inCombatPerSecond)}
               </td>
+              {fed && (
+                <td
+                  className="num"
+                  title={(() => {
+                    const row = incomeOf(entry.resource);
+                    if (row === undefined || row.leechGenerated <= row.leechCap) return undefined;
+                    return `${smart(row.leechGenerated)}/s generated, capped by ${entry.resource}_leech_cap`;
+                  })()}
+                >
+                  {(incomeOf(entry.resource)?.leech ?? 0) > 0 ? smart(incomeOf(entry.resource)!.leech) : "—"}
+                </td>
+              )}
+              {fed && (
+                <td className="num" title="Your skills' own restore effects: direct heals, not leech">
+                  {(incomeOf(entry.resource)?.restored ?? 0) > 0 ? smart(incomeOf(entry.resource)!.restored) : "—"}
+                </td>
+              )}
+              {fed && (
+                <td className="num">{smart(entry.inCombatPerSecond + (incomeOf(entry.resource)?.total ?? 0))}</td>
+              )}
               <td className="num">
                 {entry.secondsToFull === undefined ? "—" : `${num(entry.secondsToFull, 1)}s`}
               </td>
@@ -483,6 +509,17 @@ function RegenTable({ resources }: { resources: Resources }): ReactNode {
           </>
         )}
       </div>
+
+      {fed && (
+        <div className="faint text-sm mt-4" style={{ maxWidth: 760 }}>
+          Leech is leech, on-hit and on-basic-hit, paid out no faster than the leech cap. Restored is
+          your skills&apos; own restore effects (Astral Totem, Frost Nova under Overheat, Glacial
+          Mend), which heal directly. Both come from{" "}
+          {income.basis === "rotation" ? "the Full DPS rotation" : income.basis === "main" ? "the main skill" : "no skill"}
+          {income.swings ? " plus your basic attacks" : ""}. It only flows while you&apos;re hitting
+          things, so Full in still uses regeneration alone.
+        </div>
+      )}
 
       {resources.byResource
         .filter((entry) => entry.note !== undefined)

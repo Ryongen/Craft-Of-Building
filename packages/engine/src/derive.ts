@@ -26,6 +26,7 @@ import type { StatContext } from "./context.js";
 import { basicAttack, type BasicAttack } from "./damage/basic-attack.js";
 import { defence, type Defence } from "./damage/defence.js";
 import { simulateDps, simulateFullDps, type DpsResult, type FullDpsResult } from "./damage/dps.js";
+import { skillIncome, type SkillIncome } from "./damage/income.js";
 import type { EffectState } from "./damage/effect-state.js";
 import { resources, type Resources } from "./damage/resources.js";
 import { selfSustain, type SelfSustain } from "./damage/self-sustain.js";
@@ -141,6 +142,12 @@ export type DerivedBuild = {
    * `undefined` for a character holding nothing that swings.
    */
   basic: BasicAttack | undefined;
+  /**
+   * What your hits and skills put back beside regeneration: leech, on-hit, on-basic-hit and the
+   * skills' own restore acts, from the ticked rotation (or the main skill) plus your swings.
+   * The sidebar, the Defence tab and the rotation cost all read this one figure.
+   */
+  income: SkillIncome;
   /** Wall-clock milliseconds the whole recomputation took, shown in the status bar. */
   elapsedMs: number;
   /** Per-stat provenance, built lazily — only the stat a user opened is assembled. */
@@ -357,6 +364,7 @@ export function deriveBuild(doc: BuildDoc, snapshot: Snapshot): DerivedBuild {
     dps,
     fullDps,
     basic,
+    income: skillIncome({ fullDps, dps, basic, sheet: result.stats }),
     elapsedMs,
 
     breakdown: characterBreakdown,

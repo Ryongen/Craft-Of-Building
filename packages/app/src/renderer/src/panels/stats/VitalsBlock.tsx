@@ -77,6 +77,7 @@ function same(a: SheetFocus | null, b: SheetFocus): boolean {
   if (a === null || a.kind !== b.kind) return false;
   if (a.kind === "figure" && b.kind === "figure") return a.id === b.id;
   if (a.kind === "ehp" && b.kind === "ehp") return a.element === b.element;
+  if (a.kind === "income" && b.kind === "income") return a.resource === b.resource;
   if ((a.kind === "stat" || a.kind === "skill-stat") && "statId" in b) return a.statId === b.statId;
   return false;
 }
@@ -383,7 +384,8 @@ function RotationCost({
   return (
     <>
       {pools.map((p, i) => {
-        const short = p.perSecond > p.regen;
+        const short = p.perSecond > p.income;
+        const extra = p.leech + p.restored;
         return (
           <Row
             key={p.pool}
@@ -394,6 +396,7 @@ function RotationCost({
             hint={
               `${smart(p.perPass)} per ${num(seconds, 2)}s pass through the ticked skills. ` +
               `In-combat regeneration is ${smart(p.regen)}/s` +
+              (extra > 0 ? ` and the skills put back ${smart(extra)}/s` : "") +
               (short ? ", so you can't keep this rotation up." : ", which covers it.") +
               " Click for each skill's cost."
             }
@@ -564,6 +567,7 @@ function Survival({
           onSelect={pick({ kind: "stat", statId: "health_regen" })}
         />
       )}
+      <IncomeRow derived={derived} resource="health" focus={focus} pick={pick} />
 
       {/* Under health, ahead of the spending pool: the shield is the other half of what a hit
           has to chew through, so it belongs with health rather than with mana. */}
@@ -583,6 +587,7 @@ function Survival({
           onSelect={pick({ kind: "stat", statId: "magic_shield_regen" })}
         />
       )}
+      <IncomeRow derived={derived} resource="magic_shield" focus={focus} pick={pick} />
 
       {/* The main pool first, then mana and energy even when the skill spends neither, so the
           player can see every pool they have. Blood stays out unless it is the main one: it is
@@ -606,6 +611,7 @@ function Survival({
                 active={same(focus, { kind: "stat", statId: `${pool.resource}_regen` })}
                 onSelect={pick({ kind: "stat", statId: `${pool.resource}_regen` })}
               />
+              <IncomeRow derived={derived} resource={pool.resource} focus={focus} pick={pick} />
             </Fragment>
           ),
       )}
@@ -815,6 +821,66 @@ function SwingVitals({ derived }: { derived: DerivedBuild }): ReactNode {
       )}
       <Row label="Combined DPS" value={smart(basic.dps + basic.procDps + basic.ailmentDps)} strong />
     </div>
+  );
+}
+
+/**
+ * Leech and the skills' own restores into one pool, under its regeneration row — two rows,
+ * because the game treats them apart: leech is banked and capped, a restore is a direct heal.
+ *
+ * Regeneration is all the sheet can say on its own; these need something pressed, so they read
+ * `derived.income` — the ticked rotation, or the main skill, plus your swings. Both open the
+ * same breakdown of where it came from.
+ */
+function IncomeRow({
+  derived,
+  resource,
+  focus,
+  pick,
+}: {
+  derived: DerivedBuild;
+  resource: string;
+  focus: SheetFocus | null;
+  pick: Pick;
+}): ReactNode {
+  const income = derived.income.byResource.find((r) => r.resource === resource);
+  if (income === undefined || income.total <= 0) return null;
+  const target: SheetFocus = { kind: "income", resource };
+  const from =
+    (derived.income.basis === "rotation"
+      ? "the Full DPS rotation"
+      : derived.income.basis === "main"
+        ? "the main skill"
+        : "no skill") + (income.fromSwings > 0 ? " and your basic attacks" : "");
+  return (
+    <>
+      {income.leech > 0 && (
+        <Row
+          indent
+          label="Leech and on-hit"
+          value={`${num(income.leech, 2)}/s`}
+          hint={
+            `From ${from}` +
+            (income.leechGenerated > income.leechCap
+              ? `: ${num(income.leechGenerated, 0)}/s generated, paid out at ${resource}_leech_cap.`
+              : ".") +
+            " Click for each source."
+          }
+          active={same(focus, target)}
+          onSelect={pick(target)}
+        />
+      )}
+      {income.restored > 0 && (
+        <Row
+          indent
+          label="Restored by skills"
+          value={`${num(income.restored, 2)}/s`}
+          hint={`Your skills' own restore effects from ${from}: direct heals, not leech, so no cap. Click for each source.`}
+          active={same(focus, target)}
+          onSelect={pick(target)}
+        />
+      )}
+    </>
   );
 }
 
