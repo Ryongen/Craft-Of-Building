@@ -98,9 +98,13 @@ export function TreePanel(): ReactNode {
     const out = new Set<string>();
     if (needle.length === 0 || graph === undefined) return out;
 
-    for (const [perkId, registryEntry] of Object.entries(
-      world.snapshot.registries["mmorpg_perk"] ?? {},
-    )) {
+    // Only perks on the tree being shown: the registry holds all three trees plus perks no tree
+    // places, and counting those reported matches nobody could find on the canvas.
+    const registry = world.snapshot.registries["mmorpg_perk"] ?? {};
+    const onTree = new Set([...graph.nodes.values()].map((node) => node.perkId));
+    for (const perkId of onTree) {
+      const registryEntry = registry[perkId];
+      if (registryEntry === undefined) continue;
       if (perkId.toLowerCase().includes(needle)) {
         out.add(perkId);
         continue;
@@ -127,6 +131,14 @@ export function TreePanel(): ReactNode {
     }
     return out;
   }, [query, graph, world.snapshot]);
+
+  // Nodes, not perks: one perk can sit on several nodes, and the nodes are what light up.
+  const matchingNodes = useMemo(() => {
+    if (graph === undefined || highlighted.size === 0) return 0;
+    let count = 0;
+    for (const node of graph.nodes.values()) if (highlighted.has(node.perkId)) count++;
+    return count;
+  }, [graph, highlighted]);
 
   // `character.pointTotals` wins where a capture recorded it: `getFreePoints` includes the
   // quest and item bonus points, which is the difference between "126 of 101, needs bonus
@@ -250,7 +262,7 @@ export function TreePanel(): ReactNode {
           width={240}
         />
         {query.trim().length > 0 && (
-          <div className="tree-hud faint">{highlighted.size} matching perks</div>
+          <div className="tree-hud faint">{matchingNodes} matching {matchingNodes === 1 ? "node" : "nodes"}</div>
         )}
 
         <div className="grow" />

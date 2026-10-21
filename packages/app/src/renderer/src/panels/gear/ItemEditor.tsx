@@ -2064,14 +2064,21 @@ function Sockets({
               onChange={(value) => setRuneRoll(index, value)}
             />
             <button
-              onClick={() =>
+              onClick={() => {
+                const remaining = runes.filter((_, i) => i !== index);
+                // The runeword was what these runes spelled. Dropping one of *its* runes unspells
+                // it; dropping a spare rune in another socket leaves it standing.
+                const spelled =
+                  item.runeword === undefined ? undefined : runeword(snapshot, item.runeword);
+                const unspelled =
+                  item.runeword !== undefined &&
+                  (spelled === undefined || !runewordMatches(spelled, remaining));
                 patch({
-                  runes: runes.filter((_, i) => i !== index),
+                  runes: remaining,
                   runeRolls: runeRolls.filter((_, i) => i !== index),
-                  // The runeword was what these runes spelled; dropping one unspells it.
-                  ...(item.runeword === undefined ? {} : { runeword: undefined, runewordRoll: undefined }),
-                })
-              }
+                  ...(unspelled ? { runeword: undefined, runewordRoll: undefined } : {}),
+                });
+              }}
             >
               ✕
             </button>
