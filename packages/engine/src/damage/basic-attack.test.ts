@@ -248,3 +248,12 @@ test("resource on basic hit is banked at the swing rate", () => {
   closeTo(mana.generatedPerCast, 5);
   closeTo(mana.generatedPerSecond, 10);
 });
+
+test("a build that never swings has no basic attack, so no swing DPS, procs or leech", () => {
+  const snapshot = snapshotWith({ weapon_damage: 100, mana_on_basic_hit: 5 });
+  const swings = build(2);
+  assert.notEqual(basicAttack(swings, snapshot, {}), undefined);
+
+  const never = { ...swings, config: { noBasicAttack: true } } as BuildDoc;
+  assert.equal(basicAttack(never, snapshot, {}), undefined);
+});

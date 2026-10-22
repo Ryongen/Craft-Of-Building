@@ -159,6 +159,7 @@ export function SkillsPanel(): ReactNode {
   // The engine's own answer, not a second copy of its rule — see `mainSkillIndex`.
   const mainIndex = mainSkillIndex(derived);
   const swingIsMain = doc.config?.mainIsBasicAttack === true;
+  const swingsOff = doc.config?.noBasicAttack === true;
   const basicRank = useBasicRanking(sortByDps);
 
   // A skill removed from under the selection leaves it pointing past the end.
@@ -242,7 +243,7 @@ export function SkillsPanel(): ReactNode {
           putting it there would make it count against `MAX_SKILL_GEMS`.
         */}
         <div
-          className={`skill-row basic${selected.kind === "basic" ? " selected" : ""}`}
+          className={`skill-row basic${selected.kind === "basic" ? " selected" : ""}${swingsOff ? " off" : ""}`}
           onClick={() => setSelection({ kind: "basic" })}
         >
           <span className="ellipsis grow">Basic attack</span>
@@ -251,9 +252,15 @@ export function SkillsPanel(): ReactNode {
               main
             </span>
           )}
-          <span className="badge" title="Always available. Not a Skill, so it doesn't use a hotbar slot">
-            weapon
-          </span>
+          {swingsOff ? (
+            <span className="badge" title="Turned off: this build doesn't basic attack">
+              off
+            </span>
+          ) : (
+            <span className="badge" title="Always available. Not a Skill, so it doesn't use a hotbar slot">
+              weapon
+            </span>
+          )}
           {basicRank !== undefined && <span className="num text-sm">{smart(Math.round(basicRank))}</span>}
         </div>
 

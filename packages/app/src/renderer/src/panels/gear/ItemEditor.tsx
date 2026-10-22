@@ -87,6 +87,7 @@ import {
   type Vitals,
 } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
+import { useEnchantClipboard } from "../../state/enchant-clipboard.js";
 import { applyPatch, type Patch } from "../../state/patch.js";
 import { type At, exactModLines, floatingStyle, modDetail, modKeywords, useWorld } from "@cte2/view";
 import {
@@ -817,6 +818,22 @@ function Enchantments({
   );
 
   const on = Object.entries(item.enchantments ?? {});
+  const copied = useEnchantClipboard((s) => s.copied);
+  const copy = useEnchantClipboard((s) => s.copy);
+  const clearCopied = useEnchantClipboard((s) => s.clear);
+
+  // Pasting merges: a copied enchantment replaces the same one already here, at the copied level,
+  // and the piece keeps the rest. Keyed by id, so the result cannot hold one twice.
+  const pasted = copied === undefined ? undefined : { ...(item.enchantments ?? {}), ...copied };
+  const pasteChanges =
+    pasted !== undefined &&
+    Object.entries(pasted).some(([id, level]) => item.enchantments?.[id] !== level);
+  const copiedNames =
+    copied === undefined
+      ? ""
+      : Object.entries(copied)
+          .map(([id, level]) => `${enchantName(id)} ${level}`)
+          .join(", ");
 
   const set = (enchantId: string, level: number | undefined): void => {
     const next: Record<string, number> = { ...(item.enchantments ?? {}) };
@@ -880,6 +897,38 @@ function Enchantments({
         width={280}
         onAdd={(enchantId) => set(enchantId, 1)}
       />
+
+      {(on.length > 0 || copied !== undefined) && (
+        <div className="row wrap mt-3" style={{ gap: 4 }}>
+          {on.length > 0 && (
+            <button
+              title="Copy this piece's enchantments so you can paste them onto another piece"
+              onClick={() => copy(item.enchantments ?? {})}
+            >
+              Copy enchantments
+            </button>
+          )}
+          {copied !== undefined && (
+            <>
+              <button
+                title={
+                  pasteChanges
+                    ? `Paste ${copiedNames}. An enchantment already on this piece is replaced at the copied level; the others stay.`
+                    : `This piece already has ${copiedNames}.`
+                }
+                disabled={!pasteChanges}
+                onClick={() => pasted !== undefined && patch({ enchantments: pasted })}
+              >
+                Paste {Object.keys(copied).length} enchantment
+                {Object.keys(copied).length === 1 ? "" : "s"}
+              </button>
+              <button title="Forget the copied enchantments" onClick={clearCopied}>
+                ✕
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </>
   );
 }

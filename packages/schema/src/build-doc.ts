@@ -837,6 +837,15 @@ export type BuildConfig = {
    * and every Skill's `main` flag is ignored.
    */
   mainIsBasicAttack?: boolean;
+  /**
+   * This build never swings its weapon.
+   *
+   * The swing is otherwise always on its own clock beside the Skills, so its DPS, its
+   * `*_on_basic_hit` procs and its leech count toward everything. Set, there is no basic attack at
+   * all: `basicAttack` returns nothing and none of those are counted. The weapon fields are kept,
+   * so turning it back on restores the same swing.
+   */
+  noBasicAttack?: boolean;
   /** Shorthand for `enemy.level`. `enemy.level` wins when both are set. */
   enemyLevel?: number;
   /** The map the fight is in — its tier and affixes. Unset means open world. */

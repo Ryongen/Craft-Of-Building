@@ -37,9 +37,11 @@ export function BasicAttackCard(): ReactNode {
   const basic = derived.basic;
   const swingIsMain = useBuild((s) => s.doc.config?.mainIsBasicAttack === true);
   const setMainBasicAttack = useBuild((s) => s.setMainBasicAttack);
+  const swings = useBuild((s) => s.doc.config?.noBasicAttack !== true);
+  const setBasicAttackEnabled = useBuild((s) => s.setBasicAttackEnabled);
 
   return (
-    <div className="card">
+    <div className="card" style={swings ? undefined : { opacity: 0.55 }}>
       <div className="row wrap mb-3">
         <div className="section-title mt-0 grow">Basic attack</div>
         {/*
@@ -58,9 +60,29 @@ export function BasicAttackCard(): ReactNode {
           />
           main skill
         </label>
+        {/*
+          For a build that never swings. Off, the swing's DPS, procs and leech leave every figure;
+          the weapon boxes below stay, since attack damage still feeds every Skill's hit.
+        */}
+        <label
+          className="field"
+          title="Untick if this build never basic attacks. Its swing DPS, procs and leech are then left out of every figure. The weapon values below are kept and still count."
+        >
+          <input
+            type="checkbox"
+            checked={swings}
+            onChange={(event) => setBasicAttackEnabled(event.target.checked)}
+          />
+          enabled
+        </label>
       </div>
 
-      {basic === undefined ? (
+      {!swings ? (
+        <div className="faint mb-4">
+          Turned off: this build doesn&apos;t basic attack, so swings add no DPS, procs or leech
+          anywhere. Weapon attack damage below still adds to your Skills&apos; damage.
+        </div>
+      ) : basic === undefined ? (
         <>
         <Plain>
           <div className="faint mb-4">

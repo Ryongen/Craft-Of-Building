@@ -289,6 +289,13 @@ export type BuildState = {
    * returns to the Skill you had rather than to whichever one the engine defaults to.
    */
   setMainBasicAttack(on: boolean): void;
+  /**
+   * Say whether this build swings its weapon at all.
+   *
+   * Off drops the swing from every figure — its DPS, procs and leech — and hands the main figure
+   * back to the Skills. The weapon speed and damage stay, so switching it back on restores them.
+   */
+  setBasicAttackEnabled(on: boolean): void;
 
   // -- buffs and config ---------------------------------------------------
   setAuras(auras: AuraSetup[]): void;
@@ -813,6 +820,14 @@ export const useBuild = create<BuildState>((set) => ({
 
   setMainBasicAttack: (on) =>
     edit(set, (doc) => withConfig(doc, { mainIsBasicAttack: on ? true : undefined })),
+
+  setBasicAttackEnabled: (on) =>
+    edit(set, (doc) =>
+      withConfig(
+        doc,
+        on ? { noBasicAttack: undefined } : { noBasicAttack: true, mainIsBasicAttack: undefined },
+      ),
+    ),
 
   setAuras: (auras) => edit(set, (doc) => prune(doc, "auras", auras)),
   setFoodBuffs: (buffs) => edit(set, (doc) => prune(doc, "foodBuffs", buffs)),

@@ -141,6 +141,9 @@ export function basicAttack(
   snapshot: Snapshot,
   options: BasicAttackOptions = {},
 ): BasicAttack | undefined {
+  // The build says it never swings, so there is nothing to count: no swing DPS, no procs, no leech.
+  if (build.config?.noBasicAttack === true) return undefined;
+
   const pickOptions = {
     ...(options.balanceId === undefined ? {} : { balanceId: options.balanceId }),
     ...(options.baseStatsId === undefined ? {} : { baseStatsId: options.baseStatsId }),
