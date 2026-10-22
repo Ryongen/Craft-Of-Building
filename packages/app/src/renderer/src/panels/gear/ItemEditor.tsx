@@ -219,10 +219,14 @@ const QUALITY_TITLE =
   "`int p = (int) (this.p + gear.getQualityBaseStatsBonus(stack))` in BaseStatsData.GetAllStats. " +
   "Affixes, implicits, runes and sockets are untouched.";
 
+/** A piece worn in the edited item's slot, and the label the paperdoll gives its place. */
+export type EquippedPiece = { label: string; item: Item };
+
 export function ItemEditor({
   item,
   slotId,
   wearing,
+  equipped = [],
   onChange,
   onRemove,
 }: {
@@ -233,6 +237,8 @@ export function ItemEditor({
    * "Sort by DPS" has nothing to price against and is disabled.
    */
   wearing?: ((item: Item) => BuildDoc) | undefined;
+  /** What else is worn in this item's slot, offered as a source of enchantments. */
+  equipped?: EquippedPiece[];
   onChange: (item: Item) => void;
   onRemove: () => void;
 }): ReactNode {
@@ -765,7 +771,7 @@ export function ItemEditor({
         count={enchantmentCount}
         summary={resolveHint(GEAR_COPY.vanillaAttribute, technical)}
       >
-        <Enchantments item={item} patch={patch} />
+        <Enchantments item={item} patch={patch} equipped={equipped} />
       </Accordion>
     </div>
   );
@@ -806,9 +812,11 @@ function uniqueStatCount(snapshot: Snapshot, item: Item): number {
 function Enchantments({
   item,
   patch,
+  equipped,
 }: {
   item: Item;
   patch: (next: Patch<Item>) => void;
+  equipped: EquippedPiece[];
 }): ReactNode {
   const { snapshot } = useWorld();
   const compats = useMemo(() => enchantCompats(snapshot), [snapshot]);
@@ -822,18 +830,24 @@ function Enchantments({
   const copy = useEnchantClipboard((s) => s.copy);
   const clearCopied = useEnchantClipboard((s) => s.clear);
 
-  // Pasting merges: a copied enchantment replaces the same one already here, at the copied level,
+  // Pasting merges: a pasted enchantment replaces the same one already here, at the pasted level,
   // and the piece keeps the rest. Keyed by id, so the result cannot hold one twice.
-  const pasted = copied === undefined ? undefined : { ...(item.enchantments ?? {}), ...copied };
-  const pasteChanges =
-    pasted !== undefined &&
-    Object.entries(pasted).some(([id, level]) => item.enchantments?.[id] !== level);
-  const copiedNames =
-    copied === undefined
-      ? ""
-      : Object.entries(copied)
-          .map(([id, level]) => `${enchantName(id)} ${level}`)
-          .join(", ");
+  const merged = (from: Record<string, number>): Record<string, number> => ({
+    ...(item.enchantments ?? {}),
+    ...from,
+  });
+  const changes = (from: Record<string, number>): boolean =>
+    Object.entries(from).some(([id, level]) => item.enchantments?.[id] !== level);
+  const names = (from: Record<string, number>): string =>
+    Object.entries(from)
+      .map(([id, level]) => `${enchantName(id)} ${level}`)
+      .join(", ");
+
+  const pasteChanges = copied !== undefined && changes(copied);
+  const copiedNames = copied === undefined ? "" : names(copied);
+  const sources = equipped.filter(
+    (piece) => Object.keys(piece.item.enchantments ?? {}).length > 0,
+  );
 
   const set = (enchantId: string, level: number | undefined): void => {
     const next: Record<string, number> = { ...(item.enchantments ?? {}) };
@@ -898,8 +912,26 @@ function Enchantments({
         onAdd={(enchantId) => set(enchantId, 1)}
       />
 
-      {(on.length > 0 || copied !== undefined) && (
+      {(on.length > 0 || copied !== undefined || sources.length > 0) && (
         <div className="row wrap mt-3" style={{ gap: 4 }}>
+          {sources.map((piece) => {
+            const from = piece.item.enchantments ?? {};
+            const differs = changes(from);
+            return (
+              <button
+                key={piece.label}
+                title={
+                  differs
+                    ? `Copy ${names(from)} from your equipped ${piece.label}. An enchantment already on this piece is replaced at that level; the others stay.`
+                    : `This piece already has everything on your equipped ${piece.label}.`
+                }
+                disabled={!differs}
+                onClick={() => patch({ enchantments: merged(from) })}
+              >
+                From equipped {piece.label}
+              </button>
+            );
+          })}
           {on.length > 0 && (
             <button
               title="Copy this piece's enchantments so you can paste them onto another piece"
@@ -917,7 +949,7 @@ function Enchantments({
                     : `This piece already has ${copiedNames}.`
                 }
                 disabled={!pasteChanges}
-                onClick={() => pasted !== undefined && patch({ enchantments: pasted })}
+                onClick={() => copied !== undefined && patch({ enchantments: merged(copied) })}
               >
                 Paste {Object.keys(copied).length} enchantment
                 {Object.keys(copied).length === 1 ? "" : "s"}

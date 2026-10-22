@@ -83,7 +83,7 @@ import { AugmentList } from "../../ui/Augments.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
 
 import { ImportDialog } from "./ImportDialog.js";
-import { ItemEditor } from "./ItemEditor.js";
+import { type EquippedPiece, ItemEditor } from "./ItemEditor.js";
 import { OmenEditor, omenWord } from "./OmenEditor.js";
 import { JewelList } from "./JewelList.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
@@ -397,6 +397,23 @@ export function GearPanel(): ReactNode {
   }, [editing, doc, targetRow, world.snapshot]);
 
   /**
+   * What is worn in the edited item's slot, other than the item itself — the boots on the
+   * character while editing a pair on the bench, or Ring 2 while editing Ring 1. A mirrored piece
+   * sits in two places and is offered once.
+   */
+  const equippedHere: EquippedPiece[] = [];
+  if (targetRow !== undefined) {
+    const seen = new Set<number>();
+    (placement.byRow.get(targetRow.id) ?? []).forEach((at, nth) => {
+      if (editing?.where === "gear" && at.index === editing.index) return;
+      const item = items[at.index];
+      if (item === undefined || seen.has(at.index)) return;
+      seen.add(at.index);
+      equippedHere.push({ label: placeLabel(world.snapshot, targetRow, nth), item });
+    });
+  }
+
+  /**
    * The whole collection, worn first.
    *
    * Worn first because that is the order they are read in — the character, then what is spare —
@@ -690,6 +707,7 @@ export function GearPanel(): ReactNode {
             item={target}
             where={editing.where}
             wearing={wearing}
+            equipped={equippedHere}
             suppressed={editing.where === "gear" && twoHanded && isOffhand(world.snapshot, target)}
             diagnostics={derived.diagnostics.filter((d) =>
               d.path.startsWith(
@@ -1451,6 +1469,7 @@ function EditorCard({
   item,
   where,
   wearing,
+  equipped,
   suppressed,
   diagnostics,
   onChange,
@@ -1460,6 +1479,8 @@ function EditorCard({
   where: "gear" | "pool";
   /** The document with a version of this item worn — what socket rankings price. */
   wearing: ((item: Item) => BuildDoc) | undefined;
+  /** What else is worn in this item's slot, for copying its enchantments across. */
+  equipped: EquippedPiece[];
   suppressed: boolean;
   diagnostics: Diagnostic[];
   onChange: (item: Item) => void;
@@ -1495,6 +1516,7 @@ function EditorCard({
         item={item}
         slotId={slotId}
         wearing={wearing}
+        equipped={equipped}
         onChange={onChange}
         onRemove={onRemove}
       />
