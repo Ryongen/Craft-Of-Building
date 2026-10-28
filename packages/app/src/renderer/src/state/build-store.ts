@@ -281,6 +281,8 @@ export type BuildState = {
    * duplicate that silently doubled the Full DPS figure would be worse than no button.
    */
   duplicateSkill(index: number): void;
+  /** Swap a skill with its neighbour, `-1` up or `+1` down. Off either end does nothing. */
+  moveSkill(index: number, delta: -1 | 1): void;
   setMainSkill(index: number): void;
   /**
    * Make the weapon swing the main figure, or hand it back to the Skills.
@@ -800,6 +802,14 @@ export const useBuild = create<BuildState>((set) => ({
       delete copy.fullDpsAsBuff;
       delete copy.fullDpsAsProc;
       skills.splice(index + 1, 0, copy);
+      return prune(doc, "skills", skills);
+    }),
+  moveSkill: (index, delta) =>
+    edit(set, (doc) => {
+      const skills = [...(doc.skills ?? [])];
+      const target = index + delta;
+      if (skills[index] === undefined || skills[target] === undefined) return doc;
+      [skills[index], skills[target]] = [skills[target]!, skills[index]!];
       return prune(doc, "skills", skills);
     }),
 

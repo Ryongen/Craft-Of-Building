@@ -89,6 +89,7 @@ export function SkillsPanel(): ReactNode {
   const addSkill = useBuild((s) => s.addSkill);
   const removeSkill = useBuild((s) => s.removeSkill);
   const duplicateSkill = useBuild((s) => s.duplicateSkill);
+  const moveSkill = useBuild((s) => s.moveSkill);
   const toggleSkillFor = useBuild((s) => s.toggleSkillFor);
   const skills = doc.skills ?? [];
 
@@ -296,6 +297,29 @@ export function SkillsPanel(): ReactNode {
           >
             Delete
           </button>
+          {/* Moves within the document, so a ranked list would not show the move — hence off
+              while sorted. The basic attack is not in the document and stays pinned last. */}
+          {(["up", "down"] as const).map((dir) => {
+            const delta = dir === "up" ? -1 : 1;
+            const canMove =
+              !sortByDps &&
+              selected.kind === "skill" &&
+              skills[selected.index + delta] !== undefined;
+            return (
+              <button
+                key={dir}
+                disabled={!canMove}
+                title={sortByDps ? "Turn off Sort skills by DPS to reorder" : `Move this skill ${dir}`}
+                onClick={() => {
+                  if (!canMove || selected.kind !== "skill") return;
+                  moveSkill(selected.index, delta);
+                  setSelection({ kind: "skill", index: selected.index + delta });
+                }}
+              >
+                {dir === "up" ? "↑" : "↓"}
+              </button>
+            );
+          })}
         </div>
 
         <div className="section-title">Skill options</div>
