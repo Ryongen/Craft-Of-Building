@@ -110,6 +110,7 @@ export function SkillsPanel(): ReactNode {
   const [sortByDps, setSortByDps] = useState(false);
   const [gemFilter, setGemFilter] = useState<GemFilter>("compatible");
   const [gemSort, setGemSort] = useState<GemSort>("skill");
+  const [evaluateGems, setEvaluateGems] = useState(true);
 
   /**
    * The rarity every gem this panel hands you arrives at, and is ranked at.
@@ -338,11 +339,31 @@ export function SkillsPanel(): ReactNode {
           Sort skills by DPS
         </label>
 
+        <label
+          className="field mt-2"
+          title={
+            "Prices every support gem against this skill before listing it. Turn it off to pick " +
+            "from a plain list by name without waiting."
+          }
+        >
+          <input
+            type="checkbox"
+            checked={evaluateGems}
+            onChange={(event) => setEvaluateGems(event.target.checked)}
+          />
+          Evaluate support gems
+        </label>
+
         <div className="field mt-2">
           <label title="Compatible gems actually affect this skill's damage. About half the pack's gems do nothing for any given skill.">
             Show support gems
           </label>
-          <select value={gemFilter} onChange={(event) => setGemFilter(event.target.value as GemFilter)}>
+          <select
+            value={gemFilter}
+            disabled={!evaluateGems}
+            title={evaluateGems ? undefined : "Needs Evaluate support gems: compatibility is measured"}
+            onChange={(event) => setGemFilter(event.target.value as GemFilter)}
+          >
             <option value="compatible">Compatible only</option>
             <option value="all">All</option>
           </select>
@@ -352,7 +373,12 @@ export function SkillsPanel(): ReactNode {
           <label title="Skill DPS ranks gems by this skill's own damage. Total DPS ranks them by the whole build's, for gems whose value lands elsewhere: Cooldown on a skill that applies a debuff keeps the debuff up more, which raises every other skill's damage.">
             Sort support gems by
           </label>
-          <select value={gemSort} onChange={(event) => setGemSort(event.target.value as GemSort)}>
+          <select
+            value={gemSort}
+            disabled={!evaluateGems}
+            title={evaluateGems ? undefined : "Needs Evaluate support gems"}
+            onChange={(event) => setGemSort(event.target.value as GemSort)}
+          >
             <option value="skill">Skill DPS</option>
             <option value="total">Total DPS</option>
           </select>
@@ -400,6 +426,7 @@ export function SkillsPanel(): ReactNode {
             spellOptions={spellOptions}
             gemFilter={gemFilter}
             gemSort={gemSort}
+            evaluateGems={evaluateGems}
             gemPreset={gemPreset}
             barFull={full}
           />
@@ -652,6 +679,7 @@ function SkillCard({
   spellOptions,
   gemFilter,
   gemSort,
+  evaluateGems,
   gemPreset,
   barFull,
 }: {
@@ -660,6 +688,8 @@ function SkillCard({
   spellOptions: PickerOption[];
   gemFilter: GemFilter;
   gemSort: GemSort;
+  /** Off, the gem pickers list by name and price nothing. */
+  evaluateGems: boolean;
   /** What a gem linked from this card arrives at — see the panel's own note. `null` leaves it unset. */
   gemPreset: GemPreset | null;
   /** Eight Skills are already on. A disabled one here cannot be switched back on.  */
@@ -1128,7 +1158,12 @@ function SkillCard({
 
       <div className="notice info">
         A support gem changes this skill.{" "}
-        {gemSort === "total" ? (
+        {!evaluateGems ? (
+          <>
+            Evaluation is off, so the gem list is by name. Turn on{" "}
+            <strong>Evaluate support gems</strong> to see what each one would add.
+          </>
+        ) : gemSort === "total" ? (
           <>
             <strong>The gem list is ordered by what each one would add to Total DPS</strong>, the
             whole build&apos;s damage. That counts gems whose value lands on other skills, like
@@ -1160,6 +1195,7 @@ function SkillCard({
           level={level}
           gemFilter={gemFilter}
           gemSort={gemSort}
+          evaluateGems={evaluateGems}
           gemPreset={gemPreset}
           onPatch={(next) => patchSupport(gemIndex, next)}
           onRemove={() => patch({ supports: supports.filter((_, i) => i !== gemIndex) })}
@@ -1182,6 +1218,7 @@ function SkillCard({
               value={undefined}
               compatibleOnly={gemFilter === "compatible"}
               sortBy={gemSort}
+              evaluate={evaluateGems}
               preset={gemPreset ?? undefined}
               onChange={(id) => {
                 // The same link `SupportGemPicker.apply` priced, so the figure you clicked is
@@ -1221,6 +1258,7 @@ function SupportGemRow({
   level,
   gemFilter,
   gemSort,
+  evaluateGems,
   gemPreset,
   onPatch,
   onRemove,
@@ -1232,6 +1270,7 @@ function SupportGemRow({
   level: number;
   gemFilter: GemFilter;
   gemSort: GemSort;
+  evaluateGems: boolean;
   gemPreset: GemPreset | null;
   onPatch: (next: {
     id?: string;
@@ -1284,6 +1323,7 @@ function SupportGemRow({
               value={link.id}
               compatibleOnly={gemFilter === "compatible"}
               sortBy={gemSort}
+              evaluate={evaluateGems}
               preset={gemPreset ?? undefined}
               // Swapping the gem swaps the gem: a different id is a different physical item, so
               // it arrives at the preset rather than inheriting the roll of the one it replaced.

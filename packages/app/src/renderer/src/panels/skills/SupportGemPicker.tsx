@@ -70,6 +70,7 @@ export function SupportGemPicker({
   compatibleOnly = false,
   preset,
   sortBy = "skill",
+  evaluate = true,
 }: {
   skill: SkillSetup;
   skillIndex: number;
@@ -106,6 +107,13 @@ export function SupportGemPicker({
   compatibleOnly?: boolean;
   /** See {@link GemSort}. */
   sortBy?: GemSort;
+  /**
+   * Price every gem before listing it. Off, the list is the pack's gems by name and no engine
+   * pass runs at all — for someone who already knows which gem they want and should not wait
+   * half a second for ninety numbers they will not read. `compatibleOnly` needs the
+   * measurements, so it has nothing to filter on and is ignored.
+   */
+  evaluate?: boolean;
 }): ReactNode {
   const world = useWorld();
   const doc = useBuild((s) => s.doc);
@@ -180,7 +188,7 @@ export function SupportGemPicker({
     candidates,
     apply,
     keyOf,
-    enabled: open,
+    enabled: open && evaluate,
     rank,
     reuseSheetFor,
     skillIndex,
@@ -213,6 +221,16 @@ export function SupportGemPicker({
     // hid them behind a label that said they do nothing, which was not true.
     return matched.filter((row) => row.id === value || !row.comparison.unchanged);
   }, [ranking.rows, query, world.snapshot, compatibleOnly, value]);
+
+  const plainIds = useMemo(() => {
+    if (evaluate) return [];
+    const needle = query.trim().toLowerCase();
+    return candidates
+      .map((id) => ({ id, name: supportGemName(world.snapshot, id) }))
+      .filter(({ id, name }) => needle.length === 0 || `${name} ${id}`.toLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ id }) => id);
+  }, [evaluate, candidates, query, world.snapshot]);
 
   /**
    * Gems this skill already holds in some *other* socket.
@@ -250,7 +268,32 @@ export function SupportGemPicker({
         }}
       />
 
-      {open && (
+      {open && !evaluate && (
+        <div className="picker-list gem-rank-list">
+          <div className="gem-rank-head">
+            <span className="faint">By name · evaluation off</span>
+          </div>
+          {plainIds.length === 0 && <div className="picker-option faint">No match</div>}
+          {plainIds.map((id) => (
+            <PlainGemRow
+              key={id}
+              id={id}
+              selected={id === value}
+              linked={alreadyLinked.has(id)}
+              costMulti={manaMulti(world.snapshot, id)}
+              preset={preset}
+              onPick={() => {
+                if (alreadyLinked.has(id)) return;
+                onChange(id);
+                setOpen(false);
+                setQuery("");
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {open && evaluate && (
         <div className="picker-list gem-rank-list">
           <div className="gem-rank-head">
             <span className="faint">
@@ -417,6 +460,66 @@ function GemRow({
         </>
       )}
 
+      {costMulti !== 1 && (
+        <span className="faint gem-rank-cost" title={resolveHint(SKILLS_COPY.gemCostMulti, technical)}>
+          ×{costMulti.toFixed(2)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** A row of the unpriced list: the gem, its card, and its cost — nothing the engine measured. */
+function PlainGemRow({
+  id,
+  selected,
+  linked,
+  costMulti,
+  preset,
+  onPick,
+}: {
+  id: string;
+  selected: boolean;
+  linked: boolean;
+  costMulti: number;
+  preset: GemPreset | undefined;
+  onPick: () => void;
+}): ReactNode {
+  const [technical] = useTechnical();
+  const world = useWorld();
+  const characterLevel = useBuild((s) => s.doc.character.level);
+  const note = linked
+    ? "Already linked to this skill in another socket. One Skill may not hold two of the same " +
+      "support gem."
+    : selected
+      ? "The gem in this socket now."
+      : undefined;
+  const card = useMemo(
+    () =>
+      supportGemCard(world.snapshot, id, {
+        rollPercent: preset?.rollPercent ?? 100,
+        characterLevel,
+      }),
+    [world.snapshot, id, preset?.rollPercent, characterLevel],
+  );
+  const tip = useGemTooltip(card === undefined ? undefined : note === undefined ? card : { ...card, note });
+
+  return (
+    <div
+      className={`picker-option gem-rank-row${selected ? " active" : ""}${linked ? " linked" : ""}`}
+      onMouseDown={() => {
+        tip.clear();
+        onPick();
+      }}
+      {...tip.props}
+    >
+      {tip.node}
+      <span className="ellipsis gem-rank-name">{supportGemName(world.snapshot, id)}</span>
+      {linked ? (
+        <span className="faint gem-rank-pct">linked</span>
+      ) : selected ? (
+        <span className="faint gem-rank-pct">current</span>
+      ) : null}
       {costMulti !== 1 && (
         <span className="faint gem-rank-cost" title={resolveHint(SKILLS_COPY.gemCostMulti, technical)}>
           ×{costMulti.toFixed(2)}
