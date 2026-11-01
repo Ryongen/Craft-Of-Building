@@ -36,6 +36,7 @@ import {
   type ImportIssue,
   type ImportedThing,
   type Item,
+  type OmenSetup,
   type PasteResult,
 } from "@cte2/schema";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -83,7 +84,7 @@ const FORMAT_LABEL: Record<PasteResult["format"], string> = {
 const DESTINATION: Record<ImportedThing["kind"], string> = {
   gear: "Add to gear",
   jewel: "Add to jewels",
-  omen: "Set as your omen",
+  omen: "Add to the item pool",
   skill: "Add to skills",
   support: "Link into a skill",
   aura: "Add to Augments",
@@ -91,10 +92,13 @@ const DESTINATION: Record<ImportedThing["kind"], string> = {
 
 export function ImportDialog({
   onImport,
+  onImportOmen,
   onClose,
 }: {
   /** Gear only: it goes to the editor, so the slot it lands in is still a choice being made. */
   onImport: (item: Item) => void;
+  /** A codex lands in the pool beside gear, for the same reason. */
+  onImportOmen: (omen: OmenSetup) => void;
   onClose: () => void;
 }): ReactNode {
   const { snapshot } = useWorld();
@@ -102,7 +106,6 @@ export function ImportDialog({
 
   const doc = useBuild((s) => s.doc);
   const addJewel = useBuild((s) => s.addJewel);
-  const setOmen = useBuild((s) => s.setOmen);
   const addSkill = useBuild((s) => s.addSkill);
   const updateSkill = useBuild((s) => s.updateSkill);
   const setAuras = useBuild((s) => s.setAuras);
@@ -142,8 +145,8 @@ export function ImportDialog({
         addJewel(thing.jewel);
         break;
       case "omen":
-        setOmen(thing.omen);
-        break;
+        onImportOmen(thing.omen);
+        return;
       case "skill":
         addSkill(thing.skill);
         break;
@@ -283,7 +286,6 @@ export function ImportDialog({
  */
 function Landing({ thing, name }: { thing: ImportedThing; name?: string | undefined }): ReactNode {
   const { snapshot } = useWorld();
-  const doc = useBuild((s) => s.doc);
 
   const detail = ((): string => {
     switch (thing.kind) {
@@ -302,14 +304,9 @@ function Landing({ thing, name }: { thing: ImportedThing; name?: string | undefi
     }
   })();
 
-  // The one destructive landing: there is exactly one omen slot (`CURIO_BLOCKS` gives OMEN a
-  // count of 1), so pasting one over a build that has one is a replacement, and says so.
-  const replaces = thing.kind === "omen" && doc.omen !== undefined;
-
   return (
     <div className="notice info mt-4">
       Read as {KIND_LABEL[thing.kind]}: <strong>{detail}</strong>
-      {replaces && ". This replaces your current omen."}
     </div>
   );
 }

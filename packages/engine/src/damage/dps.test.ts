@@ -1685,6 +1685,56 @@ test("a Shatter is its own hit and its own rate, and the two are the same solve"
   closeTo(result.ailmentDps, result.ailmentProcDps, "no DoT here, so the clock is all Shatter");
 });
 
+test("every source that freezes fills the one Shatter pool, not only the headline", () => {
+  // Tailwind Sweep's shape: two damage acts per cast, both cold, both freezing. The pool used to
+  // read the headline source alone, so half of what went in never came out as Shatter.
+  const shard = spellEntry("shard", "Cold", "hit100", {
+    config: { tags: { tags: [] }, use_support_gems_from: "", style: "int", cooldown_ticks: 20 },
+  });
+  const part = (shard["attached"] as { on_cast: { acts: unknown[] }[] }).on_cast[0]!;
+  part.acts.push({ type: "damage", map: { element: "Cold", value_calculation: "hit100" } });
+  const snapshot = engineSnapshot({
+    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_spells: { shard },
+    mmorpg_stat: {
+      freeze_chance: statEntry("freeze_chance"),
+      freeze_proc_chance: statEntry("freeze_proc_chance"),
+      freeze_duration: statEntry("freeze_duration"),
+    },
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("freeze_chance", "FLAT", 40),
+        exact("freeze_proc_chance", "FLAT", 25),
+      ]),
+    },
+  });
+  const doc = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "shard", main: true }],
+  } as BuildDoc;
+
+  const result = simulateDps(doc, snapshot);
+  assert.ok(result);
+  assert.equal(result.sources.length, 2, "two damage acts are two sources");
+
+  const rate = result.rate.castsPerCycle / result.rate.cycleSeconds;
+  let gain = 0;
+  let procRate = 0;
+  let decay = 0;
+  for (const s of result.sources) {
+    const freeze = s.hit.average.ailments.find((a) => a.ailment === "freeze")!;
+    const r = s.coverage.hitsPerCast * s.sustained * rate;
+    gain += freeze.accumulated * freeze.chance * r;
+    procRate += freeze.procChance * r;
+    decay = freeze.poolDecayPerSecond;
+  }
+  closeTo(result.ailmentHit, gain / (procRate + decay), "one pool, filled and tipped by both");
+  closeTo(result.ailmentProcDps, result.ailmentHit * procRate);
+});
+
 test("the Shatter pool converges on one shatter's worth of hits as the decay stops mattering", () => {
   // The shape worth knowing, and the one a player reasons with: at a fast enough rotation almost
   // nothing leaks, so the pool is "how many hits you land per Shatter" times what each puts in —

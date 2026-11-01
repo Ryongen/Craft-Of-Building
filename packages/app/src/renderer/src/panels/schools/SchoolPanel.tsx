@@ -51,6 +51,7 @@ import {
   pointsPerLevel,
   schoolPerksInOrder,
   schoolPointsSpent,
+  schoolsByAllocationOrder,
   schoolsByPointsSpent,
   spellName,
   spellOfPerk,
@@ -60,7 +61,7 @@ import {
   unknownSchoolPerks,
   type SpellSchoolView,
 } from "@cte2/schema";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useBuild } from "../../state/build-store.js";
 import { useWhatIf } from "../../state/compare.js";
@@ -87,6 +88,48 @@ const ROWS = 7;
  * points left in the pool — and a shift-click that can only afford two spends two.
  */
 const SHIFT_STEP = 4;
+
+/**
+ * Whether the left pane follows points spent (on) or the class picked first (off).
+ *
+ * `localStorage`, like the tree tip: it is how you like the screen laid out, not part of the build.
+ */
+const AUTO_ORDER_KEY = "cob.schools.autoOrder";
+
+function useAutoOrder(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUTO_ORDER_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const set = (next: boolean): void => {
+    setOn(next);
+    try {
+      window.localStorage.setItem(AUTO_ORDER_KEY, next ? "1" : "0");
+    } catch {
+      // Still applies for this session.
+    }
+  };
+  return [on, set];
+}
+
+/**
+ * The document's first-pick order, held steady while you edit.
+ *
+ * Key order alone can swap sides mid-session: refund the first perk you took in one class after
+ * starting the other, and that class's earliest surviving perk may now come later. So a class
+ * keeps the place it already had for as long as it has points, and only newcomers take the
+ * document's word for where they go.
+ */
+function useFirstPickOrder(fromDoc: string[]): string[] {
+  const held = useRef<string[]>([]);
+  const kept = held.current.filter((id) => fromDoc.includes(id));
+  const next = [...kept, ...fromDoc.filter((id) => !kept.includes(id))];
+  held.current = next;
+  return next;
+}
 
 export function SchoolPanel(): ReactNode {
   const { snapshot, icon } = useWorld();
@@ -136,7 +179,10 @@ export function SchoolPanel(): ReactNode {
     class and the tab strip repoints it, so browsing a class you have not taken never costs you
     sight of the one you have.
   */
-  const ranked = useMemo(() => schoolsByPointsSpent(snapshot, doc), [snapshot, doc]);
+  const [autoOrder, setAutoOrder] = useAutoOrder();
+  const byPoints = useMemo(() => schoolsByPointsSpent(snapshot, doc), [snapshot, doc]);
+  const byFirstPick = useFirstPickOrder(useMemo(() => schoolsByAllocationOrder(snapshot, doc), [snapshot, doc]));
+  const ranked = autoOrder ? byPoints : byFirstPick;
   const pinned = ranked[0] ?? null;
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -219,6 +265,18 @@ export function SchoolPanel(): ReactNode {
           spent={spent.PASSIVES}
           total={totalFor("PASSIVES")}
         />
+        <label
+          className="row"
+          style={{ gap: 4 }}
+          title={
+            autoOrder
+              ? "The class with the most points sits on the left. Untick to keep the class you picked first on the left instead."
+              : "The class you picked first stays on the left, whatever the points. Tick to put the class with the most points on the left."
+          }
+        >
+          <input type="checkbox" checked={autoOrder} onChange={(e) => setAutoOrder(e.target.checked)} />
+          Auto-order
+        </label>
         <button disabled={Object.keys(allocated).length === 0} onClick={clearSchools}>
           Reset
         </button>
@@ -256,7 +314,9 @@ export function SchoolPanel(): ReactNode {
               disabled={isPinned}
               title={
                 isPinned
-                  ? "Your main class (most points spent). It stays on the left."
+                  ? autoOrder
+                    ? "Your main class (most points spent). It stays on the left."
+                    : "Your first class. It stays on the left."
                   : locked
                     ? "You already have two classes. The game refuses a third: MAX_2_CLASSES."
                     : undefined
@@ -280,7 +340,7 @@ export function SchoolPanel(): ReactNode {
         {pinned !== null && (
           <SchoolPane
             id={pinned}
-            role="Main class"
+            role={autoOrder ? "Main class" : "First class"}
             allocated={allocated}
             level={doc.character.level}
             spellsPerLevel={spellsPerLevel}

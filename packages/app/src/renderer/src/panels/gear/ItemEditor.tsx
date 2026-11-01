@@ -784,6 +784,13 @@ function uniqueStatCount(snapshot: Snapshot, item: Item): number {
 }
 
 /**
+ * Enchantments with no compat entry that are offered anyway. Nearly every piece of gear carries
+ * them, and a build that leaves them off reads as incomplete beside the real one. They convert
+ * into nothing, so the engine ignores them.
+ */
+const NO_STAT_ENCHANTS: readonly string[] = ["minecraft:unbreaking", "minecraft:mending"];
+
+/**
  * Vanilla enchantments, and the Mine and Slash stats the pack converts them into.
  *
  * This is `mmorpg_stat_compat`'s enchantment half, which the engine has implemented in full —
@@ -859,15 +866,23 @@ function Enchantments({
   };
 
   const options = useMemo<PickerOption[]>(
-    () =>
-      compats.map((c) => ({
+    () => [
+      ...compats.map((c) => ({
         id: c.enchantId,
         label: enchantName(c.enchantId),
         hint: statName(snapshot, c.statId),
         keywords: `${c.enchantId} ${c.statId} ${statName(snapshot, c.statId)}`,
         detail: enchantEffect(snapshot, c),
       })),
-    [compats, snapshot],
+      ...NO_STAT_ENCHANTS.filter((id) => !byEnchant.has(id)).map((id) => ({
+        id,
+        label: enchantName(id),
+        hint: "no stat",
+        keywords: id,
+        detail: "Changes nothing in the build; here so the piece can match what you wear.",
+      })),
+    ],
+    [compats, byEnchant, snapshot],
   );
 
   return (
@@ -885,7 +900,9 @@ function Enchantments({
               width={58}
               onChange={(next) => set(enchantId, next)}
             />
-            {compat === undefined ? (
+            {compat === undefined && NO_STAT_ENCHANTS.includes(enchantId) ? (
+              <span className="faint text-sm">no stat</span>
+            ) : compat === undefined ? (
               <span
                 className="badge warn"
                 title={

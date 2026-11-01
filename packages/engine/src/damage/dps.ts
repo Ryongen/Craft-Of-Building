@@ -1738,14 +1738,16 @@ export function simulateDps(
     );
   const ailmentDamagePerCast = dotPerCast(ailmentFeeds());
   const auraAilmentDamagePerCast = dotPerCast(ailmentFeeds(isAura));
-  // The pool ailments ride the headline: one pool on the target, filled and tipped by its hits.
-  const headlineHitsPerSecond =
+  // One pool per ailment on the target, filled and tipped by every landing source — not just the
+  // headline. Tailwind Sweep lands a physical and a cold source per cast, both freeze, and
+  // reading only the headline's left half of what goes in out of the Shatter.
+  const poolFeeds: AilmentFeed[] =
     !ailmentsLand
-      ? 0
+      ? []
       : headline === undefined || sources.length === 0
-        ? castsPerSecond
-        : headline.coverage.hitsPerCast * headline.sustained * castsPerSecond;
-  const procAilments = ailmentsLand ? hit.average.ailments : [];
+        ? [{ ailments: hit.average.ailments, hitsPerSecond: castsPerSecond }]
+        : ailmentFeeds();
+  const pools = procPools(poolFeeds);
 
   // The spell sheet, deliberately: `ExileEffectAction` attaches the casting spell to the event,
   // so the duration is resolved off the per-spell unit and a linked Effect Duration gem reaches
@@ -1826,12 +1828,12 @@ export function simulateDps(
     // Reported beside the hit rather than folded into it: ailments tick on their own clock.
     ailmentDps:
       ailmentStacks.reduce((sum, s) => sum + s.dps, 0) +
-      procAilments.reduce((sum, a) => sum + procPerSecond(a, headlineHitsPerSecond), 0),
+      pools.perSecond,
     ailmentStacks,
     ailmentDamagePerCast,
     auraAilmentDamagePerCast,
-    ailmentProcDps: procAilments.reduce((sum, a) => sum + procPerSecond(a, headlineHitsPerSecond), 0),
-    ailmentHit: procAilments.reduce((sum, a) => sum + procPool(a, headlineHitsPerSecond), 0),
+    ailmentProcDps: pools.perSecond,
+    ailmentHit: pools.pool,
     ...(buff === undefined ? {} : { buff }),
     ...(debuff === undefined ? {} : { debuff }),
     requires: [...requires],
@@ -2815,17 +2817,41 @@ export type { ElementName };
  * everything you put in eventually comes out. In between, the decay is what a point of proc
  * chance is buying.
  *
- * `r` is the headline source's landing hits per second, not casts: every arrow of a barrage adds
- * to the pool and rolls the proc on its own.
+ * `r` is landing hits per second, not casts: every arrow of a barrage adds to the pool and rolls
+ * the proc on its own. With several sources the gain and the proc rate are each summed over all
+ * of them, since they share the one `dmgMap` entry on the target:
+ *
+ *     pool = sum(accumulated x chance x r) / (sum(procChance x r) + poolDecayPerSecond)
+ *
+ * Summing the per-source answers instead would let each source drain a pool of its own, which
+ * overstates the decay and understates the spike.
  */
-function procPerSecond(ailment: AilmentResult, hitsPerSecond: number): number {
-  return procPool(ailment, hitsPerSecond) * ailment.procChance * hitsPerSecond;
+function procPools(feeds: readonly AilmentFeed[]): { perSecond: number; pool: number } {
+  const byAilment = new Map<string, { gain: number; procRate: number; decay: number }>();
+  for (const feed of feeds) {
+    if (feed.hitsPerSecond <= 0) continue;
+    for (const a of feed.ailments) {
+      if (a.durationSeconds > 0 || a.accumulated <= 0) continue;
+      const entry = byAilment.get(a.ailment) ?? { gain: 0, procRate: 0, decay: a.poolDecayPerSecond };
+      entry.gain += a.accumulated * a.chance * feed.hitsPerSecond;
+      entry.procRate += a.procChance * feed.hitsPerSecond;
+      byAilment.set(a.ailment, entry);
+    }
+  }
+  let perSecond = 0;
+  let pool = 0;
+  for (const { gain, procRate, decay } of byAilment.values()) {
+    const level = procPool(gain, procRate, decay);
+    pool += level;
+    perSecond += level * procRate;
+  }
+  return { perSecond, pool };
 }
 
 /**
  * How big the pool is when a proc finds it — the size of one Shatter or one Shock.
  *
- * The steady state of the same leaking bucket {@link procPerSecond} describes, read for the
+ * The steady state of the same leaking bucket {@link procPools} describes, read for the
  * level rather than for the flow. Setting the gain against the two losses:
  *
  *     accumulated x chance x r = pool x (procChance x r + poolDecayPerSecond)
@@ -2843,11 +2869,7 @@ function procPerSecond(ailment: AilmentResult, hitsPerSecond: number): number {
  * pulls it below that. So a slow rotation has a *smaller* spike as well as a rarer one, because
  * 10% a second leaks off a pool that is kept waiting.
  */
-function procPool(ailment: AilmentResult, hitsPerSecond: number): number {
-  if (ailment.procChance <= 0 || ailment.accumulated <= 0 || hitsPerSecond <= 0) return 0;
-  const procRate = ailment.procChance * hitsPerSecond;
-  return (
-    (ailment.accumulated * ailment.chance * hitsPerSecond) /
-    (procRate + ailment.poolDecayPerSecond)
-  );
+function procPool(gain: number, procRate: number, decay: number): number {
+  if (procRate <= 0 || gain <= 0) return 0;
+  return gain / (procRate + decay);
 }

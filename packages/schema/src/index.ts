@@ -326,6 +326,7 @@ export {
   schoolOfPerk,
   schoolPerksInOrder,
   schoolPointsSpent,
+  schoolsByAllocationOrder,
   schoolsByPointsSpent,
   spellOfPerk,
   spellSchool,

@@ -18,7 +18,9 @@
  *
  * The omen is in that list too, and has its own row at the bottom — but it is not gear and is
  * not an `Item`. It carries requirements over the rest of the loadout instead of stats of its
- * own, so it lives in `doc.omen` and gets `OmenEditor` rather than `ItemEditor`.
+ * own, so it lives in `doc.omen` and gets `OmenEditor` rather than `ItemEditor`. Spares live in
+ * `doc.omenPool` and are listed in the item pool with the gear, so a codex is picked, hovered,
+ * edited and priced the same way as everything else.
  *
  * Each item's contribution is drawn by `ui/ItemTooltip` — the same card the hover tooltip shows,
  * laid into the editor rather than pinned to the pointer — and that card reads the engine's own
@@ -54,6 +56,7 @@ import {
   type BuildDoc,
   type Diagnostic,
   type Item,
+  type OmenSetup,
 } from "@cte2/schema";
 import {
   useEffect,
@@ -68,16 +71,16 @@ import {
 import { createPortal } from "react-dom";
 
 import { useBuild } from "../../state/build-store.js";
-import { useWhatIf } from "../../state/compare.js";
+import { useWhatIf, useWhatIfEach } from "../../state/compare.js";
 import { useDerived } from "../../state/derived.js";
 import { applyMove, benched, type Arrival, type Move, type WornAt } from "../../state/gear-moves.js";
 import { useItemCompare, type ComparePosition } from "../../state/item-compare.js";
 import { modDetail, modKeywords, useRevealOnNarrow, useWorld } from "@cte2/view";
 import { ComparisonBlock } from "../../ui/DeltaTable.js";
 import { CopyJsonButton } from "../../ui/CopyJsonButton.js";
-import { GearIcon } from "../../ui/GearIcon.js";
+import { GearIcon, ItemIcon } from "../../ui/GearIcon.js";
 import { ItemDiffCard } from "../../ui/ItemDiffCard.js";
-import { ItemWindow, useItemTooltip } from "../../ui/ItemTooltip.js";
+import { ItemWindow, OmenWindow, useItemTooltip, useOmenTooltip } from "../../ui/ItemTooltip.js";
 import { RarityBadge } from "../../ui/RarityBadge.js";
 import { AugmentList } from "../../ui/Augments.js";
 import { Picker, type PickerOption } from "../../ui/Picker.js";
@@ -119,14 +122,26 @@ const PAPERDOLL: SlotRow[] = [
  * Which item the middle column is editing, and where it lives.
  *
  * Two lists hold items and the editor has to be able to point at either: `gear` is what the
- * character is wearing and `itemPool` is the bench. An index alone would be ambiguous — pool
+ * character is wearing and `itemPool` is the bench. Codexes add two more, `omen` and
+ * `omenPool`, which are not `Item`s and get their own editor. An index alone would be ambiguous — pool
  * item 0 and worn item 0 are different items — and carrying the item itself would go stale the
  * moment an edit produced a new document.
  */
-type ItemRef = { where: "gear" | "pool"; index: number };
+type ItemRef = { where: "gear" | "pool" | "omen" | "omenPool"; index: number };
+
+/** The worn codex. There is one, so its index is always 0. */
+const WORN_OMEN: ItemRef = { where: "omen", index: 0 };
 
 function sameRef(a: ItemRef | null, b: ItemRef): boolean {
   return a !== null && a.where === b.where && a.index === b.index;
+}
+
+/**
+ * Whether a diagnostic path is `root` or inside it. A bare `startsWith("omen")` would also take
+ * every `omenPool[...]` path.
+ */
+function isUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}.`) || path.startsWith(`${root}[`);
 }
 
 /**
@@ -150,7 +165,9 @@ type SlotCandidate = {
  * label rather than the slot id, so the badge reads "Ring 2" and matches the row on the left
  * that the same item appears in.
  */
-type PoolEntry = { item: Item; ref: ItemRef; slot: string | undefined };
+type PoolEntry =
+  | { kind: "item"; item: Item; ref: ItemRef; slot: string | undefined }
+  | { kind: "omen"; omen: OmenSetup; ref: ItemRef; slot: string | undefined };
 
 /**
  * What the base/unique search is narrowed to.
@@ -166,6 +183,8 @@ const FINDER_FILTERS = [
   // "Curios" is the Forge mod the rings and necklace are *implemented* through, which is a fact
   // about the code and not a word any player uses.
   { id: "curio", label: "Jewelry" },
+  // Labelled at render time with the pack's own word for an omen.
+  { id: "omen", label: "Omen" },
 ] as const;
 
 type FilterId = (typeof FINDER_FILTERS)[number]["id"];
@@ -219,6 +238,11 @@ export function GearPanel(): ReactNode {
   const removePoolItem = useBuild((s) => s.removePoolItem);
   const moveGear = useBuild((s) => s.moveGear);
   const setOmen = useBuild((s) => s.setOmen);
+  const addPoolOmen = useBuild((s) => s.addPoolOmen);
+  const updatePoolOmen = useBuild((s) => s.updatePoolOmen);
+  const removePoolOmen = useBuild((s) => s.removePoolOmen);
+  const equipPoolOmen = useBuild((s) => s.equipPoolOmen);
+  const unequipOmen = useBuild((s) => s.unequipOmen);
   const derived = useDerived();
 
   const [editing, setEditing] = useState<ItemRef | null>(null);
@@ -227,10 +251,10 @@ export function GearPanel(): ReactNode {
     editorColRef.current?.querySelector(".items-editing"),
   );
   const [importOpen, setImportOpen] = useState(false);
-  const [omenOpen, setOmenOpen] = useState(false);
 
   const items = doc.gear ?? [];
   const pool = doc.itemPool ?? [];
+  const spareOmens = doc.omenPool ?? [];
 
   /**
    * Which worn places sit in each paperdoll row, and which entries sit in none.
@@ -355,12 +379,34 @@ export function GearPanel(): ReactNode {
     setEditing({ where: "pool", index: pool.length });
   };
 
+  /** A codex lands on the bench the same way. */
+  const createOmen = (omen: OmenSetup): void => {
+    addPoolOmen(omen);
+    setEditing({ where: "omenPool", index: spareOmens.length });
+  };
+
+  /** Wear a spare codex; the worn one, if any, goes back to the pool in its place. */
+  const equipOmen = (index: number): void => {
+    equipPoolOmen(index);
+    setEditing(WORN_OMEN);
+  };
+
+  const takeOffOmen = (): void => {
+    unequipOmen();
+    setEditing(null);
+  };
+
   const target =
     editing === null
       ? undefined
       : editing.where === "gear"
         ? items[editing.index]
-        : pool[editing.index];
+        : editing.where === "pool"
+          ? pool[editing.index]
+          : undefined;
+
+  const targetOmen =
+    editing?.where === "omen" ? doc.omen : editing?.where === "omenPool" ? spareOmens[editing.index] : undefined;
 
   /**
    * The document with a given version of the edited item on the character.
@@ -373,7 +419,7 @@ export function GearPanel(): ReactNode {
   // Keyed on `doc` alone, never on `items` or `placement`: `doc.gear ?? []` is a new array every
   // render when nothing is worn, and a new function here restarts every ranking sweep reading it.
   const wearing = useMemo(() => {
-    if (editing === null) return undefined;
+    if (editing === null || editing.where === "omen" || editing.where === "omenPool") return undefined;
     const gear = doc.gear ?? [];
     if (editing.where === "gear") {
       const at = editing.index;
@@ -434,17 +480,28 @@ export function GearPanel(): ReactNode {
     };
     return [
       ...items.map<PoolEntry>((item, index) => ({
+        kind: "item",
         item,
         ref: { where: "gear", index },
         slot: label(index),
       })),
+      ...(doc.omen === undefined
+        ? []
+        : [{ kind: "omen", omen: doc.omen, ref: WORN_OMEN, slot: omenWord(world.snapshot) } satisfies PoolEntry]),
       ...pool.map<PoolEntry>((item, index) => ({
+        kind: "item",
         item,
         ref: { where: "pool", index },
         slot: undefined,
       })),
+      ...spareOmens.map<PoolEntry>((omen, index) => ({
+        kind: "omen",
+        omen,
+        ref: { where: "omenPool", index },
+        slot: undefined,
+      })),
     ];
-  }, [items, pool, world.snapshot, placement]);
+  }, [items, pool, doc.omen, spareOmens, world.snapshot, placement]);
 
   /**
    * Publish the selected item, with every place it could sit.
@@ -465,10 +522,11 @@ export function GearPanel(): ReactNode {
   const clearCompare = useItemCompare((s) => s.clear);
 
   useEffect(() => {
-    if (editing === null || target === undefined) {
+    if (editing === null || target === undefined || (editing.where !== "gear" && editing.where !== "pool")) {
       clearCompare();
       return;
     }
+    const source = { where: editing.where, index: editing.index };
     const row = rowFor(world.snapshot, target);
     const slotId = baseGearType(world.snapshot, target.base)?.gearSlot;
     const nameOf = (r: SlotRow | undefined): string =>
@@ -535,7 +593,7 @@ export function GearPanel(): ReactNode {
     // alternatives follow in the paperdoll's order. `sort` is stable, so they keep that order.
     positions.sort((a, b) => Number(b.worn) - Number(a.worn));
 
-    showCompare({ item: target, source: editing, positions });
+    showCompare({ item: target, source, positions });
   }, [editing, target, placement, items, doc, world.snapshot, showCompare, clearCompare]);
 
   // Leaving the tab clears the card with it: it is about a choice being made in this panel, and
@@ -549,6 +607,10 @@ export function GearPanel(): ReactNode {
           onClose={() => setImportOpen(false)}
           onImport={(item) => {
             create(item);
+            setImportOpen(false);
+          }}
+          onImportOmen={(omen) => {
+            createOmen(omen);
             setImportOpen(false);
           }}
         />
@@ -629,11 +691,12 @@ export function GearPanel(): ReactNode {
           );
         })}
 
-        <OmenRow
-          open={omenOpen}
-          onToggle={() => setOmenOpen(!omenOpen)}
-          onChange={setOmen}
-          diagnostics={derived.diagnostics.filter((d) => d.path.startsWith("omen"))}
+        <OmenSlot
+          selected={sameRef(editing, WORN_OMEN)}
+          diagnostics={derived.diagnostics.filter((d) => isUnder(d.path, "omen"))}
+          onSelect={() => setEditing(WORN_OMEN)}
+          onEquip={equipOmen}
+          onUnequip={takeOffOmen}
         />
 
         {placement.unplaced.length > 0 && (
@@ -679,33 +742,53 @@ export function GearPanel(): ReactNode {
 
       {/* -- middle: find, keep, craft ------------------------------------ */}
       <div className="items-col" ref={editorColRef}>
-        <ItemFinder onCreate={create} onImport={() => setImportOpen(true)} />
+        <ItemFinder onCreate={create} onCreateOmen={createOmen} onImport={() => setImportOpen(true)} />
 
         <ItemPool
           entries={poolEntries}
           editing={editing}
           onSelect={setEditing}
-          onEquip={equip}
-          onUnequip={(index) => {
-            unequipItem(index);
+          onEquip={(ref) => (ref.where === "omenPool" ? equipOmen(ref.index) : equip(ref.index))}
+          onUnequip={(ref) => {
+            if (ref.where === "omen") unequipOmen();
+            else unequipItem(ref.index);
             setEditing(null);
           }}
           onRemove={(ref) => {
             if (ref.where === "gear") removeItem(ref.index);
-            else removePoolItem(ref.index);
+            else if (ref.where === "pool") removePoolItem(ref.index);
+            else if (ref.where === "omen") setOmen(undefined);
+            else removePoolOmen(ref.index);
             setEditing(null);
           }}
         />
 
-        {editing === null || target === undefined ? (
+        {editing !== null && targetOmen !== undefined ? (
+          <OmenEditorCard
+            omen={targetOmen}
+            worn={editing.where === "omen"}
+            diagnostics={derived.diagnostics.filter((d) =>
+              isUnder(d.path, editing.where === "omen" ? "omen" : `omenPool[${editing.index}]`),
+            )}
+            onChange={(next) =>
+              editing.where === "omen" ? setOmen(next) : updatePoolOmen(editing.index, next)
+            }
+            onRemove={() => {
+              if (editing.where === "omen") setOmen(undefined);
+              else removePoolOmen(editing.index);
+              setEditing(null);
+            }}
+          />
+        ) : editing === null || target === undefined ? (
           <div className="empty">
             Pick a slot on the left, or an item from the pool above, to edit it here. Searching
-            for a base or a unique adds a new one to the pool.
+            for a base, a unique or a {omenWord(world.snapshot).toLowerCase()} adds a new one to
+            the pool.
           </div>
         ) : (
           <EditorCard
             item={target}
-            where={editing.where}
+            where={editing.where === "gear" ? "gear" : "pool"}
             wearing={wearing}
             equipped={equippedHere}
             suppressed={editing.where === "gear" && twoHanded && isOffhand(world.snapshot, target)}
@@ -1149,9 +1232,11 @@ function EmptySlot({
  */
 function ItemFinder({
   onCreate,
+  onCreateOmen,
   onImport,
 }: {
   onCreate: (item: Item) => void;
+  onCreateOmen: (omen: OmenSetup) => void;
   onImport: () => void;
 }): ReactNode {
   const world = useWorld();
@@ -1165,7 +1250,7 @@ function ItemFinder({
   const options = useMemo<PickerOption[]>(() => {
     const inFilter = (baseId: string | undefined): boolean => {
       if (filter === "all") return true;
-      if (baseId === undefined) return false;
+      if (baseId === undefined || filter === "omen") return false;
       const row = rowFor(snapshot, { base: baseId, rarity: "common", itemLevel: 1 });
       if (row === undefined) return false;
       if (filter === "armor") return ARMOUR_SLOTS.has(row.id);
@@ -1215,10 +1300,26 @@ function ItemFinder({
      * 43 then 157 puts both kinds on screen, and costs the uniques nothing that matters: nobody
      * scrolls to `Voidforge`, they type it.
      */
-    return [...bases, ...uniqueRows];
+    // Codexes are neither a base nor a unique, so they sit with the bases under `Non-unique`.
+    const omens =
+      rarityFilter === "unique" || (filter !== "all" && filter !== "omen")
+        ? []
+        : omenIds(snapshot).map<PickerOption>((id) => ({
+            id: `omen:${id}`,
+            label: omenName(snapshot, id),
+            hint: omenWord(snapshot).toLowerCase(),
+            keywords: `${id} omen codex`,
+          }));
+
+    return [...bases, ...uniqueRows, ...omens];
   }, [world, snapshot, uniques, filter, rarityFilter]);
 
   const pick = (id: string): void => {
+    if (id.startsWith("omen:")) {
+      const omen = newOmen(snapshot, level, id.slice(5));
+      if (omen !== undefined) onCreateOmen(omen);
+      return;
+    }
     if (id.startsWith("base:")) {
       onCreate({ base: id.slice(5), rarity: "rare", itemLevel: level });
       return;
@@ -1251,7 +1352,7 @@ function ItemFinder({
               ? "Search a unique…"
               : rarityFilter === "base"
                 ? "Search a base…"
-                : "Search a base or a unique…"
+                : `Search a base, a unique or a ${omenWord(snapshot).toLowerCase()}…`
           }
           width={300}
           onChange={(id) => id !== undefined && pick(id)}
@@ -1263,7 +1364,7 @@ function ItemFinder({
               className={filter === f.id ? "nudge word primary" : "nudge word"}
               onClick={() => setFilter(f.id)}
             >
-              {f.label}
+              {f.id === "omen" ? omenWord(snapshot) : f.label}
             </button>
           ))}
         </div>
@@ -1319,8 +1420,8 @@ function ItemPool({
   entries: readonly PoolEntry[];
   editing: ItemRef | null;
   onSelect: (ref: ItemRef) => void;
-  onEquip: (poolIndex: number) => void;
-  onUnequip: (gearIndex: number) => void;
+  onEquip: (ref: ItemRef) => void;
+  onUnequip: (ref: ItemRef) => void;
   onRemove: (ref: ItemRef) => void;
 }): ReactNode {
   const worn = entries.filter((e) => e.slot !== undefined).length;
@@ -1355,17 +1456,30 @@ function ItemPool({
          * swords meant scrolling past every sword you own to reach the one you were editing.
          */
         <div className="item-pool" style={{ maxHeight: entries.length > POOL_ROWS ? POOL_MAX : undefined }}>
-        {entries.map((entry) => (
-          <PoolRow
-            key={`${entry.ref.where}-${entry.ref.index}`}
-            entry={entry}
-            selected={sameRef(editing, entry.ref)}
-            onSelect={() => onSelect(entry.ref)}
-            onEquip={() => onEquip(entry.ref.index)}
-            onUnequip={() => onUnequip(entry.ref.index)}
-            onRemove={() => onRemove(entry.ref)}
-          />
-        ))}
+        {entries.map((entry) =>
+          entry.kind === "omen" ? (
+            <OmenPoolRow
+              key={`${entry.ref.where}-${entry.ref.index}`}
+              omen={entry.omen}
+              slot={entry.slot}
+              selected={sameRef(editing, entry.ref)}
+              onSelect={() => onSelect(entry.ref)}
+              onEquip={() => onEquip(entry.ref)}
+              onUnequip={() => onUnequip(entry.ref)}
+              onRemove={() => onRemove(entry.ref)}
+            />
+          ) : (
+            <PoolRow
+              key={`${entry.ref.where}-${entry.ref.index}`}
+              entry={entry}
+              selected={sameRef(editing, entry.ref)}
+              onSelect={() => onSelect(entry.ref)}
+              onEquip={() => onEquip(entry.ref)}
+              onUnequip={() => onUnequip(entry.ref)}
+              onRemove={() => onRemove(entry.ref)}
+            />
+          ),
+        )}
         </div>
       )}
     </>
@@ -1387,7 +1501,7 @@ function PoolRow({
   onUnequip,
   onRemove,
 }: {
-  entry: PoolEntry;
+  entry: Extract<PoolEntry, { kind: "item" }>;
   selected: boolean;
   onSelect: () => void;
   onEquip: () => void;
@@ -1764,109 +1878,501 @@ function CopyItemButton({ item }: { item: Item }): ReactNode {
 }
 
 /**
- * The omen's row on the paperdoll.
- *
- * `CURIO_BLOCKS` gives `OMEN` a count of 1, so this is one row and not a list. It sits last
- * because it is the only piece whose value depends on everything above it.
+ * Put this codex on the clipboard, in the envelope `ImportDialog` reads an in-game copy from, so
+ * pasting it into another build lands it in that build's pool.
  */
-function OmenRow({
-  open,
-  onToggle,
-  onChange,
+function CopyOmenButton({ omen }: { omen: OmenSetup }): ReactNode {
+  return (
+    <CopyJsonButton
+      value={{ cob: "item", kind: "omen", data: omen }}
+      title="Copy this codex as JSON. Paste it into another build with Import"
+    />
+  );
+}
+
+/** How many of a codex's tiers the worn gear pays out, and how many it has. */
+function omenTiers(
+  snapshot: Snapshot,
+  omen: OmenSetup,
+  gear: readonly Item[],
+  level: number,
+): { filled: number; live: number; total: number } {
+  const filled = countOmenPieces(snapshot, wornItems(snapshot, gear), omen, level);
+  const buckets = omenBuckets(snapshot, omen);
+  return { filled, live: buckets.filter((b) => filled >= b.pieces).length, total: buckets.length };
+}
+
+/** The badge that says whether a codex pays out against the worn gear. */
+function OmenActiveBadge({ omen }: { omen: OmenSetup }): ReactNode {
+  const { snapshot } = useWorld();
+  const gear = useBuild((s) => s.doc.gear);
+  const level = useBuild((s) => s.doc.character.level);
+  const { filled, live, total } = omenTiers(snapshot, omen, gear ?? [], level);
+  return (
+    <span
+      className={`badge ${live > 0 ? "good" : "warn"}`}
+      title={`${filled} qualifying piece${filled === 1 ? "" : "s"} worn; ${live} of ${total} tiers pay out`}
+    >
+      {live}/{total} active
+    </span>
+  );
+}
+
+/**
+ * The codex's place on the paperdoll.
+ *
+ * Works like every other slot: clicking it opens the worn codex in the editor and drops the list
+ * of what could go here instead, `(none)` first, and hovering an option prices the swap. The
+ * options are the spare codexes in the pool. `CURIO_BLOCKS` gives `OMEN` a count of 1, so this is
+ * one place; it sits last because it is the only piece whose value depends on everything above.
+ */
+function OmenSlot({
+  selected,
   diagnostics,
+  onSelect,
+  onEquip,
+  onUnequip,
 }: {
-  open: boolean;
-  onToggle: () => void;
-  onChange: (omen: NonNullable<ReturnType<typeof useBuild.getState>["doc"]["omen"]>| undefined) => void;
+  selected: boolean;
   diagnostics: Diagnostic[];
+  onSelect: () => void;
+  onEquip: (poolIndex: number) => void;
+  onUnequip: () => void;
 }): ReactNode {
   const world = useWorld();
-  const doc = useBuild((s) => s.doc);
-  const omen = doc.omen;
-
+  const omen = useBuild((s) => s.doc.omen);
+  const spares = useBuild((s) => s.doc.omenPool) ?? [];
   const word = omenWord(world.snapshot);
+  const tooltip = useOmenTooltip(omen);
+
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState<number | "none" | undefined>();
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setHovered(undefined);
+      return;
+    }
+    const away = (event: MouseEvent): void => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+
   const errors = diagnostics.filter((d) => d.severity === "error").length;
   const warnings = diagnostics.length - errors;
-
-  if (omen === undefined) {
-    const first = omenIds(world.snapshot)[0];
-    return (
-      <div className="slot-row empty mt-4">
-        <span className="slot-name">{word}</span>
-        <button
-          disabled={first === undefined}
-          onClick={() =>
-            first !== undefined &&
-            onChange({
-              id: first,
-              // Its own mods and affixes scale at this, and `lvl_req` gates it at half of
-              // MAX_LEVEL, so start where it could actually have dropped.
-              itemLevel: Math.max(doc.character.level, omenMinLevelFor(world.snapshot, first)),
-              rarity: "rare",
-              requires: { NORMAL: 2 },
-            })
-          }
-        >
-          + add
-        </button>
-        <span className="faint text-sm">
-          a set bonus paid out by the rest of your gear
-        </span>
-      </div>
-    );
-  }
-
-  const filled = countOmenPieces(world.snapshot, wornItems(world.snapshot, doc.gear ?? []), omen, doc.character.level);
-  const needed = omenBuckets(world.snapshot, omen).reduce(
-    (min, bucket) => Math.min(min, bucket.pieces),
-    Number.POSITIVE_INFINITY,
-  );
-  const active = Number.isFinite(needed) && filled >= needed;
+  const offersNothing = spares.length === 0 && omen === undefined;
 
   return (
-    <div className="mt-4">
-      <div className="slot-row" style={{ cursor: "pointer" }} onClick={onToggle}>
-        <span className="slot-name">{word}</span>
+    <div className={`slot-row mt-4${omen === undefined ? " empty" : ""}${selected ? " selected" : ""}`}>
+      <div className="slot-picker" ref={wrapRef}>
+        <div
+          className={`slot-trigger${offersNothing ? " inert" : ""}${open ? " open" : ""}`}
+          onClick={() => {
+            if (omen !== undefined) onSelect();
+            if (!offersNothing) setOpen((was) => !was);
+          }}
+          {...(open ? {} : tooltip.props)}
+        >
+          <span className="slot-name">{word}</span>
+          {omen === undefined ? (
+            <span className="faint text-sm">
+              {spares.length === 0
+                ? `empty, find a ${word.toLowerCase()} above to add one`
+                : `empty, ${spares.length} in the pool`}
+            </span>
+          ) : (
+            <>
+              <ItemIcon itemId="mmorpg:omen" />
+              <strong className="ellipsis">{omenName(world.snapshot, omen.id)}</strong>
+              <RarityBadge rarity={omen.rarity} />
+              <span className="badge">lvl {omen.itemLevel}</span>
+              <OmenActiveBadge omen={omen} />
+              {errors > 0 && <span className="badge bad">{errors} error{errors === 1 ? "" : "s"}</span>}
+              {warnings > 0 && <span className="badge warn">{warnings}</span>}
+            </>
+          )}
+        </div>
+
+        {open && !offersNothing && (
+          <div className="slot-list" onMouseLeave={() => setHovered(undefined)}>
+            {omen !== undefined && (
+              <div
+                className={`slot-option${hovered === "none" ? " active" : ""}`}
+                onMouseEnter={() => setHovered("none")}
+                onMouseDown={() => {
+                  setOpen(false);
+                  onUnequip();
+                }}
+              >
+                <span className="ellipsis">(none): take off {omenName(world.snapshot, omen.id)}</span>
+                <span className="badge">unequip</span>
+              </div>
+            )}
+            {spares.map((spare, index) => (
+              <div
+                key={index}
+                className={`slot-option${hovered === index ? " active" : ""}`}
+                onMouseEnter={() => setHovered(index)}
+                onMouseDown={() => {
+                  setOpen(false);
+                  onEquip(index);
+                }}
+              >
+                <span className="ellipsis">{omenName(world.snapshot, spare.id)}</span>
+                <span className="badge">{spare.rarity}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {hovered !== undefined && (
+          <OmenSwapPreview
+            anchorRef={wrapRef}
+            label={word}
+            worn={omen}
+            candidate={hovered === "none" ? undefined : spares[hovered]}
+          />
+        )}
+      </div>
+      {!open && tooltip.node}
+    </div>
+  );
+}
+
+/**
+ * `SwapPreview` for the codex slot: the price, what is on now, what would go on.
+ *
+ * The price is the engine run over the document with the codex swapped, so the requirement
+ * counting is the engine's own — a codex whose tiers the worn gear does not reach prices at
+ * nothing, which is what it is worth.
+ */
+function OmenSwapPreview({
+  anchorRef,
+  label,
+  worn,
+  candidate,
+}: {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  label: string;
+  worn: OmenSetup | undefined;
+  /** The codex going on, or `undefined` for the `(none)` row. */
+  candidate: OmenSetup | undefined;
+}): ReactNode {
+  const doc = useBuild((s) => s.doc);
+  const [box, setBox] = useState<DOMRect | null>(null);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    const column = anchor?.closest(".items-col") ?? anchor;
+    setBox(column?.getBoundingClientRect() ?? null);
+  }, [anchorRef, candidate]);
+
+  const next = useMemo(() => withOmen(doc, candidate), [doc, candidate]);
+  const priced = useWhatIf(next);
+
+  if (box === null) return null;
+
+  const panels = 1 + (worn === undefined ? 0 : 1) + (candidate === undefined ? 0 : 1);
+  const width = panels * PANEL + (panels - 1) * 8;
+  const flip = box.right + width + 16 > window.innerWidth;
+  const top = Math.max(8, box.top);
+  const style: CSSProperties = {
+    position: "fixed",
+    width,
+    top,
+    maxHeight: Math.max(240, window.innerHeight - top - 12),
+    ...(flip ? { right: window.innerWidth - box.left + 8 } : { left: box.right + 8 }),
+  };
+
+  return createPortal(
+    <div className="swap-preview" style={style}>
+      <div className="swap-panel">
+        <div className="swap-panel-title">
+          {candidate === undefined
+            ? `${label}: taking it off`
+            : worn === undefined
+              ? `${label}: would add`
+              : `${label}: would swap`}
+        </div>
+        <div className="swap-panel-price">
+          {priced === undefined ? (
+            <div className="faint text-sm">Pricing…</div>
+          ) : (
+            <ComparisonBlock
+              comparison={priced.click.comparison}
+              statLimit={10}
+              emptyNote="Nothing changes on the character sheet."
+            />
+          )}
+        </div>
+      </div>
+
+      {worn !== undefined && (
+        <div className="swap-panel">
+          <div className="swap-panel-title">On now</div>
+          <OmenWindow omen={worn} />
+        </div>
+      )}
+
+      {candidate !== undefined && (
+        <div className="swap-panel">
+          <div className="swap-panel-title">Would go on</div>
+          <OmenWindow omen={candidate} />
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+/** The document wearing `omen` — or none, for `undefined`. The pool is left alone. */
+function withOmen(doc: BuildDoc, omen: OmenSetup | undefined): BuildDoc {
+  const next = { ...doc };
+  if (omen === undefined) delete next.omen;
+  else next.omen = omen;
+  return next;
+}
+
+/**
+ * One codex row of the pool, beside the gear: same badges, same hover card, same buttons.
+ */
+function OmenPoolRow({
+  omen,
+  slot,
+  selected,
+  onSelect,
+  onEquip,
+  onUnequip,
+  onRemove,
+}: {
+  omen: OmenSetup;
+  slot: string | undefined;
+  selected: boolean;
+  onSelect: () => void;
+  onEquip: () => void;
+  onUnequip: () => void;
+  onRemove: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const tooltip = useOmenTooltip(omen);
+
+  return (
+    <>
+      <div
+        className={`slot-row${selected ? " selected" : ""}`}
+        style={{ cursor: "pointer" }}
+        onClick={onSelect}
+        {...tooltip.props}
+      >
+        <ItemIcon itemId="mmorpg:omen" />
         <strong className="ellipsis">{omenName(world.snapshot, omen.id)}</strong>
         <RarityBadge rarity={omen.rarity} />
         <span className="badge">lvl {omen.itemLevel}</span>
-        <span className={`badge ${active ? "good" : "warn"}`}>
-          {filled} piece{filled === 1 ? "" : "s"}
-          {active ? ", active" : ", not active yet"}
-        </span>
-        {errors > 0 && <span className="badge bad">{errors} error{errors === 1 ? "" : "s"}</span>}
-        {warnings > 0 && <span className="badge warn">{warnings}</span>}
+        <OmenActiveBadge omen={omen} />
+        {slot !== undefined && (
+          <span className="badge good" title="Equipped">
+            {slot}
+          </span>
+        )}
         <span className="grow" />
-        <span className="faint">{open ? "▾" : "▸"}</span>
+        <CopyOmenButton omen={omen} />
+        {slot === undefined ? (
+          <button
+            title="Wear this. The one you have on comes off, back into the pool."
+            onClick={(event) => {
+              event.stopPropagation();
+              onEquip();
+            }}
+          >
+            equip
+          </button>
+        ) : (
+          <button
+            title="Take this off. It stays in the pool."
+            onClick={(event) => {
+              event.stopPropagation();
+              onUnequip();
+            }}
+          >
+            take off
+          </button>
+        )}
+        <button
+          title="Delete this from the build entirely"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      {tooltip.node}
+    </>
+  );
+}
+
+/**
+ * {@link EditorCard} for a codex: the editor, then the card and the price of wearing it.
+ *
+ * The price is one reading rather than one per position — there is one codex slot — and it is
+ * the engine over the document with this codex worn, so whether its tiers are reached by the
+ * gear on the character is settled the way the sheet settles it.
+ */
+function OmenEditorCard({
+  omen,
+  worn,
+  diagnostics,
+  onChange,
+  onRemove,
+}: {
+  omen: OmenSetup;
+  /** The codex on the character, rather than a spare. */
+  worn: boolean;
+  diagnostics: Diagnostic[];
+  onChange: (omen: OmenSetup) => void;
+  onRemove: () => void;
+}): ReactNode {
+  const world = useWorld();
+  const gear = useBuild((s) => s.doc.gear);
+  const level = useBuild((s) => s.doc.character.level);
+
+  return (
+    <>
+      <div className="section-title items-editing">
+        Editing <span className="faint">{omenName(world.snapshot, omen.id)}</span>{" "}
+        {!worn && (
+          <span className="badge" title="Not equipped, so it does nothing yet">
+            not equipped
+          </span>
+        )}
       </div>
 
-      {open && (
-        <>
-          {diagnostics.length > 0 && (
-            <div className="card mb-0" style={{ borderTop: "none" }}>
-              {diagnostics.map((d, i) => (
-                <div key={i} className={`diag ${d.severity}`} style={{ borderBottom: "none" }}>
-                  <span className="dot">{d.severity === "error" ? "✖" : "▲"}</span>
-                  <span className="grow">{d.message.replace(/`/g, "")}</span>
-                  <span className="code">{d.code}</span>
-                </div>
-              ))}
+      {diagnostics.length > 0 && (
+        <div className="card mb-0">
+          {diagnostics.map((d, i) => (
+            <div key={i} className={`diag ${d.severity}`} style={{ borderBottom: "none" }}>
+              <span className="dot">{d.severity === "error" ? "✖" : "▲"}</span>
+              <span className="grow">{d.message.replace(/`/g, "")}</span>
+              <span className="code">{d.code}</span>
             </div>
-          )}
-          <OmenEditor
-            omen={omen}
-            gear={doc.gear ?? []}
-            characterLevel={doc.character.level}
-            onChange={onChange}
-            onRemove={() => {
-              onChange(undefined);
-              onToggle();
-            }}
+          ))}
+        </div>
+      )}
+
+      <OmenEditor omen={omen} gear={gear ?? []} characterLevel={level} onChange={onChange} onRemove={onRemove} />
+
+      <div className="editor-contribute">
+        <div>
+          <OmenWindow omen={omen} />
+        </div>
+        <div className="diff-stack">
+          <OmenDiffCard omen={omen} worn={worn} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * What wearing this codex would change — or, for the worn one, what taking it off would.
+ *
+ * Says how many tiers each side pays out against the worn gear above the sheet rows, because a
+ * codex that changes nothing is usually one whose requirements the gear does not meet, and that
+ * is the thing to fix rather than the codex.
+ */
+function OmenDiffCard({ omen, worn }: { omen: OmenSetup; worn: boolean }): ReactNode {
+  const { snapshot } = useWorld();
+  const doc = useBuild((s) => s.doc);
+  const word = omenWord(snapshot);
+
+  const candidates = useMemo(
+    () => [{ key: "0", doc: withOmen(doc, worn ? undefined : omen) }],
+    [doc, omen, worn],
+  );
+  const priced = useWhatIfEach(candidates)?.get("0");
+
+  const gear = doc.gear ?? [];
+  const level = doc.character.level;
+  const mine = omenTiers(snapshot, omen, gear, level);
+  const against = worn ? undefined : doc.omen;
+  const theirs = against === undefined ? undefined : omenTiers(snapshot, against, gear, level);
+
+  return (
+    <div className="item-diff">
+      <div className="section-title mt-0">
+        {worn ? "Taking this off" : against === undefined ? "Would add" : "Would replace"}
+      </div>
+
+      <div className="row wrap gap-2 mb-2">
+        <strong className="ellipsis">{omenName(snapshot, omen.id)}</strong>
+        <RarityBadge rarity={omen.rarity} />
+        <span className="badge">lvl {omen.itemLevel}</span>
+        <span className="badge good">{word}</span>
+      </div>
+
+      <div className="faint text-sm mb-2">
+        {worn ? (
+          <>What the build moves by if you take it off.</>
+        ) : against !== undefined ? (
+          <>
+            in place of <strong>{omenName(snapshot, against.id)}</strong>.
+          </>
+        ) : (
+          <>Nothing is worn there, so nothing comes off.</>
+        )}{" "}
+        With your gear, this pays out {mine.live} of {mine.total} tiers ({mine.filled} qualifying
+        piece{mine.filled === 1 ? "" : "s"})
+        {theirs === undefined ? "" : `; the one on now pays out ${theirs.live} of ${theirs.total}`}.
+      </div>
+
+      {priced === undefined ? (
+        <div className="faint text-sm">Pricing…</div>
+      ) : (
+        <>
+          <ComparisonBlock
+            comparison={priced.comparison}
+            statLimit={12}
+            emptyNote={
+              worn
+                ? `Nothing changes. This ${word.toLowerCase()} isn't paying out anything.`
+                : "Nothing changes on the character sheet."
+            }
           />
+          <div className="faint text-xs mt-2">
+            Character totals after all increases. The number in brackets is the flat change.
+          </div>
         </>
       )}
     </div>
   );
+}
+
+/**
+ * A new codex at a level it could have dropped at — the first omen in the snapshot unless one is
+ * named.
+ *
+ * Its own mods and affixes scale at `itemLevel`, and `lvl_req` gates it at half of MAX_LEVEL,
+ * so it starts where it could actually have dropped.
+ */
+function newOmen(snapshot: Snapshot, characterLevel: number, id = omenIds(snapshot)[0]): OmenSetup | undefined {
+  if (id === undefined) return undefined;
+  return {
+    id,
+    itemLevel: Math.max(characterLevel, omenMinLevelFor(snapshot, id)),
+    rarity: "rare",
+    requires: { NORMAL: 2 },
+  };
 }
 
 /** `MAX_LEVEL * lvl_req`, or 1 when the omen is not in the snapshot. */

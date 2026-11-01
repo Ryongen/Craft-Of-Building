@@ -264,6 +264,18 @@ export type BuildState = {
    * `undefined` removes it.
    */
   setOmen(omen: OmenSetup | undefined): void;
+  // -- the omen pool ------------------------------------------------------
+  //
+  // Spare codexes, the omen's half of the item pool and shown in the same list. Swapping moves
+  // one between `omen` and `omenPool`, so trying a codex on is lossless.
+
+  addPoolOmen(omen: OmenSetup): void;
+  updatePoolOmen(index: number, omen: OmenSetup): void;
+  removePoolOmen(index: number): void;
+  /** Wear the spare at `index`; the worn omen, if any, takes its place on the bench. */
+  equipPoolOmen(index: number): void;
+  /** Take the worn omen off, onto the bench. */
+  unequipOmen(): void;
   addJewel(jewel: Jewel): void;
   updateJewel(index: number, jewel: Jewel): void;
   removeJewel(index: number): void;
@@ -759,6 +771,26 @@ export const useBuild = create<BuildState>((set) => ({
     }),
 
   setOmen: (omen) => edit(set, (doc) => prune(doc, "omen", omen)),
+  addPoolOmen: (omen) =>
+    edit(set, (doc) => prune(doc, "omenPool", [...(doc.omenPool ?? []), omen])),
+  updatePoolOmen: (index, omen) =>
+    edit(set, (doc) => prune(doc, "omenPool", replaceAt(doc.omenPool, index, omen))),
+  removePoolOmen: (index) =>
+    edit(set, (doc) => prune(doc, "omenPool", removeAt(doc.omenPool, index))),
+  equipPoolOmen: (index) =>
+    edit(set, (doc) => {
+      const spare = (doc.omenPool ?? [])[index];
+      if (spare === undefined) return doc;
+      // The worn one takes the spare's place in the list, so the bench keeps its order.
+      const pool =
+        doc.omen === undefined ? removeAt(doc.omenPool, index) : replaceAt(doc.omenPool, index, doc.omen);
+      return prune(prune(doc, "omenPool", pool), "omen", spare);
+    }),
+  unequipOmen: () =>
+    edit(set, (doc) => {
+      if (doc.omen === undefined) return doc;
+      return prune(prune(doc, "omenPool", [...(doc.omenPool ?? []), doc.omen]), "omen", undefined);
+    }),
 
   addJewel: (jewel) => edit(set, (doc) => prune(doc, "jewels", [...(doc.jewels ?? []), jewel])),
   updateJewel: (index, jewel) =>

@@ -474,18 +474,10 @@ function BucketStats({
 }): ReactNode {
   const { snapshot } = useWorld();
 
-  const lines = useMemo(() => {
-    const index = statIndex(snapshot);
-    const bal = balance(snapshot);
-    const source = mods ?? affix(snapshot, affixRoll?.affixId ?? "")?.stats ?? [];
-
-    return parseRolledMods(source as Record<string, unknown>[]).map((mod) => {
-      const exact = rollToExact(mod, statPercent, itemLevel, index.shapeOf(mod.statId), bal);
-      const name = statName(snapshot, mod.statId);
-      const suffix = mod.type === "PERCENT" ? `% Increased ${name}` : mod.type === "MORE" ? `% More ${name}` : ` ${name}`;
-      return `${exact.value >= 0 ? "+" : ""}${smart(exact.value)}${suffix}`;
-    });
-  }, [snapshot, mods, statPercent, affixRoll, itemLevel]);
+  const lines = useMemo(
+    () => omenBucketLines(snapshot, { mods, statPercent, affix: affixRoll }, itemLevel),
+    [snapshot, mods, statPercent, affixRoll, itemLevel],
+  );
 
   if (lines.length === 0) {
     return (
@@ -504,6 +496,31 @@ function BucketStats({
       ))}
     </div>
   );
+}
+
+/**
+ * One bucket's stats as display lines — "+12% Increased Armor" — resolved through the engine so
+ * they match the sheet. Shared with the codex hover card, so the two cannot disagree.
+ */
+export function omenBucketLines(
+  snapshot: Snapshot,
+  bucket: {
+    mods?: readonly Record<string, unknown>[] | undefined;
+    statPercent: number;
+    affix?: AffixRoll | undefined;
+  },
+  itemLevel: number,
+): string[] {
+  const index = statIndex(snapshot);
+  const bal = balance(snapshot);
+  const source = bucket.mods ?? affix(snapshot, bucket.affix?.affixId ?? "")?.stats ?? [];
+
+  return parseRolledMods(source as Record<string, unknown>[]).map((mod) => {
+    const exact = rollToExact(mod, bucket.statPercent, itemLevel, index.shapeOf(mod.statId), bal);
+    const name = statName(snapshot, mod.statId);
+    const suffix = mod.type === "PERCENT" ? `% Increased ${name}` : mod.type === "MORE" ? `% More ${name}` : ` ${name}`;
+    return `${exact.value >= 0 ? "+" : ""}${smart(exact.value)}${suffix}`;
+  });
 }
 
 export { omenWord };

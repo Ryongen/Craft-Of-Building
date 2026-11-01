@@ -34,8 +34,12 @@
  * reader cannot find. The markup is still there, a key away from being true again.
  */
 
-import type { Item, Jewel } from "@cte2/schema";
+import type { Item, Jewel, OmenSetup } from "@cte2/schema";
 import {
+  countOmenPieces,
+  omenBuckets,
+  omenName,
+  wornItems,
   gearTypeName,
   isAuraEnabled,
   itemName,
@@ -63,6 +67,7 @@ import { useBuild } from "../state/build-store.js";
 import { useDerived } from "../state/derived.js";
 import { GearIcon, ItemIcon } from "./GearIcon.js";
 import { useTechnical } from "./detail-mode.js";
+import { omenBucketLines, omenWord } from "../panels/gear/OmenEditor.js";
 
 /**
  * The card's assumed size, for flipping it near the edge of the window.
@@ -394,6 +399,141 @@ export function JewelWindow({
         <div className="tt-rarity-label">{jewel.rarity ? `${jewel.rarity} Jewel` : "Jewel"}</div>
         {/* Not a requirement — see the note above. Every roll on the card is resolved at it. */}
         <div className="tt-durability">Item Level {jewel.itemLevel}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `useItemTooltip` for a codex. The piece count is always taken against the worn gear, which is
+ * right for every place one is hovered: a spare is a question about what it would pay out if
+ * swapped in.
+ */
+export function useOmenTooltip(omen: OmenSetup | undefined) {
+  return useHoverCard(
+    omen === undefined ? undefined : (at: At) => <OmenWindow omen={omen} floating at={at} />,
+  );
+}
+
+/**
+ * A codex, drawn in the same shell as {@link ItemWindow}.
+ *
+ * What a codex has instead of stats is tiers: each one pays out once enough of the worn gear
+ * qualifies. So the requirements block says how many pieces count and the stat block prints every
+ * tier, dimmed until the worn gear reaches it. A spare reads against the gear you have on now,
+ * which is what makes the card useful for picking between two.
+ */
+export function OmenWindow({
+  omen,
+  floating = false,
+  at,
+}: {
+  omen: OmenSetup;
+  floating?: boolean;
+  at?: At;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const level = useBuild((s) => s.doc.character.level);
+  const gear = useBuild((s) => s.doc.gear);
+
+  const filled = useMemo(
+    () => countOmenPieces(snapshot, wornItems(snapshot, gear ?? []), omen, level),
+    [snapshot, gear, omen, level],
+  );
+  const buckets = useMemo(() => omenBuckets(snapshot, omen), [snapshot, omen]);
+  const tiers = useMemo(
+    () =>
+      buckets.map((bucket) => ({
+        pieces: bucket.pieces,
+        own: bucket.mods !== undefined,
+        lines: omenBucketLines(snapshot, bucket, omen.itemLevel),
+      })),
+    [snapshot, buckets, omen.itemLevel],
+  );
+  // One percent for every tier — see `OmenBucket.statPercent`.
+  const percent = buckets[0]?.statPercent;
+
+  const word = omenWord(snapshot);
+  const requires = Object.entries(omen.requires ?? {}).filter(([, n]) => n > 0);
+  const total = requires.reduce((sum, [, n]) => sum + n, 0);
+  const rarityClass = `rarity-${(omen.rarity ?? "common").toLowerCase()}`;
+
+  return (
+    <div
+      className={`item-window ${rarityClass}${floating ? " floating" : ""}`}
+      style={floating && at !== undefined ? floatingStyle(at, CARD) : undefined}
+    >
+      <div className="tt-header">
+        <div className="tt-icon-frame">
+          <ItemIcon itemId="mmorpg:omen" size={30} />
+        </div>
+        <div className="tt-title-container">
+          <div className="tt-title">{omenName(snapshot, omen.id)}</div>
+        </div>
+      </div>
+
+      <div className="tt-divider" />
+
+      <div className="tt-section tt-requirements">
+        {requires.map(([type, count]) => (
+          <div key={type} className="tt-req">
+            <span>
+              {count} {type} piece{count === 1 ? "" : "s"}
+            </span>
+          </div>
+        ))}
+        {(omen.slotRequirements ?? []).map((req, i) => (
+          <div key={i} className="tt-req">
+            <span>
+              {req.slot} must be {req.rarityType}
+            </span>
+          </div>
+        ))}
+        <div className={`tt-req ${filled >= total ? "met" : "unmet"}`}>
+          <span className="tt-icon">{filled >= total ? "✔" : "✘"}</span>
+          <span>
+            {filled} of {total} qualifying piece{total === 1 ? "" : "s"} worn
+          </span>
+        </div>
+      </div>
+
+      <div className="tt-divider" />
+
+      <div className="tt-section tt-stats">
+        {tiers.length === 0 ? (
+          <div className="tt-line">
+            <span className="stat-text">Not in this snapshot</span>
+          </div>
+        ) : (
+          tiers.map((tier, i) => {
+            const live = filled >= tier.pieces;
+            return (
+              <div key={i} className={`tt-category-group${live ? "" : " dormant"}`}>
+                <div className={`tt-category-title ${tier.own ? "unique" : "corruption"}`}>
+                  {tier.pieces} piece{tier.pieces === 1 ? "" : "s"}:
+                  {!live && <div className="tt-dormant">needs {tier.pieces - filled} more</div>}
+                </div>
+                {tier.lines.map((line, j) => (
+                  <div key={j} className="tt-line">
+                    {renderFormattedStatLine(line)}
+                  </div>
+                ))}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="tt-divider" />
+
+      <div className="tt-footer">
+        <div className="tt-rarity-label">
+          {omen.rarity} {word}
+        </div>
+        <div className="tt-durability">
+          Item Level {omen.itemLevel}
+          {percent === undefined ? "" : ` · stats at ${percent}%`}
+        </div>
       </div>
     </div>
   );

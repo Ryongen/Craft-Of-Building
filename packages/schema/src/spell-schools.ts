@@ -276,3 +276,22 @@ export function schoolsByPointsSpent(snapshot: Snapshot, build: BuildDoc): strin
     .sort((a, b) => b.spent - a.spent || a.id.localeCompare(b.id))
     .map((s) => s.id);
 }
+
+/**
+ * The schools a document has points in, the one you started first first.
+ *
+ * Read off the key order of `character.schools`: the store appends a perk the first time it is
+ * taken and keeps its slot when it is levelled, and JSON keeps that order through a save. So the
+ * school whose earliest surviving perk comes first is the one you picked first.
+ */
+export function schoolsByAllocationOrder(snapshot: Snapshot, build: BuildDoc): string[] {
+  const allocated = build.character.schools;
+  if (!allocated) return [];
+  const out = new Set<string>();
+  for (const [perkId, level] of Object.entries(allocated)) {
+    if (!Number.isFinite(level) || level < 1) continue;
+    const school = schoolOfPerk(snapshot, perkId);
+    if (school !== undefined) out.add(school);
+  }
+  return [...out];
+}

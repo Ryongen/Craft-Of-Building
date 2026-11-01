@@ -1248,6 +1248,14 @@ export type BuildDoc = {
    * one entry rather than a list.
    */
   omen?: OmenSetup;
+  /**
+   * Codexes the build owns but is not wearing, the omen's counterpart to {@link itemPool}.
+   *
+   * Contributes nothing, same as the item pool: `collectOmen` reads `omen` and nothing else.
+   * Equipping one swaps it with the worn omen, so the one coming off lands here instead of
+   * being deleted.
+   */
+  omenPool?: OmenSetup[];
   jewels?: Jewel[];
   skills?: SkillSetup[];
   auras?: AuraSetup[];

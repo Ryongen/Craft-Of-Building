@@ -1307,6 +1307,17 @@ test("a benched item contributes nothing, so it cannot complete anything either"
   assert.deepEqual(benched, []);
 });
 
+test("a spare omen is checked like the worn one, under its own path", () => {
+  const diagnostics = validateBuild(
+    build({ omenPool: [legalOmen(), { ...legalOmen(), requires: { rare: 2 } }] }),
+    standardSnapshot(),
+  );
+
+  assert.ok(diagnostics.length > 0);
+  // The editor tells worn and spare apart by path, and `"omenPool"` starts with `"omen"`.
+  assert.ok(diagnostics.every((d) => d.path.startsWith("omenPool[1].")));
+});
+
 test("a jewel's style narrows its affix pool, so an off-style affix is not a real item", () => {
   const withAffix = (affixId: string, style?: string) =>
     build({

@@ -30,6 +30,7 @@ import {
   type FoodBuffSlot,
   type Item,
   type Jewel,
+  type OmenSetup,
   type SkillSetup,
   type TreeCoord,
   type TreeKey,
@@ -167,7 +168,12 @@ export function validateBuild(
     validateItem(item, snapshot, `itemPool[${i}]`, add);
   }
   validateEquipment(doc, snapshot, add);
-  validateOmen(doc, snapshot, add);
+  if (doc.omen !== undefined) validateOmen(doc.omen, snapshot, "omen", add);
+  // Spare codexes get the same per-omen checks as the worn one. Like the item pool, nothing
+  // here touches the loadout, so a bench of nine is not nine errors.
+  for (const [i, setup] of (doc.omenPool ?? []).entries()) {
+    validateOmen(setup, snapshot, `omenPool[${i}]`, add);
+  }
   validateStatPoints(doc, snapshot, balanceId, add);
   validateSchools(doc, snapshot, balanceId, add);
   for (const [i, jewel] of (doc.jewels ?? []).entries()) {
@@ -2481,22 +2487,20 @@ function validateSchools(doc: BuildDoc, snapshot: Snapshot, balanceId: string, a
  * the only thing to say about a stored tier or roll is whether it still agrees with what the
  * requirements derive. See {@link validateOmenAffixRoll}.
  */
-function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
-  const setup = doc.omen;
-  if (setup === undefined) return;
+function validateOmen(setup: OmenSetup, snapshot: Snapshot, path: string, add: Add): void {
 
   const view = omen(snapshot, setup.id);
   if (!view) {
-    add("error", "unknown-omen", "omen.id", `No ${CATEGORY.omen} entry "${setup.id}".`);
+    add("error", "unknown-omen", `${path}.id`, `No ${CATEGORY.omen} entry "${setup.id}".`);
   }
 
   const rarity = gearRarity(snapshot, setup.rarity);
   if (!rarity) {
-    add("error", "unknown-omen-rarity", "omen.rarity", `No ${CATEGORY.gearRarity} entry "${setup.rarity}".`);
+    add("error", "unknown-omen-rarity", `${path}.rarity`, `No ${CATEGORY.gearRarity} entry "${setup.rarity}".`);
   }
 
   if (!Number.isInteger(setup.itemLevel) || setup.itemLevel < 1) {
-    add("error", "bad-omen-level", "omen.itemLevel", `Must be a whole level of 1 or more, got ${setup.itemLevel}.`);
+    add("error", "bad-omen-level", `${path}.itemLevel`, `Must be a whole level of 1 or more, got ${setup.itemLevel}.`);
   } else if (view !== undefined) {
     // `OmenPart.DroppableOmens` filters on `lvl >= MAX_LEVEL * lvl_req`, so `lvl_req` is a
     // *fraction*. Every omen in this pack is 0.5, i.e. level 50 at MAX_LEVEL 100.
@@ -2505,7 +2509,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
       add(
         "warning",
         "omen-below-drop-level",
-        "omen.itemLevel",
+        `${path}.itemLevel`,
         `"${setup.id}" only drops at level ${min} or above (lvl_req ${view.levelRequirementFraction} ` +
           `of MAX_LEVEL), and this one is ${setup.itemLevel}.`,
       );
@@ -2513,7 +2517,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   }
 
   for (const [type, count] of Object.entries(setup.requires ?? {})) {
-    const at = `omen.requires.${type}`;
+    const at = `${path}.requires.${type}`;
     if (!isGearRarityType(type)) {
       add(
         "error",
@@ -2541,7 +2545,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
   }
 
   for (const [i, req] of (setup.slotRequirements ?? []).entries()) {
-    const at = `omen.slotRequirements[${i}]`;
+    const at = `${path}.slotRequirements[${i}]`;
     if (!has(snapshot, CATEGORY.gearSlot, req.slot)) {
       add("error", "unknown-slot", `${at}.slot`, `No ${CATEGORY.gearSlot} entry "${req.slot}".`);
     } else if (!omenSlotRequirementAllowed(snapshot, req.slot)) {
@@ -2571,7 +2575,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     add(
       "warning",
       "omen-slot-count-outside-band",
-      "omen.slotRequirements",
+      `${path}.slotRequirements`,
       `A "${setup.rarity}" omen generates ${slotBand.min}..${slotBand.max} slot requirements, not ${slotCount}.`,
     );
   }
@@ -2586,7 +2590,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     setup.rarity,
   );
   for (const [i, roll] of (setup.affixes ?? []).entries()) {
-    const at = `omen.affixes[${i}]`;
+    const at = `${path}.affixes[${i}]`;
     const affixView = affix(snapshot, roll.affixId);
     if (!affixView) {
       add("error", "unknown-affix", `${at}.affixId`, `No ${CATEGORY.affix} entry "${roll.affixId}".`);
@@ -2615,7 +2619,7 @@ function validateOmen(doc: BuildDoc, snapshot: Snapshot, add: Add): void {
     add(
       "warning",
       "omen-affix-count-outside-band",
-      "omen.affixes",
+      `${path}.affixes`,
       `A "${setup.rarity}" omen generates ${affixBand.min}..${affixBand.max} affixes, not ${affixCountOnOmen}.`,
     );
   }
