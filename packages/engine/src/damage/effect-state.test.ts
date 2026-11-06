@@ -419,6 +419,19 @@ test("an element-gated grant needs a hit of that element somewhere in the build"
   const added = stateOf(registries(5), { skills: [{ spellId: "bolt", main: true }] });
   assert.equal(hemorrhage(added).stacks, 10, "flat added physical arrives as a bonus physical event");
 
+  // The same stat on a linked support gem never reaches the sheet, but it is the same bonus event
+  // on that skill's hits. Lightning Damage linked into Armageddon is the real case.
+  const linked = stateOf(
+    {
+      ...registries(0),
+      mmorpg_support_gem: {
+        phys_flat: { id: "phys_flat", stats: [{ stat: "flat_physical_added_damage", type: "FLAT", min: 2, max: 6 }] },
+      },
+    },
+    { skills: [{ spellId: "bolt", main: true, supports: [{ id: "phys_flat" }] }] },
+  );
+  assert.equal(hemorrhage(linked).stacks, 10, "a linked gem's flat added physical counts too");
+
   const swinging = stateOf(registries(0), {
     skills: [{ spellId: "bolt" }],
     config: { mainIsBasicAttack: true },
@@ -452,6 +465,92 @@ test("an element-gated grant needs a hit of that element somewhere in the build"
     config: { assumeEffects: "captured" },
   });
   assert.equal(hemorrhage(atThatInstant).stacks, 10, "but the captured reading still sees it");
+});
+
+test("a tag-gated grant needs a skill with that tag that can hit", () => {
+  // Combat Talent: `combat_talent_melee_hit` fires only on a `melee` skill's hit. A caster with
+  // neither melee nor ranged skills was handed both 25% MORE buffs.
+  const tagged = (id: string, tags: string[]) => {
+    const spell = spellEntry(id, "Physical", "hit100");
+    (spell["config"] as Record<string, unknown>)["tags"] = { tags };
+    return spell;
+  };
+  const registries = {
+    mmorpg_exile_effect: { combat_talent_ranged: effectEntry("combat_talent_ranged") },
+    mmorpg_spells: {
+      bolt: tagged("bolt", ["magic", "damage"]),
+      cleave: tagged("cleave", ["melee", "damage"]),
+      guard: { ...tagged("guard", ["melee"]), attached: { on_cast: [], entity_components: {} } },
+    },
+    mmorpg_stat: {
+      combat_talent_melee_hit: statEntry("combat_talent_melee_hit", {
+        effect: [
+          {
+            effects: ["give_combat_talent_ranged_to_source"],
+            events: ["on_damage"],
+            ifs: ["spell_has_tag_melee", "spell_has_tag_not_dot"],
+            side: "Source",
+          },
+        ],
+      }),
+    },
+    mmorpg_stat_condition: {
+      spell_has_tag_melee: { id: "spell_has_tag_melee", ser: "spell_has_tag", tag: { id: "melee" } },
+      spell_has_tag_not_dot: { id: "spell_has_tag_not_dot", ser: "spell_has_tag", is: false, tag: { id: "dot" } },
+    },
+    mmorpg_stat_effect: {
+      give_combat_talent_ranged_to_source: {
+        id: "give_combat_talent_ranged_to_source",
+        ser: "give_exile_effect",
+        effect: "combat_talent_ranged",
+        give_to: "Source",
+        seconds: 6,
+      },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [exact("combat_talent_melee_hit", "FLAT", 100)]),
+    },
+  };
+  const buff = (state: ReturnType<typeof stateOf>) => state.options.find((o) => o.id === "combat_talent_ranged")!;
+
+  const caster = stateOf(registries, { skills: [{ spellId: "bolt", main: true }] });
+  assert.equal(buff(caster).stacks, 0, "no melee skill, no buff");
+  assert.deepEqual(buff(caster).needs, ["a melee skill hit"]);
+
+  const swinging = stateOf(registries, { skills: [{ spellId: "bolt" }], config: { mainIsBasicAttack: true } });
+  assert.equal(buff(swinging).stacks, 0, "a weapon swing carries no spell, so no tag");
+
+  const noHit = stateOf(registries, { skills: [{ spellId: "bolt", main: true }, { spellId: "guard" }] });
+  assert.equal(buff(noHit).stacks, 0, "a melee-tagged skill that never hits does not count");
+
+  const mixed = stateOf(registries, { skills: [{ spellId: "bolt", main: true }, { spellId: "cleave" }] });
+  assert.equal(buff(mixed).stacks, 1, "a melee skill anywhere on the bar keeps it up");
+
+  // A proc'd spell is cast as itself, so its own tags count: the Fan of Knives boots enchant
+  // lets a caster with no ranged skill trigger Combat Talent.
+  const procs = (statValue: number) => ({
+    ...registries,
+    mmorpg_stat: {
+      ...registries.mmorpg_stat,
+      proc_cleave_on_hit: statEntry("proc_cleave_on_hit", {
+        effect: [{ effects: ["proc_spell_cleave"], events: ["on_damage"], side: "Source" }],
+      }),
+    },
+    mmorpg_stat_effect: {
+      ...registries.mmorpg_stat_effect,
+      proc_spell_cleave: { id: "proc_spell_cleave", ser: "proc_spell", spellId: "cleave" },
+    },
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("combat_talent_melee_hit", "FLAT", 100),
+        ...(statValue > 0 ? [exact("proc_cleave_on_hit", "FLAT", statValue)] : []),
+      ]),
+    },
+  });
+  const procced = stateOf(procs(20), { skills: [{ spellId: "bolt", main: true }] });
+  assert.equal(buff(procced).stacks, 1, "a proc'd melee spell triggers it");
+  const nothingToProcOn = stateOf(procs(20), { skills: [{ spellId: "guard" }] });
+  assert.equal(buff(nothingToProcOn).stacks, 0, "but the proc needs some hit of yours to fire on");
 });
 
 test("a captured effect goes when the source that derived it does", () => {

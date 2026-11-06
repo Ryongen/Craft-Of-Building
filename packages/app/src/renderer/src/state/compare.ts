@@ -56,6 +56,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useBuild, type Baseline } from "./build-store.js";
 import { useDerived, type DerivedBuild } from "./derived.js";
+import { statPercentDamage } from "./stat-percent-damage.js";
 import { useWorld } from "@cte2/view";
 
 /**
@@ -562,7 +563,10 @@ export function compare(
     if (Math.abs(b - a) <= epsilon) continue;
     const display: StatDisplay = statDisplay(snapshot, id);
     const improved = display.minusIsGood ? b < a : b > a;
-    const row = delta(id, statLabel(snapshot, display, b), a, b, improved, display.isPerc ? "percent" : "number");
+    // A stat that goes away is named by what it was: "Gain 6% of your Mana as Added Damage", not
+    // the "Gain 0% …" that filling the template with where it lands printed on every unequip.
+    const named = b === 0 ? a : b;
+    const row = delta(id, statLabel(snapshot, display, named), a, b, improved, display.isPerc ? "percent" : "number");
     // Armour and dodge are the two rows a defensive comparison is actually read on, and the
     // rating alone does not say what it bought. `before` may have no entry where the stat was
     // absent altogether, which is a mitigation of 0 rather than an unknown.
@@ -573,6 +577,20 @@ export function compare(
       row.afterUsable = afterUsable ?? 0;
     }
     stats.push(row);
+  }
+
+  // What a "% of your Mana as Added Damage" stat is worth, beside the stat itself. The engine adds
+  // it on every hit, so it is in the DPS figures, but no sheet stat holds the amount: Mind of the
+  // Council's `archmage 6` read as "Archmage −6" and its 433 added damage was nowhere, while the
+  // 48 it fed Mantra through mana was a sheet row. Same footing as that row: before the skill's
+  // damage effectiveness.
+  for (const added of statPercentDamage(snapshot)) {
+    const amount = (v: Vitals): number =>
+      ((v.stats.get(added.statId) ?? 0) / 100) * (v.stats.get(added.fromStatId) ?? 0);
+    const a = amount(before);
+    const b = amount(after);
+    if (Math.abs(b - a) <= epsilon) continue;
+    stats.push(delta(`added:${added.statId}`, added.label(snapshot), a, b, b > a, "number"));
   }
 
   // Both lists lead with what moved most.
@@ -607,12 +625,13 @@ export function compare(
  * `[VAL1]` is filled with the value the stat lands on, which is what the sentence is about: the
  * row then reads "27% Chance to Cast Fan of Knives on Hit" and the columns beside it say how far
  * that moved. It is the same substitution the stat sheet makes (`StatList`), so a stat named one
- * way there is named the same way here.
+ * way there is named the same way here. The one exception is a stat that lands on 0: the caller
+ * passes the value it had, because "Gain 0% of …" names nothing.
  */
-function statLabel(snapshot: Snapshot, display: StatDisplay, after: number): string {
+function statLabel(snapshot: Snapshot, display: StatDisplay, value: number): string {
   if (!display.templated) return display.name;
   const raw = statNameRaw(snapshot, display.id);
-  return raw === undefined ? display.name : stripFormatting(fillTemplate(raw, [after]));
+  return raw === undefined ? display.name : stripFormatting(fillTemplate(raw, [value]));
 }
 
 /**

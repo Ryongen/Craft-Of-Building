@@ -18,6 +18,7 @@ import {
 import { useMemo, type ReactNode } from "react";
 
 import { useDerived, type ModContribution } from "../../state/derived.js";
+import { filledStatName, statPercentDamage } from "../../state/stat-percent-damage.js";
 import { useWorld } from "@cte2/view";
 import { StepRow as SharedStepRow } from "../../ui/StepRow.js";
 import {
@@ -365,6 +366,7 @@ function ContributionRow({
   ambiguous?: boolean;
 }): ReactNode {
   const world = useWorld();
+  const derived = useDerived();
   const fromTarget = contribution.side !== "Source";
   const origin = fromTarget ? target?.origins.get(contribution.statId) : undefined;
   const mitigation = contribution.mitigation;
@@ -375,7 +377,13 @@ function ContributionRow({
       depth={1}
       label={
         <>
-          {statName(world.snapshot, contribution.statId)}
+          {fromTarget
+            ? statName(world.snapshot, contribution.statId)
+            : filledStatName(
+                world.snapshot,
+                contribution.statId,
+                (derived.skillBreakdown(contribution.statId) ?? derived.breakdown(contribution.statId)).stat.value,
+              )}
           {ambiguous && (
             <span className="faint mono text-xs" title={contribution.statId}>
               {" "}
@@ -827,8 +835,44 @@ function StatSources({
   */
   const groups = groupContributions(contributions);
 
+  /*
+    What the calculation itself wrote into the stat, beside the modifiers: a `one_to_other` like
+    Mantra's `physical_weapon_damage_per_perc_of_mana` puts its share of your mana straight onto
+    `flat_physical_added_damage`, with no modifier of its own. Leaving these out printed the 48 on
+    the sheet with nothing under it, while the Stats tab named the stat behind it all along. Each
+    opens into that stat's own sources, so the chain ends at the perk or item like every other row.
+  */
+  const derivedRows = (breakdown?.derived ?? []).filter((d) =>
+    kind === "more" ? d.type === "MORE" || d.type === "MULTI_ADD" : d.type !== "MORE" && d.type !== "MULTI_ADD",
+  );
+
+  /*
+    A stat that adds a percent of another stat on hit (`archmage`: 6% of mana) has its value on
+    the sheet, but the row it feeds is the product. Saying which pool and how big keeps the
+    +433 from looking unrelated to the 6 below it.
+  */
+  const percentOf = kind === "value" ? statPercentDamage(world.snapshot).find((a) => a.statId === statId) : undefined;
+  const pool = percentOf === undefined ? undefined : (derived.skillBreakdown(percentOf.fromStatId) ?? derived.breakdown(percentOf.fromStatId)).stat.value;
+
   return (
     <>
+      {percentOf !== undefined && pool !== undefined && (
+        <SharedStepRow
+          depth={depth}
+          label={
+            <span className="faint">
+              {num(breakdown.stat.value, 2)}% of {num(pool, 0)} {statName(world.snapshot, percentOf.fromStatId)}
+              {percentOf.attacksOnly ? ", attacks only" : ""}
+            </span>
+          }
+          value={signedValue((breakdown.stat.value / 100) * pool, false)}
+          title={
+            `\`${statId}\` adds this percent of your \`${percentOf.fromStatId}\` as flat damage on every ` +
+            "hit, inside the damage event. No sheet stat holds the amount, which is why it is its own " +
+            "row here rather than part of the added damage stat."
+          }
+        />
+      )}
       {/*
         What the sheet says this stat is — the half of it this section is about.
 
@@ -883,13 +927,35 @@ function StatSources({
           }
         </SharedStepRow>
       ))}
+      {depth < 6 &&
+        derivedRows.map((d, index) => (
+          <SharedStepRow
+            key={`derived-${d.from}-${index}`}
+            depth={depth}
+            label={
+              <>
+                {filledStatName(
+                  world.snapshot,
+                  d.from,
+                  (derived.skillBreakdown(d.from) ?? derived.breakdown(d.from)).stat.value,
+                )}{" "}
+                <span className="faint">(converted)</span>
+              </>
+            }
+            value={signedValue(d.value, isPerc)}
+            tone={valueTone(d.value, minusIsGood)}
+            title={`Written onto \`${statId}\` by \`${d.from}\` (${d.kind}). Open it for what granted that stat.`}
+          >
+            {() => <StatSources statId={d.from} depth={depth + 1} kind="value" />}
+          </SharedStepRow>
+        ))}
       {/*
         A stat with nothing under it still shows what it resolved to, because for the multiplier
         half that row *is* the answer: `melee_spell_dmg` gets its ×1.278 from the core-stat pass
         rather than from a modifier, and returning early on an empty list hid the number the
         reader opened the row to see.
       */}
-      {groups.length === 0 && (
+      {groups.length === 0 && derivedRows.length === 0 && (
         <SharedStepRow
           depth={depth}
           label={

@@ -174,6 +174,28 @@ test("a nova spreads projectiles evenly, so a single target catches a fraction o
   assert.equal(coverage.method, "flight");
 });
 
+test("a nova that also gets barrage is still a circle from the caster", () => {
+  // Twincast on Storming Tiger: `projectile_barrage` beside a nova. `cast()` picks one cast type,
+  // `if (NOVA) CIRCLE else if (BARRAGE) HORIZONTAL` (6.4.13 jar), so the bolts are not shifted
+  // sideways. Shifting them anyway moved eleven bolts up to five blocks off and landed none.
+  const ring = (barrage: boolean): DamageSource =>
+    source({
+      carrier: {
+        kind: "projectile",
+        count: 11,
+        baseCount: 10,
+        bonusCount: 1,
+        lifeTicks: 40,
+        motion: motion({ speed: 0.5, nova: true, barrage }),
+      },
+      trigger: { kind: "on_hit" },
+    });
+  const placement = { ...DEFAULT_PLACEMENT, distance: 6 };
+  const plain = coverageOf(ring(false), placement).hitsPerCast;
+  assert.ok(plain >= 1);
+  assert.equal(coverageOf(ring(true), placement).hitsPerCast, plain);
+});
+
 test("random spread turns a fan that just misses into a share of hits, not zero", () => {
   // `battery_fusillade` with Hunter's Focus: two projectiles at ±18.75° pass 0.64 blocks from a
   // mob two blocks out, just outside the 0.6 reach. The ±8° roll brings each back in part of the time.

@@ -131,6 +131,16 @@ export type EffectGrant = {
    * build with no physical hit anywhere was handed ten stacks of +4% crit damage for nothing.
    */
   requiresHit?: ElementName;
+  /**
+   * The spell tag a hit must carry for this grant to fire — its block's `spell_has_tag` gate.
+   *
+   * Combat Talent is the case: `combat_talent_melee_hit` only fires on a skill tagged `melee`,
+   * `combat_talent_ranged_hit` only on one tagged `ranged`. Unread, the gate passed, and a pure
+   * spellcaster who took the keystone was handed both 25% MORE buffs without pressing either kind
+   * of skill. A weapon swing carries no spell, so `SpellHasTagCondition` fails it — only skills
+   * count.
+   */
+  requiresTag?: string;
 } & (
   /** A spell in the build has an `exile_effect` act naming it. */
   | { kind: "spell"; spellId: string; action: string }
@@ -406,7 +416,7 @@ export function resolveEffectState(input: EffectStateInput): EffectState {
     });
   }
 
-  resolveAvailability(options, input.preferred ?? [], hitCheck(snapshot, build, sheet));
+  resolveAvailability(options, input.preferred ?? [], hitCheck(snapshot, build, sheet), tagCheck(snapshot, build, sheet));
   pinComboResources(options, input.combo);
 
   const active = new Map<string, number>();
@@ -485,6 +495,7 @@ function resolveAvailability(
   options: EffectOption[],
   preferred: readonly string[],
   canHit: HitCheck,
+  hasTag: TagCheck,
 ): void {
   const base = new Map(options.map((option) => [option.id, option.stacks] as const));
   const dead = new Set<string>();
@@ -503,7 +514,7 @@ function resolveAvailability(
       // The document's own word wins here as everywhere else: `config.effects` naming an effect
       // is a statement about the character, not a derivation to be overruled.
       if (option.chosen) continue;
-      const missing = unmetRequirements(option, up, canHit);
+      const missing = unmetRequirements(option, up, canHit, hasTag);
       if (missing === undefined) continue;
       option.needs = missing;
       dead.add(option.id);
@@ -520,7 +531,7 @@ function resolveAvailability(
   for (const option of options) {
     if (dead.has(option.id)) option.stacks = 0;
     const missing =
-      option.stacks > 0 || option.chosen ? undefined : unmetRequirements(option, settled, canHit);
+      option.stacks > 0 || option.chosen ? undefined : unmetRequirements(option, settled, canHit, hasTag);
     if (missing === undefined) delete option.needs;
     else option.needs = missing;
   }
@@ -538,12 +549,16 @@ function unmetRequirements(
   option: EffectOption,
   up: ReadonlySet<string>,
   canHit: HitCheck,
+  hasTag: TagCheck,
 ): string[] | undefined {
   let shortest: string[] | undefined;
   for (const grant of option.grantedBy) {
     const missing = (grant.requires ?? []).filter((id) => !up.has(id));
     if (grant.requiresHit !== undefined && !canHit(option.id, grant.requiresHit)) {
       missing.push(`a ${ELEMENTS[grant.requiresHit].displayName.toLowerCase()} hit`);
+    }
+    if (grant.requiresTag !== undefined && !hasTag(grant.requiresTag)) {
+      missing.push(`a ${grant.requiresTag} skill hit`);
     }
     if (missing.length === 0) return undefined;
     if (shortest === undefined || missing.length < shortest.length) shortest = missing;
@@ -798,6 +813,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
       holder: grant.holder,
       side: grant.side,
       ...(grant.requiresHit === undefined ? {} : { requiresHit: grant.requiresHit }),
+      ...(grant.requiresTag === undefined ? {} : { requiresTag: grant.requiresTag }),
     });
   }
 
@@ -820,6 +836,9 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
         if (statId === undefined) continue;
         for (const grant of grantingStats(snapshot).get(statId) ?? []) {
           if (!hits && grant.side === "Source" && grant.event === "on_damage") continue;
+          // The gem's `spell_has_tag` gate is asked about the skill it is linked into, and
+          // nothing else, so it is settled here rather than build-wide.
+          if (grant.requiresTag !== undefined && !spellTagsOf(snapshot, skill.spellId).has(grant.requiresTag)) continue;
           add(grant.effectId, {
             kind: "support",
             gemId: link.id,
@@ -856,6 +875,7 @@ function collectGrants(input: EffectStateInput): Map<string, EffectGrant[]> {
         const statId = stringAt(asObject(raw) ?? {}, "stat");
         if (statId === undefined) continue;
         for (const grant of grantingStats(snapshot).get(statId) ?? []) {
+          if (grant.requiresTag !== undefined && !spellTagsOf(snapshot, skill.spellId).has(grant.requiresTag)) continue;
           add(grant.effectId, {
             kind: "skill_gem",
             spellId,
@@ -1305,6 +1325,7 @@ type EffectGrantFromStat = {
   holder: EffectHolder;
   side: EffectSide;
   requiresHit?: ElementName;
+  requiresTag?: string;
 };
 
 /**
@@ -1369,12 +1390,24 @@ function grantingStats(snapshot: Snapshot): Map<string, EffectGrantFromStat[]> {
                 "ele_match_stat",
           );
         const ele = elementByName(stringAt(asObject(stat.data) ?? {}, "ele"));
+        // Same reasoning: a Target-side `spell_has_tag` asks about the spell that hit you. A
+        // negated one (`is: false`, the `spell_has_tag_not_*` family) is no precondition — some
+        // skill without the tag is always reachable — so only the positive form is read.
+        const requiresTag =
+          side !== "Source"
+            ? undefined
+            : asArray(block["ifs"])
+                .map((id) => (typeof id === "string" ? asObject(entry(snapshot, CATEGORY.statCondition, id)?.data) : undefined))
+                .filter((c) => c !== undefined && stringAt(c, "ser") === "spell_has_tag" && c["is"] !== false)
+                .map((c) => stringAt(asObject(c!["tag"]) ?? {}, "id"))
+                .find((t): t is string => t !== undefined);
         const grant: EffectGrantFromStat = {
           effectId,
           event,
           holder: SELF_EVENTS.has(event) ? "caster" : giveTo === side ? "caster" : "target",
           side: side === "Target" ? "Target" : "Source",
           ...(elementGated && ele !== undefined ? { requiresHit: ele.name } : {}),
+          ...(requiresTag === undefined ? {} : { requiresTag }),
         };
         if (list) list.push(grant);
         else found.set(statId, [grant]);
@@ -1417,6 +1450,21 @@ function hitCheck(snapshot: Snapshot, build: BuildDoc, sheet: Sheet): HitCheck {
     if (!isSkillEnabled(skill)) continue;
     const spell = entry(snapshot, CATEGORY.spell, skill.spellId)?.data;
     if (spell) skills.push(...damageElementsOf(spell));
+    // A linked gem's `flat_<ele>_added_*` is a bonus event of that element on this skill's
+    // hits, exactly like the sheet's — but it lives in the Skill's `SUPPORT_GEM` context, so the
+    // sheet scan below never sees it. Lightning Damage linked into Armageddon is the case: the
+    // fire skill lands lightning bonus hits, and Elemental Equilibrium's lightning gate was
+    // reading as unmet.
+    if (!skillCanHit(snapshot, skill.spellId)) continue;
+    for (const link of activeSupportLinks(skill)) {
+      const gem = entry(snapshot, CATEGORY.supportGem, link.id)?.data;
+      for (const raw of asArray(gem?.["stats"])) {
+        const statId = stringAt(asObject(raw) ?? {}, "stat");
+        for (const element of SINGLE_ELEMENTS) {
+          if (ADDED_KINDS.some((kind) => statId === `flat_${element.guid}_${kind}`)) skills.push(element.name);
+        }
+      }
+    }
   }
   const swings = build.config?.mainIsBasicAttack === true;
   const cache = new Map<string, Set<ElementName>>();
@@ -1445,7 +1493,7 @@ function hitCheck(snapshot: Snapshot, build: BuildDoc, sheet: Sheet): HitCheck {
     }
     if (out.size > 0) {
       for (const element of SINGLE_ELEMENTS) {
-        const added = ["added_damage", "added_attack_damage", "added_magic_damage"].some((kind) =>
+        const added = ADDED_KINDS.some((kind) =>
           on(`flat_${element.guid}_${kind}`),
         );
         if (added) out.add(element.name);
@@ -1472,6 +1520,45 @@ function hitCheck(snapshot: Snapshot, build: BuildDoc, sheet: Sheet): HitCheck {
 
   return (effectId, element) =>
     [...elementsFor(effectId)].some((hit) => elementsMatch(ELEMENTS[hit], ELEMENTS[element]));
+}
+
+const ADDED_KINDS = ["added_damage", "added_attack_damage", "added_magic_damage"] as const;
+
+/** Whether some skill on the bar hits with spell tag `tag`, for a `spell_has_tag` gate. */
+type TagCheck = (tag: string) => boolean;
+
+/**
+ * Build-wide, like {@link hitCheck}: Combat Talent's buff lasts six seconds on you, so a melee
+ * skill anywhere on the bar keeps the ranged half up. The skill must be able to hit — the gate
+ * sits beside `is_hit_or_bonus` — and the weapon swing never counts, because it carries no spell.
+ * Spells your stats proc count as well, the same way {@link hitCheck} counts their elements.
+ */
+function tagCheck(snapshot: Snapshot, build: BuildDoc, sheet: Sheet): TagCheck {
+  const tags = new Set<string>();
+  let anyHit = build.config?.mainIsBasicAttack === true;
+  for (const skill of build.skills ?? []) {
+    if (!isSkillEnabled(skill) || !skillCanHit(snapshot, skill.spellId)) continue;
+    anyHit = true;
+    for (const tag of spellTagsOf(snapshot, skill.spellId)) tags.add(tag);
+  }
+  // A spell your stats proc is cast as itself, so its hits carry its own tags. The boots
+  // enchant `ench_boots_proc_fan_of_knives_on_hit` is the case: Fan of Knives is `ranged`, so a
+  // caster with no ranged skill on the bar still earns Combat Talent's melee half from it. The
+  // proc needs some hit of yours to fire on first; a weapon swing is enough for that.
+  if (anyHit) {
+    const on = (statId: string): boolean => (sheet.get(statId)?.value ?? 0) > 0;
+    for (const spellId of proccedSpells(snapshot, on)) {
+      if (!skillCanHit(snapshot, spellId)) continue;
+      for (const tag of spellTagsOf(snapshot, spellId)) tags.add(tag);
+    }
+  }
+  return (tag) => tags.has(tag);
+}
+
+/** A spell's `config.tags.tags`, which is what `SpellHasTagCondition` reads. */
+function spellTagsOf(snapshot: Snapshot, spellId: string): Set<string> {
+  const config = asObject(asObject(entry(snapshot, CATEGORY.spell, spellId)?.data)?.["config"]);
+  return new Set(asArray(asObject(config?.["tags"])?.["tags"]).filter((t): t is string => typeof t === "string"));
 }
 
 /** The spells a Source-side `proc_spell` on a stat that `has` accepts would cast. */

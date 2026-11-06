@@ -36,6 +36,7 @@ import type { EngineStat } from "@cte2/engine";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useDerived } from "../../state/derived.js";
+import { onHitAddersOf } from "../../state/stat-percent-damage.js";
 import { isOverCap, num, smart, StatIcon, statLook, USABLE_NOUN, useWorld } from "@cte2/view";
 import { SearchInput } from "../../ui/SearchInput.js";
 import { useTechnical } from "../../ui/detail-mode.js";
@@ -53,6 +54,12 @@ export type SheetRow = {
    * for a stat the pack never described, the id is the most useful thing a hover can say.
    */
   desc: string | undefined;
+  /**
+   * Added damage of this stat's element that the game adds inside the hit rather than on the
+   * sheet: Mind of the Council's `archmage`, 6% of mana. Printed into the row's total, because
+   * "Added Physical Damage 48" on a build whose hits get 481 is the sheet missing a source.
+   */
+  onHit: { name: string; amount: number }[];
 };
 
 export function StatList({
@@ -75,12 +82,16 @@ export function StatList({
     const rows: SheetRow[] = [];
     for (const [statId, stat] of sheet) {
       const display = statDisplay(snapshot, statId);
+      const onHit = onHitAddersOf(snapshot, statId, sheet).map((a) => ({
+        name: statDisplay(snapshot, a.added.statId).name,
+        amount: a.amount,
+      }));
 
       // Default view: what the game's own sheet would show, and only where it has a value.
       // `show_in_gui: false` is the pack's own call about 10 internal stats.
       if (!showAll) {
         if (!display.showInGui) continue;
-        if (stat.value === 0 && stat.dmgMulti === 1) continue;
+        if (stat.value === 0 && stat.dmgMulti === 1 && onHit.length === 0) continue;
       }
 
       const raw = statNameRaw(snapshot, statId);
@@ -89,7 +100,7 @@ export function StatList({
           ? stripFormatting(fillTemplate(raw, [stat.value]))
           : display.name;
 
-      rows.push({ display, stat, label, desc: statDesc(snapshot, statId) });
+      rows.push({ display, stat, label, desc: statDesc(snapshot, statId), onHit });
     }
 
     const needle = query.trim().toLowerCase();
@@ -183,14 +194,16 @@ function StatRow({
 }): ReactNode {
   const [technical] = useTechnical();
   const { snapshot } = useWorld();
-  const { display, stat, label, desc } = row;
+  const { display, stat, label, desc, onHit } = row;
+  const onHitTotal = onHit.reduce((n, a) => n + a.amount, 0);
   const capped = stat.hardcap > 0 && stat.value >= stat.hardcap;
   // `minus_is_good` is the pack's own flag for the stats where down is up — cooldowns, costs,
   // `dmg_received`. Without it a −15% mana cost renders in the same red as −15% health.
   //
   // Zero is neither, and saying so matters: a stat sitting at 0 with a MORE multiplier is a
   // real row on this sheet, and painting it red claimed something bad had happened to it.
-  const tone = stat.value === 0 ? "" : (display.minusIsGood ? stat.value < 0 : stat.value > 0) ? " good" : " bad";
+  const shownValue = stat.value + onHitTotal;
+  const tone = shownValue === 0 ? "" : (display.minusIsGood ? shownValue < 0 : shownValue > 0) ? " good" : " bad";
 
   return (
     <div className={`stat-row${selected ? " selected" : ""}`} onClick={onSelect}>
@@ -248,7 +261,18 @@ ${display.id}`
             and the same +120 is worth four points of mitigation on a bare character and a tenth
             of one here. The noun moved to the hover to buy the width back.
           */}
-          {stat.usableValue === undefined ? (
+          {onHit.length > 0 ? (
+            <span
+              title={
+                `${smart(stat.value)} on the sheet` +
+                onHit.map((a) => `\n+ ${smart(a.amount)} from ${a.name}, added on hit`).join("") +
+                "\nClick the row for where each part comes from."
+              }
+            >
+              {smart(stat.value + onHitTotal)}{" "}
+              <span className="usable">({smart(stat.value)} + {smart(onHitTotal)} on hit)</span>
+            </span>
+          ) : stat.usableValue === undefined ? (
             <>
               {smart(stat.value)}
               {display.isPerc ? "%" : ""}

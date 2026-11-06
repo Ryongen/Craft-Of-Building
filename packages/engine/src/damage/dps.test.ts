@@ -696,6 +696,7 @@ function buffScenario({
   buffDamages = false,
   onTarget = false,
   buffTags = ["magic", "buff"],
+  buffHitCalc = "hit100",
 }: {
   potionDur?: number;
   buffCooldownTicks?: number;
@@ -709,6 +710,8 @@ function buffScenario({
    */
   onTarget?: boolean;
   buffTags?: string[];
+  /** The value calc behind the buff's own hit. `hit0` lands and deals nothing. */
+  buffHitCalc?: "hit100" | "hit0";
 } = {}) {
   const strike = spellEntry("strike", "Physical", "hit100", {
     config: { tags: { tags: ["melee"] }, use_support_gems_from: "", cooldown_ticks: 0, cast_time_ticks: 0, cast_speed_ticks: 20 },
@@ -743,7 +746,7 @@ function buffScenario({
         ...(buffDamages
           ? [
               {
-                acts: [{ type: "damage", map: { element: "Physical", value_calculation: "hit100" } }],
+                acts: [{ type: "damage", map: { element: "Physical", value_calculation: buffHitCalc } }],
                 ifs: [],
                 targets: [
                   { type: "aoe", map: { radius: 3, selection_type: "RADIUS", en_predicate: "enemies" } },
@@ -758,7 +761,10 @@ function buffScenario({
   });
 
   return engineSnapshot({
-    mmorpg_value_calc: { hit100: valueCalcEntry("hit100", { min: 100, max: 100 }) },
+    mmorpg_value_calc: {
+      hit100: valueCalcEntry("hit100", { min: 100, max: 100 }),
+      hit0: valueCalcEntry("hit0", { min: 0, max: 0 }),
+    },
     mmorpg_spells: { strike, stance },
     mmorpg_stat_effect: EFFECTS,
     mmorpg_stat_condition: CONDITIONS,
@@ -827,6 +833,18 @@ test("a buff that damages stays a rotation step, because that is why you press i
   const full = simulateFullDps(build({ skills: [ROTATION, BUFF] } as Partial<BuildDoc>), snapshot);
   const entry = full.skills.find((e) => e.skill.spellId === "stance");
   assert.ok(entry);
+  assert.equal(entry.role, "rotation");
+});
+
+test("a hit that lands for nothing is still a rotation step, not a buff to keep up", () => {
+  // Livid Lightning's shape: `all_non_lightning_damage` MORE -100% takes a physical sweep that
+  // also hands out `combo_linker` to 0. The sweep is still pressed every pass. Reading the zero as
+  // "pressed for its buff" made it upkeep, halved the pass and priced the talent as a DPS gain.
+  const snapshot = buffScenario({ potionDur: 200, buffDamages: true, buffHitCalc: "hit0" });
+  const full = simulateFullDps(build({ skills: [ROTATION, BUFF] } as Partial<BuildDoc>), snapshot);
+  const entry = full.skills.find((e) => e.skill.spellId === "stance");
+  assert.ok(entry);
+  assert.equal(entry.result.damagePerCast, 0);
   assert.equal(entry.role, "rotation");
 });
 

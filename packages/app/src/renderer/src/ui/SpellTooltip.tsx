@@ -192,7 +192,7 @@ export function SpellWindow({
           <div className="tt-chips">
             {card.tags.map((tag) => (
               <span key={tag} className="tt-chip">
-                {tag.replace(/_/g, " ")}
+                {tag}
               </span>
             ))}
           </div>

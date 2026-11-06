@@ -886,9 +886,16 @@ function initialYaw(motion: ProjectileMotion, i: number, count: number): number 
   return (offset * motion.apartDegrees) / count;
 }
 
-/** `SPREAD_OUT_HORIZONTAL` shifts each projectile one block along the caster's side vector. */
+/**
+ * `SPREAD_OUT_HORIZONTAL` shifts each projectile one block along the caster's side vector.
+ *
+ * Only when the cast *is* horizontal: `cast()` picks one type, `if (NOVA) CIRCLE else if
+ * (BARRAGE) HORIZONTAL` (6.4.13 jar), so a nova that also gets barrage — Twincast on Storming
+ * Tiger — stays a circle from the caster. Shifting it anyway sent eleven bolts out from up to five
+ * blocks sideways and landed none of them.
+ */
 function sidewaysOffset(motion: ProjectileMotion, i: number, count: number): number {
-  if (!motion.barrage || count <= 1) return 0;
+  if (motion.nova || !motion.barrage || count <= 1) return 0;
   return i - (count - 1) / 2;
 }
 

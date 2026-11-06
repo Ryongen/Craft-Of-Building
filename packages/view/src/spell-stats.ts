@@ -56,6 +56,7 @@ import {
   statName,
   stripGlossaryMarkup,
   supportGemName,
+  text,
   type Span,
 } from "@cte2/schema";
 
@@ -94,6 +95,7 @@ export type SpellCard = {
   level: { shown: number; natural: number; ceiling: number };
   costs: CardCost[];
   facts: CardFact[];
+  /** The spell's tags by their in-game names ("Attack", not `weapon_skill`). */
   tags: string[];
   /** `statsForSkillGem`, resolved at this rank. */
   stats: StatLine[];
@@ -223,7 +225,7 @@ export function spellCard(
     level: { shown: at.level, natural: at.natural, ceiling: at.ceiling },
     costs,
     facts,
-    tags: tagsOf(config),
+    tags: tagsOf(snapshot, config),
     // `Spell.getStats`: the percent is the rank's share of the ceiling, **truncated to an int**,
     // and the flats scale to the player's level rather than the spell's.
     stats: linesFrom(
@@ -624,12 +626,22 @@ function linesFrom(
   return totalLines(snapshot, totals);
 }
 
-/** `config.tags.tags` — nested one deeper than every other list on the entry. */
-function tagsOf(config: Record<string, unknown>): string[] {
+/**
+ * `config.tags.tags` — nested one deeper than every other list on the entry — as the game names
+ * them.
+ *
+ * `mmorpg.tag.spell.<id>`, glossary markup stripped: `weapon_skill` is "Attack" in game, and the
+ * id with its underscores swapped out told players their attacks were "weapon skill"s. Two tags
+ * (`lightning_bolt`, `slice`) have no lang entry and fall back to the humanised id.
+ */
+function tagsOf(snapshot: Snapshot, config: Record<string, unknown>): string[] {
   const node = asObject(config["tags"]);
   const list = node?.["tags"];
   if (!Array.isArray(list)) return [];
-  return list.filter((t): t is string => typeof t === "string");
+  const names = list
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => text(snapshot, `mmorpg.tag.spell.${t}`) ?? humanise(t));
+  return [...new Set(names)];
 }
 
 function seconds(ticks: number): string {

@@ -51,6 +51,7 @@ import { useContext, type ReactNode } from "react";
 import { useBuild } from "../../state/build-store.js";
 import { useProvenance } from "../../ui/Provenance.js";
 import { useDerived, type ModContribution } from "../../state/derived.js";
+import { filledStatName, onHitAddersOf } from "../../state/stat-percent-damage.js";
 import { num, signed, smart, StatIcon, statLook, useWorld } from "@cte2/view";
 import { StepRow } from "../../ui/StepRow.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
@@ -171,6 +172,9 @@ export function StatBreakdown({
     .map((d) => d.from);
 
   const groups = groupContributions(breakdown.contributions);
+  // Added damage of this element the game adds inside the hit, not on the sheet. See
+  // `stat-percent-damage.ts`; the list row already counts it into the total.
+  const onHit = onHitAddersOf(snapshot, statId, derived.stats);
   const spellId = skillSheet?.spellId ?? derived.damage?.spellId;
 
   /*
@@ -327,7 +331,7 @@ export function StatBreakdown({
         </>
       )}
 
-      {breakdown.contributions.length === 0 && breakdown.derived.length === 0 && (
+      {breakdown.contributions.length === 0 && breakdown.derived.length === 0 && onHit.length === 0 && (
         <div className="empty">Nothing in this build contributes to it.</div>
       )}
 
@@ -361,7 +365,7 @@ export function StatBreakdown({
                   // contributions are its own breakdown and duplicating them here would be two
                   // answers to one question.
                   <a className="link" onClick={() => onSelect?.(d.from)}>
-                    {statName(snapshot, d.from)}
+                    {filledStatName(snapshot, d.from, derived.stats.get(d.from)?.value ?? 0)}
                   </a>
                 }
                 badge={d.type === "ADD_TO_VALUE" ? "→ value" : d.type === "MULTI_ADD" ? "+multi" : d.type}
@@ -377,6 +381,32 @@ export function StatBreakdown({
               see what fed it.
             </div>
           )}
+        </>
+      )}
+      {onHit.length > 0 && (
+        <>
+          <div className="section-title">Added on hit, not on the sheet</div>
+          <div className="steps">
+            {onHit.map(({ added, amount }) => (
+              <StepRow
+                key={added.statId}
+                label={
+                  <a className="link" onClick={() => onSelect?.(added.statId)}>
+                    {filledStatName(snapshot, added.statId, derived.stats.get(added.statId)?.value ?? 0)}
+                  </a>
+                }
+                badge={`${num(derived.stats.get(added.statId)?.value ?? 0, 2)}% of ${statName(snapshot, added.fromStatId)}`}
+                title={
+                  `\`${added.statId}\` adds a percent of your ${statName(snapshot, added.fromStatId)} as flat ` +
+                  `damage inside every hit${added.attacksOnly ? " of an attack" : ""}, so the game never ` +
+                  "writes it onto this stat. It goes through damage effectiveness the same way. " +
+                  "Click through for the item or perk that grants it."
+                }
+                value={signed(amount)}
+                onClick={() => onSelect?.(added.statId)}
+              />
+            ))}
+          </div>
         </>
       )}
     </div>

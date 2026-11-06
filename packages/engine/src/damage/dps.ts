@@ -2737,6 +2737,13 @@ export function pressedForEffect(result: DpsResult, asBuff: boolean | undefined)
   return asBuff ?? result.declared.tags.includes("curse");
 }
 
+/** Whether any of a cast's damage acts reaches the enemy, whatever it ends up dealing. */
+function landsOnTarget(result: DpsResult): boolean {
+  return result.sources.some(
+    (s) => s.source.target?.kind !== "self" && s.coverage.hitsPerCast > 0,
+  );
+}
+
 function upkeepOf(result: DpsResult, asBuff?: boolean):
   | {
       role: Exclude<FullDpsRole, "rotation">;
@@ -2751,7 +2758,13 @@ function upkeepOf(result: DpsResult, asBuff?: boolean):
   // A toggle that hits is still a toggle. Everything else earns its way out of the rotation by
   // putting nothing on the target — or by being pressed for its effect, in which case the hit
   // rides along once per re-cast. See `pressedForEffect` for who decides that.
-  if (!aura && !pressedForEffect(result, asBuff) && result.damagePerCast > 0) return undefined;
+  //
+  // "Puts nothing on the target" is asked of where the hits land, not of how much they deal. A
+  // MORE −100% zeroes `damagePerCast` without moving a single hit: Livid Lightning's
+  // `all_non_lightning_damage` takes a physical sweep to 0, and reading that as "pressed for its
+  // buff" quietly dropped the sweep to one press every 6s, halved the pass and reported the
+  // talent as a 40% Full DPS gain. You still press the sweep every pass; it just does nothing.
+  if (!aura && !pressedForEffect(result, asBuff) && landsOnTarget(result)) return undefined;
 
   // `result.buff` / `result.debuff` rather than a second walk of the spell: they are the same
   // upkeep answers with the `eff_dur_u_cast` sweep already applied, and the rotation has to be
