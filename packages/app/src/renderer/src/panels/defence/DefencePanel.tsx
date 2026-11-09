@@ -23,7 +23,7 @@ import type {
 } from "@cte2/engine";
 import { useMemo, type ReactNode } from "react";
 
-import { spellName, statName } from "@cte2/schema";
+import { exileEffectName, spellName, statName } from "@cte2/schema";
 import { layerLabel } from "../../ui/trace-format.js";
 
 import { useBuild } from "../../state/build-store.js";
@@ -378,8 +378,14 @@ function SelfDamageSustain({
  */
 function RegenTable({ resources, income }: { resources: Resources; income: SkillIncome }): ReactNode {
   const [technical] = useTechnical();
+  const { snapshot } = useWorld();
   const incomeOf = (resource: string) => income.byResource.find((r) => r.resource === resource);
   const fed = income.byResource.some((r) => r.total > 0);
+  // Held buffs that restore on a timer (Blood Harvest, Prayer, Rejuvenation, Inner Calm). Already
+  // inside Resting and In combat; the column says how much of each is theirs.
+  const buffed = resources.byResource.some((entry) => (entry.fromEffects?.length ?? 0) > 0);
+  const buffTotal = (entry: Resources["byResource"][number]) =>
+    (entry.fromEffects ?? []).reduce((sum, held) => sum + held.perSecond, 0);
   const fights = resources.byResource.some(
     (entry) => Math.abs(entry.inCombatPerSecond - entry.perSecond) > 1e-6,
   );
@@ -407,6 +413,7 @@ function RegenTable({ resources, income }: { resources: Resources; income: Skill
             <th className="num">Max</th>
             <th className="num">Flat</th>
             <th className="num">% of max</th>
+            {buffed && <th className="num">Buffs</th>}
             <th className="num">Resting</th>
             <th className="num">In combat</th>
             {fed && <th className="num">Leech</th>}
@@ -427,6 +434,16 @@ function RegenTable({ resources, income }: { resources: Resources; income: Skill
               <td className="num">
                 {entry.fromPercentOfMax === 0 ? "—" : smart(entry.fromPercentOfMax)}
               </td>
+              {buffed && (
+                <td
+                  className="num"
+                  title={(entry.fromEffects ?? [])
+                    .map((held) => `${exileEffectName(snapshot, held.effectId)}: ${smart(held.perSecond)}/s`)
+                    .join("\n") || undefined}
+                >
+                  {buffTotal(entry) > 0 ? smart(buffTotal(entry)) : "—"}
+                </td>
+              )}
               <td className="num">{smart(entry.perSecond)}</td>
               <td
                 className="num"
@@ -519,6 +536,26 @@ function RegenTable({ resources, income }: { resources: Resources; income: Skill
           {income.swings ? " plus your basic attacks" : ""}. It only flows while you&apos;re hitting
           things, so Full in still uses regeneration alone.
         </div>
+      )}
+
+      {resources.byResource.flatMap((entry) =>
+        (entry.fromEffects ?? []).map((held) => (
+          <div key={`${entry.resource}:${held.effectId}`} className="faint text-sm mt-4">
+            <strong>{exileEffectName(snapshot, held.effectId)}</strong>
+            {exileEffectName(snapshot, held.effectId) === spellName(snapshot, held.spellId)
+              ? ""
+              : ` (from ${spellName(snapshot, held.spellId)})`}{" "}
+            restores {smart(held.perTick)}{" "}
+            {entry.resource.replace(/_/g, " ")} every {num(held.tickSeconds, 1)}s while it is up, so{" "}
+            {smart(held.perSecond)}/s, included in Resting and In combat.
+            <Tech>
+              {" "}
+              <code>{held.valueCalcId}</code> seeds {smart(held.seed)}, read off your sheet at the
+              skill&apos;s rank; it is a heal event, so the in-combat multiplier does not apply.
+            </Tech>{" "}
+            Untick it under Config &rarr; Effects to see the build without it.
+          </div>
+        )),
       )}
 
       {resources.byResource

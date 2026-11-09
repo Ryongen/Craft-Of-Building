@@ -150,6 +150,8 @@ export {
   isDualWielding,
   isMainhandWeapon,
   mainhandWeapon,
+  castingWeaponProblem,
+  type CastingWeaponProblem,
   offhandWeaponCounts,
   offhandWeaponShare,
   canMirror,

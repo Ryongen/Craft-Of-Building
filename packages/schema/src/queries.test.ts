@@ -569,3 +569,43 @@ test("the epilogue bonus is clamped by max_total_points, and loses to a recorded
   assert.equal(answer.total, 54);
   assert.equal(answer.recorded, true);
 });
+
+test("castingWeaponProblem reads the mainhand's base tags the way SpellPredicates does", async () => {
+  const { castingWeaponProblem } = await import("./queries.js");
+  const snapshot = makeSnapshot({
+    mmorpg_gear_slot: {
+      staff: { id: "staff", fam: "Weapon" },
+      sword: { id: "sword", fam: "Weapon" },
+      bow: { id: "bow", fam: "Weapon" },
+      helmet: { id: "helmet", fam: "Armor" },
+    },
+    mmorpg_base_gear_types: {
+      staff: { guid: "staff", gear_slot: "staff", tags: { tags: ["mage_weapon", "melee_weapon"] } },
+      sword: { guid: "sword", gear_slot: "sword", tags: { tags: ["melee_weapon"] } },
+      bow: { guid: "bow", gear_slot: "bow", tags: { tags: ["ranged_weapon"] } },
+      helmet: { guid: "helmet", gear_slot: "helmet", tags: { tags: [] } },
+    },
+  });
+  const item = (base: string) => ({ base, rarity: "common", itemLevel: 1 }) as never;
+  const staff = [item("staff")];
+  const sword = [item("sword"), item("helmet")];
+  const bow = [item("bow")];
+  const empty = [item("helmet")];
+
+  assert.equal(castingWeaponProblem(snapshot, "MAGE_WEAPON", staff), undefined);
+  assert.deepEqual(castingWeaponProblem(snapshot, "MAGE_WEAPON", sword), {
+    requirement: "MAGE_WEAPON",
+    weaponBase: "sword",
+  });
+  assert.equal(castingWeaponProblem(snapshot, "MELEE_WEAPON", staff), undefined);
+  assert.equal(castingWeaponProblem(snapshot, "RANGED", bow), undefined);
+  assert.equal(castingWeaponProblem(snapshot, "RANGED", sword)?.weaponBase, "sword");
+  // NON_MAGE is `!MAGE_PRED`: a sword or an empty hand passes, a staff does not.
+  assert.equal(castingWeaponProblem(snapshot, "NON_MAGE_WEAPON", sword), undefined);
+  assert.equal(castingWeaponProblem(snapshot, "NON_MAGE_WEAPON", empty), undefined);
+  assert.equal(castingWeaponProblem(snapshot, "NON_MAGE_WEAPON", staff)?.weaponBase, "staff");
+  // An empty hand fails every positive requirement and names no weapon.
+  assert.deepEqual(castingWeaponProblem(snapshot, "MELEE_WEAPON", empty), { requirement: "MELEE_WEAPON" });
+  assert.equal(castingWeaponProblem(snapshot, "ANY_WEAPON", empty), undefined);
+  assert.equal(castingWeaponProblem(snapshot, undefined, empty), undefined);
+});

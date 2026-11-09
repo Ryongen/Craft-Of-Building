@@ -133,9 +133,11 @@ import {
 import { balance } from "../balance.js";
 import { resolveEffects, type EngineOptions, type EngineResult } from "../calculate.js";
 import { ORIGINAL_MODE, type Compat } from "../compat.js";
+import { maxSpellLevel, spellLevel, spellRanks, withLearnedRank } from "../collect/spell.js";
 import { statIndex } from "../stat-def.js";
+import { calculatedValue, valueCalc } from "./value-calc.js";
 import { Recorder, type LayerStep, type MoreStep } from "./breakdown.js";
-import type { DamageCtx, RestoreRecord, Sheet } from "./ctx.js";
+import { sheetValue, type DamageCtx, type RestoreRecord, type Sheet } from "./ctx.js";
 import { EVENT, DamageEventState } from "./event.js";
 import { layerIndex } from "./layers.js";
 import { sweep } from "./simulate.js";
@@ -180,7 +182,12 @@ export type Regen = {
   flat: number;
   /** `max × <r>_per_sec / 100`. */
   fromPercentOfMax: number;
-  /** What the event starts at: the two above, summed. */
+  /**
+   * What the caller brought before the stats: zero for a plain tick, for blood the share of
+   * health regeneration `hp_resto_to_blood` redirects.
+   */
+  seed: number;
+  /** What the event starts at: the seed and the two above, summed. */
   base: number;
   /** Per second out of combat, after the restore event's own layers. */
   perSecond: number;
@@ -195,8 +202,33 @@ export type Regen = {
   secondsToFull: number | undefined;
   /** Layer by layer, for a breakdown. */
   steps: LayerStep[];
+  /**
+   * The `MORE`/`LESS` multipliers the sweep applied after the layers — Abyssal Aura's 20% less
+   * blood, mana and energy regeneration is one. Out of combat; the in-combat sweep has the same.
+   */
+  moreMultis: MoreStep[];
   /** Set when the resource does not regenerate the ordinary way. */
   note?: string;
+  /**
+   * Held buffs that restore this pool on a timer, already included in both per-second columns.
+   * See {@link heldEffectRestores}.
+   */
+  fromEffects?: HeldEffectRestore[];
+};
+
+/** One held buff's `restore_*` tick, as a rate. */
+export type HeldEffectRestore = {
+  effectId: string;
+  /** The spell that put it up, whose rank the value calculation reads. */
+  spellId: string;
+  resource: ResourceId;
+  valueCalcId: string;
+  /** `getCalculatedValue` before the restore event's layers. */
+  seed: number;
+  /** One tick, after the restore event's layers. */
+  perTick: number;
+  tickSeconds: number;
+  perSecond: number;
 };
 
 export type Resources = {
@@ -293,6 +325,18 @@ export function resources(
         `and on-kill stats only.`;
   byResource.push(blood);
 
+  // Buffs you hold that tick a `restore_*` act on you: Blood Harvest, Prayer, Rejuvenation,
+  // Inner Calm. They are not regeneration — each tick is a `RestoreType.heal` event — so they
+  // are added after the regen sweep and the in-combat multiplier never touches them.
+  for (const held of heldEffectRestores(shared)) {
+    const row = byResource.find((r) => r.resource === held.resource);
+    if (row === undefined) continue;
+    row.perSecond += held.perSecond;
+    row.inCombatPerSecond += held.perSecond;
+    row.secondsToFull = row.perSecond > 0 && row.max > 0 ? row.max / row.perSecond : undefined;
+    (row.fromEffects ??= []).push(held);
+  }
+
   const bloodMage = (sheet.get("blood_user")?.value ?? 0) > 0;
   if (bloodMage) {
     diagnostics.push({
@@ -322,6 +366,145 @@ export function resources(
   }
 
   return { byResource, bloodMage, healthToBloodPercent, inCombatRegenMulti, diagnostics };
+}
+
+// ---------------------------------------------------------------------------
+// Held buffs that restore
+// ---------------------------------------------------------------------------
+
+/** The group `ExileEffect.spell` ticks. */
+const EFFECT_TICK_GROUP = "default_entity_name";
+
+const RESTORE_ACT_POOL: Record<string, ResourceId> = {
+  restore_health: "health",
+  restore_mana: "mana",
+  restore_energy: "energy",
+  restore_blood: "blood",
+  restore_magic_shield: "magic_shield",
+};
+
+/**
+ * What the buffs you hold put back each second through their own `restore_*` acts.
+ *
+ * Blood Harvest is the case that asked for this: the spell does nothing on cast but hurt you and
+ * hand out `blood_harvest`, and the effect's `default_entity_name` group restores blood off the
+ * `blood_harvest` value calc every 20 ticks. Walking the spell never reaches that group, so the
+ * buff was free stats-wise and worth nothing.
+ *
+ * `RestoreBloodAction.tryActivate` (6.4.13 jar, the other four are the same with another type):
+ *
+ *     int num = calc.getCalculatedValue(ctx.caster, ctx.calculatedSpellData.getSpell());
+ *     EventBuilder.ofRestore(ctx.caster, en, ResourceType.blood, RestoreType.heal, num)
+ *         .setSpell(ctx.calculatedSpellData.getSpell()).build().Activate();
+ *
+ * The effect carries the calculated data of the spell that applied it, so the value reads your
+ * sheet at that spell's rank. Only parts whose selector lands on you are kept — `target` (the
+ * holder) or an `allies` area, which includes you — and only parts gated on nothing but a tick
+ * timer, so a branch behind a condition this cannot answer is left out rather than assumed.
+ *
+ * The spell's own sheet (its linked supports) is not built here; the character sheet stands in
+ * for it, which is exact for every buff in this pack whose supports carry no healing stat.
+ */
+function heldEffectRestores(shared: Shared): HeldEffectRestore[] {
+  const out: HeldEffectRestore[] = [];
+  let ranks: ReturnType<typeof spellRanks> | undefined;
+  const env = {
+    snapshot: shared.snapshot,
+    index: shared.index,
+    balance: shared.balance,
+    level: shared.build.character.level,
+    diagnostics: [],
+    report: () => {},
+  };
+
+  for (const option of shared.effects.options) {
+    if (option.stacks <= 0 || option.side !== "caster") continue;
+    const data = entry(shared.snapshot, CATEGORY.exileEffect, option.id)?.data;
+    const groups = asRecord(asRecord(data?.["spell"])?.["entity_components"]);
+    const parts = groups?.[EFFECT_TICK_GROUP];
+    if (!Array.isArray(parts)) continue;
+
+    const spellId =
+      option.spellId ??
+      option.grantedBy.find((g): g is Extract<typeof g, { kind: "spell" }> => g.kind === "spell")?.spellId;
+    const spell = spellId === undefined ? undefined : entry(shared.snapshot, CATEGORY.spell, spellId)?.data;
+    if (spellId === undefined || spell === undefined) continue;
+
+    ranks ??= spellRanks(shared.snapshot, shared.sheet, shared.balance);
+    const skill = withLearnedRank(
+      shared.snapshot,
+      shared.build,
+      (shared.build.skills ?? []).find((s) => s.spellId === spellId) ?? { spellId },
+      ranks,
+    );
+    const level = spellLevel(env, spellId, spell, skill.level);
+    const maxLevel = maxSpellLevel(env, spell);
+    const tags = new Set(
+      (asRecord(asRecord(asRecord(spell["config"])?.["tags"]))?.["tags"] as string[] | undefined) ?? [],
+    );
+    const restoreSpell: RestoreSpell = { data: spell, id: spellId, tags, sheet: shared.sheet };
+
+    for (const raw of parts) {
+      const part = asRecord(raw);
+      if (part === undefined) continue;
+      const ifs = Array.isArray(part["ifs"]) ? part["ifs"].map(asRecord) : [];
+      const preds = Array.isArray(part["en_preds"]) ? part["en_preds"] : [];
+      if (preds.length > 0 || ifs.length !== 1 || ifs[0]?.["type"] !== "x_ticks_condition") continue;
+      const tickRate = asRecord(ifs[0]?.["map"])?.["tick_rate"];
+      if (typeof tickRate !== "number" || !(tickRate > 0)) continue;
+      if (!reachesHolder(part["targets"])) continue;
+
+      for (const actRaw of Array.isArray(part["acts"]) ? part["acts"] : []) {
+        const act = asRecord(actRaw);
+        const resource = RESTORE_ACT_POOL[String(act?.["type"])];
+        const valueCalcId = asRecord(act?.["map"])?.["value_calculation"];
+        if (resource === undefined || typeof valueCalcId !== "string") continue;
+        const vc = valueCalc(shared.snapshot, valueCalcId);
+        if (vc === undefined) continue;
+        const seed = calculatedValue(
+          vc,
+          (statId) => sheetValue(shared.sheet, statId),
+          null,
+          level,
+          maxLevel,
+          shared.build.character.level,
+          shared.balance,
+          shared.compat,
+        );
+        if (seed <= 0) continue;
+        const perTick = restoreEvent(shared, resource, "heal", seed, true, restoreSpell).number;
+        const tickSeconds = tickRate / 20;
+        out.push({
+          effectId: option.id,
+          spellId,
+          resource,
+          valueCalcId,
+          seed,
+          perTick,
+          tickSeconds,
+          perSecond: perTick / tickSeconds,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** `target` is the holder; an `allies` area includes the holder. `self` is the caster, also you. */
+function reachesHolder(targets: unknown): boolean {
+  if (!Array.isArray(targets) || targets.length === 0) return false;
+  return targets.some((raw) => {
+    const t = asRecord(raw);
+    const type = t?.["type"];
+    if (type === "target" || type === "self") return true;
+    return type === "aoe" && asRecord(t?.["map"])?.["en_predicate"] === "allies";
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +779,8 @@ export type ResourceBudget = {
   leechPerSecond: number;
   /** The skill's own `restore_*` acts landing on you. See {@link spellRestores}. */
   restorePerSecond: number;
+  /** Held buffs inside {@link regenPerSecond} (Blood Harvest and the like), so it can name them. */
+  regenFromEffects?: HeldEffectRestore[];
   /** One cast's declared cost out of this pool. */
   costPerCast: number;
   costPerSecond: number;
@@ -657,6 +842,7 @@ export function budget(input: BudgetInput): ResourceBudget[] {
       regenPerSecond,
       leechPerSecond: leeched,
       restorePerSecond: restored,
+      ...(regen?.fromEffects === undefined ? {} : { regenFromEffects: regen.fromEffects }),
       costPerCast,
       costPerSecond,
       netPerSecond,
@@ -745,11 +931,13 @@ function regenOf(
     max,
     flat,
     fromPercentOfMax,
+    seed,
     base: seed + flat + fromPercentOfMax,
     perSecond: out.number,
     inCombatPerSecond,
     secondsToFull: out.number > 0 && max > 0 ? max / out.number : undefined,
     steps: out.steps,
+    moreMultis: out.moreMultis,
   };
 }
 
@@ -818,7 +1006,7 @@ function restoreEvent(
   seed: number,
   inCombat?: boolean,
   spell?: RestoreSpell,
-): { number: number; steps: LayerStep[] } {
+): { number: number; steps: LayerStep[]; moreMultis: MoreStep[] } {
   const recorder = new Recorder();
   const event = new DamageEventState(shared.layers, undefined, recorder);
   event.data.setupNumber(EVENT.NUMBER, seed);
@@ -867,5 +1055,5 @@ function restoreEvent(
     "on_restore_resource",
   );
 
-  return { number: Math.max(0, event.damage), steps };
+  return { number: Math.max(0, event.damage), steps, moreMultis };
 }

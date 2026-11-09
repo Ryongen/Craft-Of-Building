@@ -22,7 +22,7 @@
  */
 
 import { pressesPerPass, type LayerStep } from "@cte2/engine";
-import { spellName, statName, type ElementName } from "@cte2/schema";
+import { exileEffectName, spellName, statName, type ElementName } from "@cte2/schema";
 import type { ReactNode } from "react";
 
 import { damageRates } from "../../state/compare.js";
@@ -83,7 +83,9 @@ export type SheetFocus =
   /** The same element's maximum hit — the unavoided half of the same pair. */
   | { kind: "max-hit"; element: ElementName }
   /** What hits and skills put back into one pool: leech, on-hit, and skills' own restores. */
-  | { kind: "income"; resource: string };
+  | { kind: "income"; resource: string }
+  /** One pool's regeneration, put together from every term that makes it. */
+  | { kind: "regen"; resource: string };
 
 export function SheetDetail({
   focus,
@@ -109,6 +111,9 @@ export function SheetDetail({
         }
       />
     );
+  }
+  if (focus.kind === "regen") {
+    return <RegenDetail resource={focus.resource} derived={derived} onFocus={onFocus} />;
   }
   if (focus.kind === "income") {
     return <IncomeDetail resource={focus.resource} derived={derived} onFocus={onFocus} />;
@@ -151,6 +156,23 @@ function Detail({
 }
 
 /** One term of a figure. `onSelect` is what turns a term into the next question. */
+/**
+ * One line per held buff inside a pool's regeneration (Blood Harvest, Prayer, Inner Calm), so the
+ * Regeneration term above it names everything it is made of. Nothing when no buff restores it.
+ */
+function HeldTerms({ derived, pool }: { derived: DerivedBuild; pool: string }): ReactNode {
+  const { snapshot } = useWorld();
+  const held = derived.resources.byResource.find((r) => r.resource === pool)?.fromEffects ?? [];
+  return held.map((h) => (
+    <Term
+      key={h.effectId}
+      label={`of which ${exileEffectName(snapshot, h.effectId)}`}
+      value={`${smart(h.perSecond)}/s`}
+      hint={`${smart(h.perTick)} every ${num(h.tickSeconds, 1)}s while the buff is up, from ${spellName(snapshot, h.spellId)}. Untick it under Config → Effects to see the build without it.`}
+    />
+  ));
+}
+
 function Term({
   label,
   value,
@@ -762,8 +784,9 @@ function FigureDetail({
               label="Magic shield regeneration pays"
               value={`${smart(sustain.fromShieldRegen)}/s`}
               hint={STATS_COPY.selfDamageShield}
-              onSelect={stat("magic_shield_regen")}
+              onSelect={() => onFocus({ kind: "regen", resource: "magic_shield" })}
             />
+            <HeldTerms derived={derived} pool="magic_shield" />
             <Term
               label="Reaching health"
               value={`${smart(sustain.reachingHealth)}/s`}
@@ -772,8 +795,9 @@ function FigureDetail({
             <Term
               label="Health regeneration pays"
               value={`${smart(sustain.fromHealthRegen)}/s`}
-              onSelect={stat("health_regen")}
+              onSelect={() => onFocus({ kind: "regen", resource: "health" })}
             />
+            <HeldTerms derived={derived} pool="health" />
             <Term
               label="Net"
               value={sustain.sustainable ? "covered" : `−${smart(sustain.netLossPerSecond)}/s`}
@@ -830,8 +854,9 @@ function FigureDetail({
               label="Regeneration, in combat"
               value={`${smart(regen)}/s`}
               hint={STATS_COPY.inCombat}
-              onSelect={stat(`${pool}_regen`)}
+              onSelect={() => onFocus({ kind: "regen", resource: pool })}
             />
+            <HeldTerms derived={derived} pool={pool} />
             {budget !== undefined && (
               <Term
                 label="Net"
@@ -1104,6 +1129,139 @@ export function rotationCost(derived: DerivedBuild): {
  * paid out at `<r>_leech_cap`% of the pool a second, a skill's restore act is a heal that lands
  * at once. Each leech row opens the stat that produced it.
  */
+/**
+ * One pool's regeneration, term by term, each term opening the stat behind it.
+ *
+ * The `<r>_regen` stat alone does not answer "where does my regeneration come from": blood has
+ * no tick and starts from redirected health, every pool has a percent-of-max share, the restore
+ * event's layers and `MORE` multipliers (Abyssal Aura's 20% less) act on the sum, and held buffs
+ * such as Blood Harvest tick on top. This lays out exactly the numbers `regenOf` used.
+ */
+function RegenDetail({
+  resource,
+  derived,
+  onFocus,
+}: {
+  resource: string;
+  derived: DerivedBuild;
+  onFocus: (focus: SheetFocus) => void;
+}): ReactNode {
+  const { snapshot } = useWorld();
+  const { resources } = derived;
+  const row = resources.byResource.find((r) => r.resource === resource);
+  const pool = statName(snapshot, resource);
+  if (row === undefined) {
+    return <Detail title={`${pool} regeneration`} lead="This pool does not regenerate." />;
+  }
+  const stat = (statId: string): (() => void) => () => onFocus({ kind: "stat", statId });
+  const held = row.fromEffects ?? [];
+  const heldTotal = held.reduce((sum, h) => sum + h.perSecond, 0);
+  const resting = row.perSecond - heldTotal;
+  const inCombat = row.inCombatPerSecond - heldTotal;
+  const redirect = resources.healthToBloodPercent;
+  const fromHealth = resource === "blood" && redirect > 0 ? (row.seed * 100) / redirect : 0;
+  const nothing = row.base === 0 && held.length === 0;
+
+  return (
+    <Detail
+      title={`${pool} regeneration`}
+      lead={
+        resource === "blood"
+          ? "Blood has no regeneration tick of its own: it is a share of your health regeneration, redirected, then your blood regeneration modifiers, then any buff that restores blood on a timer."
+          : "The once-a-second tick: flat regeneration plus a share of your maximum, then the modifiers on the restore, then any buff that restores this pool on a timer."
+      }
+    >
+      <div className="steps">
+        {resource === "blood" && (
+          <>
+            <Term
+              label="Health regeneration"
+              value={`${smart(fromHealth)}/s`}
+              hint="Your health regeneration before buffs. Buff ticks carry a spell, and the redirect refuses those."
+              onSelect={() => onFocus({ kind: "regen", resource: "health" })}
+            />
+            <Term
+              label="× redirected to blood"
+              value={`${num(redirect, 1)}%`}
+              hint="The share of non-skill health restoration that also fills blood. Opens into the talents and items that grant it."
+              onSelect={stat("hp_resto_to_blood")}
+            />
+          </>
+        )}
+        {row.flat !== 0 && (
+          <Term
+            label={statName(snapshot, `${resource}_regen`)}
+            value={`${smart(row.flat)}/s`}
+            hint="Flat regeneration. Opens into the items, talents and buffs that add it."
+            onSelect={stat(`${resource}_regen`)}
+          />
+        )}
+        {row.fromPercentOfMax !== 0 && (
+          <Term
+            label={`${num((row.fromPercentOfMax / row.max) * 100, 2)}% of ${smart(row.max)} max ${pool}`}
+            hint="A share of the pool's maximum, every second. Opens into what grants it."
+            value={`${smart(row.fromPercentOfMax)}/s`}
+            onSelect={stat(`${resource}_per_sec`)}
+          />
+        )}
+        <Term label="Before modifiers" value={`${smart(row.base)}/s`} />
+        {row.steps
+          .filter((step) => step.contributions.length > 0)
+          .map((step, index) => (
+            <StepRow
+              key={`${step.layerId}-${step.side}-${index}`}
+              label={layerLabel(snapshot, step, "")}
+              value={formatStep(step)}
+            >
+              {step.contributions.map((c, i) => (
+                <StepRow
+                  key={`${c.statId}-${i}`}
+                  depth={1}
+                  label={statName(snapshot, c.statId)}
+                  value={`${c.value >= 0 ? "+" : ""}${num(c.value, 1)}%`}
+                  onClick={stat(c.statId)}
+                />
+              ))}
+            </StepRow>
+          ))}
+        {row.moreMultis.map((more, index) => (
+          <StepRow
+            key={`${more.statId}-${index}`}
+            label={statName(snapshot, more.statId)}
+            value={`x${num(more.multi, 3)}`}
+            tone="warn"
+            title="A more or less multiplier on the restore. Opens into what grants it."
+            onClick={stat(more.statId)}
+          />
+        ))}
+        {held.length > 0 && <Term label="Regeneration" value={`${smart(resting)}/s`} />}
+        {held.map((h) => (
+          <Term
+            key={h.effectId}
+            label={`+ ${exileEffectName(snapshot, h.effectId)}`}
+            value={`${smart(h.perSecond)}/s`}
+            hint={`${smart(h.perTick)} every ${num(h.tickSeconds, 1)}s while the buff is up, from ${spellName(snapshot, h.spellId)}. A heal, so the regeneration modifiers above do not apply. Untick it under Config → Effects to see the build without it.`}
+          />
+        ))}
+        <Term label="Total, resting" value={`${smart(row.perSecond)}/s`} strong />
+        {Math.abs(row.inCombatPerSecond - row.perSecond) > 1e-6 && (
+          <Term
+            label="Total, in combat"
+            value={`${smart(row.inCombatPerSecond)}/s`}
+            hint={
+              resource === "energy"
+                ? "Something on your sheet only applies in or out of combat."
+                : `${smart(inCombat)}/s of regeneration after the server's in-combat multiplier (×${num(resources.inCombatRegenMulti, 2)}) and anything that only applies in or out of combat, plus the buffs.`
+            }
+            strong
+          />
+        )}
+      </div>
+      {nothing && <div className="faint text-sm mt-4 prose">{row.note ?? "Nothing on this build regenerates it."}</div>}
+    </Detail>
+  );
+}
+
 function IncomeDetail({
   resource,
   derived,
@@ -1239,8 +1397,9 @@ function RotationCostDetail({
               label="Regeneration, in combat"
               value={`${smart(p.regen)}/s`}
               hint={STATS_COPY.inCombat}
-              onSelect={() => onFocus({ kind: "stat", statId: `${p.pool}_regen` })}
+              onSelect={() => onFocus({ kind: "regen", resource: p.pool })}
             />
+            <HeldTerms derived={derived} pool={p.pool} />
             {p.leech > 0 && (
               <Term
                 label="Leech and on-hit"

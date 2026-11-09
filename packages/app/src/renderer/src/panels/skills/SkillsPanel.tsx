@@ -43,6 +43,10 @@ import {
   supportLinks,
   learnedSpells,
   maxBonusSpellLevels,
+  baseGearType,
+  castingWeaponProblem,
+  gearTypeName,
+  type CastingWeaponProblem,
   type SkillSetup,
   type SupportLink,
 } from "@cte2/schema";
@@ -602,6 +606,42 @@ function ResolvedFacts({ index }: { index: number }): ReactNode {
   );
 }
 
+/** The tag each `castingWeapon` requirement reads off the mainhand's base type. */
+const WEAPON_REQUIREMENT_TAG: Record<string, string> = {
+  MAGE_WEAPON: "mage_weapon",
+  MELEE_WEAPON: "melee_weapon",
+  RANGED: "ranged_weapon",
+  NON_MAGE_WEAPON: "mage_weapon",
+};
+
+/**
+ * "Needs a mage weapon (dagger, hammer, scythe or staff); you are holding a sword."
+ *
+ * The weapon list comes off the snapshot's base gear types, so it follows the pack.
+ */
+function weaponProblemText(snapshot: Snapshot, problem: CastingWeaponProblem): string {
+  const tag = WEAPON_REQUIREMENT_TAG[problem.requirement];
+  const bases = Object.keys(snapshot.registries[CATEGORY.baseGearType] ?? {})
+    .filter((id) => tag !== undefined && (baseGearType(snapshot, id)?.tags ?? []).includes(tag))
+    .map((id) => gearTypeName(snapshot, id).toLowerCase())
+    .sort();
+  const list =
+    bases.length <= 1 ? bases.join("") : `${bases.slice(0, -1).join(", ")} or ${bases[bases.length - 1]}`;
+  const holding =
+    problem.weaponBase === undefined
+      ? "you have no weapon in your main hand"
+      : `you are holding a ${gearTypeName(snapshot, problem.weaponBase).toLowerCase()}`;
+  const need =
+    problem.requirement === "NON_MAGE_WEAPON"
+      ? `can't be cast with a mage weapon (${list})`
+      : problem.requirement === "MAGE_WEAPON"
+        ? `needs a mage weapon (${list})`
+        : problem.requirement === "MELEE_WEAPON"
+          ? `needs a melee weapon (${list})`
+          : `needs a ranged weapon (${list})`;
+  return `This skill ${need}, and ${holding}. In game it won't cast; the numbers here assume it does.`;
+}
+
 /** One row of the socket-group list: what it is, whether it is on, and what it does. */
 function SkillListRow({
   skill,
@@ -619,9 +659,15 @@ function SkillListRow({
   onSelect: () => void;
 }): ReactNode {
   const { snapshot } = useWorld();
+  const gear = useBuild((s) => s.doc.gear);
   const enabled = isSkillEnabled(skill);
   const supports = supportLinks(skill);
   const live = supports.filter(isSupportEnabled).length;
+  const castingWeapon = stringAt(
+    (entry(snapshot, CATEGORY.spell, skill.spellId)?.data?.["config"] ?? {}) as Record<string, unknown>,
+    "castingWeapon",
+  );
+  const weaponProblem = castingWeaponProblem(snapshot, castingWeapon, gear ?? []);
 
   return (
     <div
@@ -629,6 +675,11 @@ function SkillListRow({
       onClick={onSelect}
     >
       <span className="ellipsis grow">{spellName(snapshot, skill.spellId)}</span>
+      {weaponProblem !== undefined && (
+        <span className="badge bad" title={weaponProblemText(snapshot, weaponProblem)}>
+          wrong weapon
+        </span>
+      )}
       {/* "auto" where nothing in the document marked one: `simulateDps` takes the first enabled
           skill that declares a damage act, so a bar starting with a buff still reports the
           damage skill. Saying which is how the list stops disagreeing with the sidebar. */}
@@ -714,6 +765,7 @@ function SkillCard({
   // figure: most support gems charge 1.2x or 1.3x and they compound, so a five-link is often
   // triple the cast cost of the bare skill.
   const costMulti = supportCostMulti(world.snapshot, skill);
+  const weaponProblem = castingWeaponProblem(world.snapshot, stringAt(config, "castingWeapon"), doc.gear ?? []);
 
   /**
    * What the class allocation has already bought, which is what an unstated skill level means.
@@ -1103,6 +1155,12 @@ function SkillCard({
         <Fact layout="block" label="weapon" value={stringAt(config, "castingWeapon")} />
         <Fact layout="block" label="charges" value={stringAt(config, "charges")} />
       </div>
+
+      {weaponProblem !== undefined && (
+        <div className="mb-2" style={{ color: "var(--bad)" }}>
+          {weaponProblemText(world.snapshot, weaponProblem)}
+        </div>
+      )}
 
       <ResolvedFacts index={index} />
 

@@ -1096,6 +1096,51 @@ export function mainhandWeapon(snapshot: Snapshot, gear: readonly Item[]): Item 
   return wornItems(snapshot, gear).find((item) => isMainhandWeapon(snapshot, item));
 }
 
+/** Why a skill cannot be cast with what is in the mainhand. */
+export type CastingWeaponProblem = {
+  /** `config.castingWeapon`: `MAGE_WEAPON`, `MELEE_WEAPON`, `RANGED` or `NON_MAGE_WEAPON`. */
+  requirement: string;
+  /** The mainhand's base, or undefined when nothing is held. */
+  weaponBase?: string;
+};
+
+/**
+ * Whether the mainhand satisfies a spell's `config.castingWeapon`, or why not.
+ *
+ * `CastingWeapon` maps each value to a `SpellPredicates` entry (6.4.13 jar), all reading
+ * `equipmentCache.getWeapon()` — the mainhand — and its base gear type's tags:
+ *
+ *   - `MAGE_WEAPON`: tags contain `mage_weapon`; false with nothing held.
+ *   - `MELEE_WEAPON`: tags contain `melee_weapon`; false with nothing held.
+ *   - `RANGED`: tags contain `ranged_weapon`; false with nothing held.
+ *   - `NON_MAGE_WEAPON`: `!MAGE_PRED`, so an empty hand passes.
+ *   - `ANY_WEAPON`: `return true`.
+ *
+ * Returns undefined when the skill can be cast.
+ */
+export function castingWeaponProblem(
+  snapshot: Snapshot,
+  castingWeapon: string | null | undefined,
+  gear: readonly Item[],
+): CastingWeaponProblem | undefined {
+  if (castingWeapon == null || castingWeapon === "ANY_WEAPON") return undefined;
+  const main = mainhandWeapon(snapshot, gear);
+  const tags = main === undefined ? [] : (baseGearType(snapshot, main.base)?.tags ?? []);
+  const has = (tag: string) => tags.includes(tag);
+  const ok =
+    castingWeapon === "MAGE_WEAPON"
+      ? has("mage_weapon")
+      : castingWeapon === "MELEE_WEAPON"
+        ? has("melee_weapon")
+        : castingWeapon === "RANGED"
+          ? has("ranged_weapon")
+          : castingWeapon === "NON_MAGE_WEAPON"
+            ? !has("mage_weapon")
+            : true;
+  if (ok) return undefined;
+  return { requirement: castingWeapon, ...(main === undefined ? {} : { weaponBase: main.base }) };
+}
+
 /**
  * Whether a worn offhand weapon grants anything at all — `GearData.isUsableBy` for `OFFHAND`.
  *

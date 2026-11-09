@@ -347,7 +347,9 @@ export function resolveEffectState(input: EffectStateInput): EffectState {
     // An effect with no stats that nothing tests for cannot change any number this engine
     // reports, and 212 toggles is not a user interface. `bleed_effect` is the case: no stats,
     // no gate, granted to you whenever something bleeds you.
-    if (!hasStats && !gated.has(id)) continue;
+    // A buff whose own tick restores a pool is the other exception: Blood Harvest has no stats
+    // and no gate, and is worth a blood restore every second — see `heldEffectRestores`.
+    if (!hasStats && !gated.has(id) && !ticksRestore(data)) continue;
 
     const declaredMax = Math.max(1, numberAt(data, "max_stacks") ?? 1);
     const bonus = Math.trunc(sheet.get(`max_${id}_charges`)?.value ?? 0);
@@ -1677,6 +1679,21 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/** The effect's ticking group declares a `restore_*` act. */
+function ticksRestore(data: Record<string, unknown>): boolean {
+  const spell = data["spell"];
+  const groups =
+    spell !== null && typeof spell === "object" ? (spell as Record<string, unknown>)["entity_components"] : undefined;
+  const parts =
+    groups !== null && typeof groups === "object" ? (groups as Record<string, unknown>)["default_entity_name"] : undefined;
+  return asArray(parts).some((part) =>
+    asArray((part as Record<string, unknown> | null)?.["acts"]).some((act) => {
+      const type = (act as Record<string, unknown> | null)?.["type"];
+      return typeof type === "string" && type.startsWith("restore_");
+    }),
+  );
 }
 
 function asArray(value: unknown): unknown[] {

@@ -1,5 +1,7 @@
 import { type DpsResult } from "@cte2/engine";
 import { type ReactNode } from "react";
+import { exileEffectName, spellName } from "@cte2/schema";
+import { useWorld } from "@cte2/view";
 
 import { num, smart } from "../../ui/fields.js";
 import { Plain, Tech } from "../../ui/copy/hint.js";
@@ -49,6 +51,7 @@ export function sustainVerdict(dps: DpsResult): { text: string; bad: boolean; bl
  * now folds and its head is where the answer goes.
  */
 export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
+  const { snapshot } = useWorld();
   const { cost } = dps;
   const rows = cost.budget;
   if (rows.length === 0 && cost.leech.unrated.length === 0) return null;
@@ -75,7 +78,15 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
               <tr key={row.resource} className={row.sustainable ? undefined : "highlight"}>
                 <td>{row.resource.replace(/_/g, " ")}</td>
                 <td className="num">{smart(row.max)}</td>
-                <td className="num" title="In-combat regeneration, which is what applies during a rotation">
+                <td
+                  className="num"
+                  title={
+                    "In-combat regeneration, which is what applies during a rotation" +
+                    (row.regenFromEffects ?? [])
+                      .map((held) => `\nincludes ${exileEffectName(snapshot, held.effectId)}: ${smart(held.perSecond)}/s`)
+                      .join("")
+                  }
+                >
                   {smart(row.regenPerSecond)}/s
                 </td>
                 <td className="num">
@@ -114,6 +125,20 @@ export function SustainCard({ dps }: { dps: DpsResult }): ReactNode {
             ))}
           </tbody>
         </table>
+      )}
+
+      {rows.flatMap((row) =>
+        (row.regenFromEffects ?? []).map((held) => (
+          <div key={`${row.resource}:${held.effectId}`} className="faint text-sm mt-4">
+            Regen includes <strong>{exileEffectName(snapshot, held.effectId)}</strong>
+            {exileEffectName(snapshot, held.effectId) === spellName(snapshot, held.spellId)
+              ? ""
+              : ` (from ${spellName(snapshot, held.spellId)})`}
+            : {smart(held.perTick)} {row.resource.replace(/_/g, " ")} every {num(held.tickSeconds, 1)}s,
+            so {smart(held.perSecond)}/s while the buff is up. Untick it under Config &rarr; Effects to
+            see the build without it.
+          </div>
+        )),
       )}
 
       <LeechDetail leech={cost.leech} />

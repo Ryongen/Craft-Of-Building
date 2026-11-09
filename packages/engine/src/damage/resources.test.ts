@@ -465,3 +465,122 @@ test("a `heal` restore lands whole, and the leech cap has nothing to say about i
     "a heal is not leech, so the leech pass does not claim it and cannot cap it",
   );
 });
+
+test("a held buff that ticks a restore feeds that pool, and unticking it takes it away", () => {
+  // Blood Harvest's shape: the spell hands out a stat-less effect, and the effect's own
+  // `default_entity_name` group restores blood off a value calc every 20 ticks. Nothing on the
+  // sheet changes, so before this the buff was not even offered as a toggle.
+  const tick = (calc: string, rate: number) => ({
+    acts: [{ type: "restore_blood", map: { value_calculation: calc } }],
+    en_preds: [],
+    ifs: [{ type: "x_ticks_condition", map: { tick_rate: rate } }],
+    targets: [{ type: "target", map: {} }],
+  });
+  const snapshot = engineSnapshot({
+    mmorpg_stat: REGEN_STATS,
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("health", "FLAT", 1000),
+        exact("blood", "FLAT", 500),
+        exact("blood_user", "FLAT", 1),
+      ]),
+    },
+    mmorpg_value_calc: {
+      harvest: {
+        id: "harvest",
+        base: { min: 0, max: 0 },
+        base_scaling_type: "NORMAL",
+        cap_to_wep_dmg: 1000,
+        dmg_effectiveness: { multi: { min: 1, max: 1 }, stat: "health" },
+        stat_scalings: [{ stat: "health", multi: { min: 0.02, max: 0.02 } }],
+        target_stat_scalings: [],
+      },
+    },
+    mmorpg_exile_effect: {
+      harvest: {
+        id: "harvest",
+        type: "beneficial",
+        max_stacks: 1,
+        stats: [],
+        tags: { tags: ["positive"] },
+        one_of_a_kind_id: "",
+        spell: { entity_components: { default_entity_name: [tick("harvest", 20)] }, on_cast: [] },
+      },
+    },
+    mmorpg_spells: {
+      harvest: {
+        identifier: "harvest",
+        max_lvl: 10,
+        config: { castingWeapon: "ANY_WEAPON", tags: { tags: ["heal"] } },
+        attached: {
+          entity_components: {},
+          on_cast: [
+            {
+              acts: [
+                {
+                  type: "exile_effect",
+                  map: { count: 1, exile_potion_id: "harvest", potion_action: "GIVE_STACKS", potion_dur: 600 },
+                },
+              ],
+              en_preds: [],
+              ifs: [{ type: "on_spell_cast", map: {} }],
+              targets: [{ type: "aoe", map: { en_predicate: "allies", radius: 4, selection_type: "RADIUS" } }],
+            },
+          ],
+        },
+      },
+    },
+  });
+  const build = {
+    schemaVersion: 1,
+    character: { level: 1 },
+    skills: [{ spellId: "harvest", level: 10, levelPinned: true }],
+  } as BuildDoc;
+  const options = { newbieResists: false, vanillaHealth: false };
+
+  const on = of(resources(build, snapshot, options), "blood");
+  assert.equal(on.fromEffects?.length, 1);
+  assert.equal(on.fromEffects?.[0]?.effectId, "harvest");
+  closeTo(on.fromEffects?.[0]?.perSecond ?? 0, 20, "2% of 1000 health, once a second");
+
+  const off = of(
+    resources({ ...build, config: { effects: { harvest: 0 } } } as BuildDoc, snapshot, options),
+    "blood",
+  );
+  assert.equal(off.fromEffects, undefined);
+  closeTo(on.inCombatPerSecond - off.inCombatPerSecond, 20);
+  closeTo(on.perSecond - off.perSecond, 20);
+});
+
+test("a less multiplier on blood regen is kept for the breakdown, not just applied", () => {
+  // Abyssal Aura's shape: `blood_regen` MORE -20. The sweep applies it after the layers, so it
+  // lands in `moreMultis` rather than in a layer step, and the regen panel has to be handed it
+  // to say where 20% of the blood went.
+  const snapshot = engineSnapshot({
+    mmorpg_stat: {
+      ...REGEN_STATS,
+      blood_regen: { ...REGEN_STATS["blood_regen"], multiUseType: "MULTIPLICATIVE_DAMAGE" },
+    },
+    mmorpg_stat_condition: CONDITIONS,
+    mmorpg_stat_effect: EFFECTS,
+    mmorpg_base_stats: {
+      original_mode_player: baseStats("original_mode_player", [
+        exact("blood", "FLAT", 500),
+        exact("health", "FLAT", 1000),
+        exact("health_regen", "FLAT", 200),
+        exact("hp_resto_to_blood", "FLAT", 50),
+        exact("blood_regen", "MORE", -20),
+      ]),
+    },
+  });
+  const build = { schemaVersion: 1, character: { level: 1 } } as BuildDoc;
+  const blood = of(resources(build, snapshot, { newbieResists: false, vanillaHealth: false }), "blood");
+
+  closeTo(blood.seed, 100, "half of 200 health regen");
+  closeTo(blood.perSecond, 80);
+  assert.equal(blood.moreMultis.length, 1);
+  assert.equal(blood.moreMultis[0]?.statId, "blood_regen");
+  closeTo(blood.moreMultis[0]?.multi ?? 0, 0.8);
+});

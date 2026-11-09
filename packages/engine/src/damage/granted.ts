@@ -29,7 +29,7 @@
 
 import type { Snapshot } from "@cte2/extractor";
 import type { BuildDoc } from "@cte2/schema";
-import { CATEGORY, entry } from "@cte2/schema";
+import { CATEGORY, entry, isSkillEnabled } from "@cte2/schema";
 
 import type { EngineResult } from "../calculate.js";
 import { basicAttack } from "./basic-attack.js";
@@ -99,17 +99,50 @@ export function grantedProcs(input: GrantedInput): Proc[] {
   });
   const fromSwing = (swing?.procs ?? []).filter((p) => granted.has(p.statId));
 
-  // The cast clock is only worth a pass when something granted can fire on it. And never this
-  // skill's own casts: those procs are already in its `procDps`, and attributing them twice would
-  // rank a gem twice for the same damage.
+  // The cast clock is only worth a pass when something granted can fire on it.
   const castable = [...granted.values()].some((g) => !g.basicOnly);
-  const main = castable ? simulateDps(input.build, input.snapshot, { ...pick, granted: false }) : undefined;
-  const fromCast =
-    main === undefined || main.spellId === input.spellId
-      ? []
-      : main.procs.filter((p) => granted.has(p.statId));
+  const fromCast = castable ? castProcs(input, pick, granted) : [];
 
   return merge(fromSwing, fromCast).sort((a, b) => b.dps - a.dps);
+}
+
+/**
+ * The granted procs as the skill you are pressing fires them.
+ *
+ * That is the main skill — unless the main skill is this buff. Holy Immolation is the case: it
+ * deals nothing itself and is the natural thing to mark main when you want to see what it is
+ * worth, but Immolate fires off *burns*, so marking it main left nothing to trigger it and the
+ * row read 0. Then every other enabled skill on the bar is tried as the trigger, and the one
+ * that fires the granted procs hardest is taken — one pressed skill, not a sum, because each is
+ * rated on its own cycle and you press one of them at a time.
+ *
+ * Never this skill's own casts: those procs are already in its `procDps`, and attributing them
+ * twice would rank a gem twice for the same damage.
+ */
+function castProcs(
+  input: GrantedInput,
+  pick: { balanceId?: string; baseStatsId?: string },
+  granted: ReadonlyMap<string, unknown>,
+): Proc[] {
+  const ofGranted = (procs: readonly Proc[]): Proc[] => procs.filter((p) => granted.has(p.statId));
+
+  const main = simulateDps(input.build, input.snapshot, { ...pick, granted: false });
+  if (main !== undefined && main.spellId !== input.spellId) return ofGranted(main.procs);
+
+  let best: Proc[] = [];
+  let bestDps = 0;
+  for (const skill of input.build.skills ?? []) {
+    if (skill.spellId === input.spellId || !isSkillEnabled(skill)) continue;
+    const result = simulateDps(input.build, input.snapshot, { ...pick, skill, granted: false });
+    if (result === undefined) continue;
+    const procs = ofGranted(result.procs);
+    const dps = procs.reduce((sum, p) => sum + p.dps, 0);
+    if (dps > bestDps) {
+      best = procs;
+      bestDps = dps;
+    }
+  }
+  return best;
 }
 
 /**

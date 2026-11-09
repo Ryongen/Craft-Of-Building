@@ -34,6 +34,7 @@
 
 import {
   SINGLE_ELEMENTS,
+  exileEffectName,
   statDisplay,
   statName,
   type ElementName,
@@ -78,6 +79,7 @@ function same(a: SheetFocus | null, b: SheetFocus): boolean {
   if (a.kind === "figure" && b.kind === "figure") return a.id === b.id;
   if (a.kind === "ehp" && b.kind === "ehp") return a.element === b.element;
   if (a.kind === "income" && b.kind === "income") return a.resource === b.resource;
+  if (a.kind === "regen" && b.kind === "regen") return a.resource === b.resource;
   if ((a.kind === "stat" || a.kind === "skill-stat") && "statId" in b) return a.statId === b.statId;
   return false;
 }
@@ -434,6 +436,16 @@ function Attributes({ focus, pick }: { focus: SheetFocus | null; pick: Pick }): 
  * one row unless you are asking which is worst, and the headline already says which. Open once
  * and it stays open for the session.
  */
+/** " Includes Blood Harvest: 118/s." for each held buff inside a pool's regeneration. */
+function heldBuffs(
+  snapshot: Parameters<typeof exileEffectName>[0],
+  pool: { fromEffects?: { effectId: string; perSecond: number }[] },
+): string {
+  return (pool.fromEffects ?? [])
+    .map((held) => ` Includes ${exileEffectName(snapshot, held.effectId)}: ${smart(held.perSecond)}/s.`)
+    .join("");
+}
+
 function Survival({
   derived,
   focus,
@@ -444,6 +456,7 @@ function Survival({
   pick: Pick;
 }): ReactNode {
   const { defence, resources, dps, selfSustain } = derived;
+  const { snapshot } = useWorld();
   const [showElements, setShowElements] = useState(false);
 
   /**
@@ -561,10 +574,11 @@ function Survival({
             (health.secondsToFull === undefined
               ? ", and it never fills from empty"
               : `, ${num(health.secondsToFull, 1)}s from empty to full`) +
-            (health.note === undefined ? "." : `. ${health.note}`)
+            (health.note === undefined ? "." : `. ${health.note}`) +
+            heldBuffs(snapshot, health)
           }
-          active={same(focus, { kind: "stat", statId: "health_regen" })}
-          onSelect={pick({ kind: "stat", statId: "health_regen" })}
+          active={same(focus, { kind: "regen", resource: "health" })}
+          onSelect={pick({ kind: "regen", resource: "health" })}
         />
       )}
       <IncomeRow derived={derived} resource="health" focus={focus} pick={pick} />
@@ -582,9 +596,9 @@ function Survival({
           indent
           label="Regeneration"
           value={`${num(magicShield.perSecond, 2)}/s`}
-          hint={`${num(magicShield.inCombatPerSecond, 2)}/s in combat.`}
-          active={same(focus, { kind: "stat", statId: "magic_shield_regen" })}
-          onSelect={pick({ kind: "stat", statId: "magic_shield_regen" })}
+          hint={`${num(magicShield.inCombatPerSecond, 2)}/s in combat.` + heldBuffs(snapshot, magicShield)}
+          active={same(focus, { kind: "regen", resource: "magic_shield" })}
+          onSelect={pick({ kind: "regen", resource: "magic_shield" })}
         />
       )}
       <IncomeRow derived={derived} resource="magic_shield" focus={focus} pick={pick} />
@@ -606,10 +620,11 @@ function Survival({
                   (pool.secondsToFull === undefined
                     ? ", and it never fills from empty"
                     : `, ${num(pool.secondsToFull, 1)}s from empty to full`) +
-                  (pool.note === undefined ? "." : `. ${pool.note}`)
+                  (pool.note === undefined ? "." : `. ${pool.note}`) +
+                  heldBuffs(snapshot, pool)
                 }
-                active={same(focus, { kind: "stat", statId: `${pool.resource}_regen` })}
-                onSelect={pick({ kind: "stat", statId: `${pool.resource}_regen` })}
+                active={same(focus, { kind: "regen", resource: pool.resource })}
+                onSelect={pick({ kind: "regen", resource: pool.resource })}
               />
               <IncomeRow derived={derived} resource={pool.resource} focus={focus} pick={pick} />
             </Fragment>
